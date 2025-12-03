@@ -1,6 +1,7 @@
 /**
- * Parent Service
- * Handle parent CRUD operations with Firestore
+ * Parent Service (Refactored)
+ * - Parents collection: chỉ lưu thông tin PH
+ * - Children: query từ students collection by parentId
  */
 
 import {
@@ -17,35 +18,22 @@ import {
   QueryConstraint,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Parent, StudentStatus } from '../../types';
+import { Parent, Student } from '../../types';
 
 const PARENTS_COLLECTION = 'parents';
+const STUDENTS_COLLECTION = 'students';
 
-export interface ParentData {
-  id?: string;
-  name: string;
-  phone: string;
-  email?: string;
-  address?: string;
-  children: Array<{
-    id: string;
-    name: string;
-    dob: string;
-    class: string;
-    status: StudentStatus;
-  }>;
-  createdAt?: string;
-  updatedAt?: string;
+export interface ParentWithChildren extends Parent {
+  children: Student[];
 }
 
 /**
  * Create new parent
  */
-export const createParent = async (data: Omit<ParentData, 'id'>): Promise<string> => {
+export const createParent = async (data: Omit<Parent, 'id'>): Promise<string> => {
   try {
     const parentData = {
       ...data,
-      children: data.children || [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -61,7 +49,7 @@ export const createParent = async (data: Omit<ParentData, 'id'>): Promise<string
 /**
  * Get parent by ID
  */
-export const getParent = async (id: string): Promise<ParentData | null> => {
+export const getParent = async (id: string): Promise<Parent | null> => {
   try {
     const docRef = doc(db, PARENTS_COLLECTION, id);
     const docSnap = await getDoc(docRef);
@@ -73,7 +61,7 @@ export const getParent = async (id: string): Promise<ParentData | null> => {
     return {
       id: docSnap.id,
       ...docSnap.data(),
-    } as ParentData;
+    } as Parent;
   } catch (error) {
     console.error('Error getting parent:', error);
     throw new Error('Không thể tải thông tin phụ huynh');
@@ -83,7 +71,7 @@ export const getParent = async (id: string): Promise<ParentData | null> => {
 /**
  * Get all parents with optional search
  */
-export const getParents = async (searchTerm?: string): Promise<ParentData[]> => {
+export const getParents = async (searchTerm?: string): Promise<Parent[]> => {
   try {
     const constraints: QueryConstraint[] = [orderBy('createdAt', 'desc')];
     
@@ -93,9 +81,9 @@ export const getParents = async (searchTerm?: string): Promise<ParentData[]> => 
     let parents = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
-    } as ParentData));
+    } as Parent));
     
-    // Client-side search (Firestore doesn't support LIKE queries)
+    // Client-side search
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       parents = parents.filter(p => 
@@ -112,9 +100,74 @@ export const getParents = async (searchTerm?: string): Promise<ParentData[]> => 
 };
 
 /**
+ * Get children of a parent (query from students collection)
+ */
+export const getChildrenByParentId = async (parentId: string): Promise<Student[]> => {
+  try {
+    const q = query(
+      collection(db, STUDENTS_COLLECTION),
+      where('parentId', '==', parentId)
+    );
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      dob: doc.data().dob?.toDate?.()?.toISOString() || doc.data().dob || '',
+    } as Student));
+  } catch (error) {
+    console.error('Error getting children:', error);
+    return [];
+  }
+};
+
+/**
+ * Get all parents with their children
+ */
+export const getParentsWithChildren = async (searchTerm?: string): Promise<ParentWithChildren[]> => {
+  try {
+    const parents = await getParents(searchTerm);
+    
+    // Get children for each parent
+    const parentsWithChildren = await Promise.all(
+      parents.map(async (parent) => {
+        const children = await getChildrenByParentId(parent.id);
+        return { ...parent, children };
+      })
+    );
+    
+    return parentsWithChildren;
+  } catch (error) {
+    console.error('Error getting parents with children:', error);
+    throw new Error('Không thể tải danh sách phụ huynh');
+  }
+};
+
+/**
+ * Find parent by phone number
+ */
+export const findParentByPhone = async (phone: string): Promise<Parent | null> => {
+  try {
+    const q = query(
+      collection(db, PARENTS_COLLECTION),
+      where('phone', '==', phone)
+    );
+    const snapshot = await getDocs(q);
+    
+    if (snapshot.empty) return null;
+    
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...doc.data() } as Parent;
+  } catch (error) {
+    console.error('Error finding parent by phone:', error);
+    return null;
+  }
+};
+
+/**
  * Update parent
  */
-export const updateParent = async (id: string, data: Partial<ParentData>): Promise<void> => {
+export const updateParent = async (id: string, data: Partial<Parent>): Promise<void> => {
   try {
     const docRef = doc(db, PARENTS_COLLECTION, id);
     await updateDoc(docRef, {
@@ -128,49 +181,20 @@ export const updateParent = async (id: string, data: Partial<ParentData>): Promi
 };
 
 /**
- * Delete parent
+ * Delete parent (only if no children)
  */
 export const deleteParent = async (id: string): Promise<void> => {
   try {
+    // Check if parent has children
+    const children = await getChildrenByParentId(id);
+    if (children.length > 0) {
+      throw new Error('Không thể xóa phụ huynh đang có học sinh');
+    }
+    
     const docRef = doc(db, PARENTS_COLLECTION, id);
     await deleteDoc(docRef);
   } catch (error) {
     console.error('Error deleting parent:', error);
-    throw new Error('Không thể xóa phụ huynh');
-  }
-};
-
-/**
- * Add child to parent
- */
-export const addChildToParent = async (
-  parentId: string,
-  child: { id: string; name: string; dob: string; class: string; status: StudentStatus }
-): Promise<void> => {
-  try {
-    const parent = await getParent(parentId);
-    if (!parent) throw new Error('Phụ huynh không tồn tại');
-    
-    const children = [...(parent.children || []), child];
-    await updateParent(parentId, { children });
-  } catch (error) {
-    console.error('Error adding child:', error);
-    throw new Error('Không thể thêm học sinh');
-  }
-};
-
-/**
- * Remove child from parent
- */
-export const removeChildFromParent = async (parentId: string, childId: string): Promise<void> => {
-  try {
-    const parent = await getParent(parentId);
-    if (!parent) throw new Error('Phụ huynh không tồn tại');
-    
-    const children = (parent.children || []).filter(c => c.id !== childId);
-    await updateParent(parentId, { children });
-  } catch (error) {
-    console.error('Error removing child:', error);
-    throw new Error('Không thể xóa học sinh');
+    throw error;
   }
 };

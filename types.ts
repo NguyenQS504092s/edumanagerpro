@@ -36,7 +36,9 @@ export interface Student {
   dob: string; // ISO date
   gender: 'Nam' | 'Nữ';
   phone: string;
-  parentName: string;
+  parentId?: string; // Reference to parents collection
+  parentName?: string; // Denormalized for display (auto-synced)
+  parentPhone?: string; // Denormalized for display (auto-synced)
   status: StudentStatus;
   careHistory: CareLog[];
   class?: string; // Current class name
@@ -158,17 +160,14 @@ export interface EnrollmentRecord {
 
 export interface Parent {
   id: string;
-  fatherName: string;
-  fatherPhone: string;
-  motherName?: string;
-  motherPhone?: string;
-  children: {
-    id: string;
-    name: string;
-    dob: string;
-    class: string;
-    status: StudentStatus;
-  }[];
+  name: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  relationship?: 'Bố' | 'Mẹ' | 'Ông/Bà' | 'Khác';
+  createdAt?: string;
+  updatedAt?: string;
+  // children will be queried from students collection by parentId
 }
 
 export interface FeedbackRecord {

@@ -31,9 +31,24 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     
+    match /parents/{parentId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
     match /attendance/{attendanceId} {
       allow read: if isStaff();
       allow write: if isStaff();
+    }
+    
+    match /tutoring/{tutoringId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    match /contracts/{contractId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
     }
     
     match /{document=**} {
