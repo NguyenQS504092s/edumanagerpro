@@ -33,6 +33,8 @@ import {
 import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 import { formatCurrency } from '../src/utils/currencyUtils';
+import { getRevenueSummary, RevenueByCategory } from '../src/services/financialReportService';
+import { seedDashboardData } from '../scripts/seedDashboardData';
 
 // Colors matching the design
 const COLORS = {
@@ -97,6 +99,28 @@ export const Dashboard: React.FC = () => {
   const [allStudents, setAllStudents] = useState<StudentData[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showStudentModal, setShowStudentModal] = useState(false);
+  
+  // State cho doanh số bán hàng từ báo cáo tài chính
+  const [revenuePieData, setRevenuePieData] = useState<{ name: string; value: number; color: string }[]>([]);
+  const [seeding, setSeeding] = useState(false);
+
+  // Seed test data
+  const handleSeedData = async () => {
+    if (seeding) return;
+    if (!confirm('Bạn có muốn tạo dữ liệu test cho Dashboard không?')) return;
+    
+    setSeeding(true);
+    try {
+      await seedDashboardData();
+      alert('Đã tạo dữ liệu test thành công! Đang reload...');
+      fetchDashboardData(); // Refresh data
+    } catch (error) {
+      console.error('Error seeding data:', error);
+      alert('Lỗi khi tạo dữ liệu test: ' + (error as Error).message);
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   useEffect(() => {
     fetchDashboardData();
@@ -124,18 +148,18 @@ export const Dashboard: React.FC = () => {
       const totalClasses = classes.length;
       const avgPerClass = totalClasses > 0 ? (totalStudents / totalClasses).toFixed(1) : 0;
       
-      // Students by status
+      // Students by status - fetch real data
       const statusCounts = {
-        'Nợ phí': students.filter(s => s.hasDebt || s.status === 'Debt').length || 12,
-        'Học thử': students.filter(s => s.status === 'Trial' || s.status === 'Học thử').length || 4,
-        'Bảo lưu': students.filter(s => s.status === 'Reserved' || s.status === 'Bảo lưu').length || 3,
-        'Nghỉ học': students.filter(s => s.status === 'Dropped' || s.status === 'Nghỉ học').length || 2,
+        'Nợ phí': students.filter(s => s.hasDebt || s.status === 'Debt' || s.status === 'Nợ phí').length,
+        'Học thử': students.filter(s => s.status === 'Trial' || s.status === 'Học thử').length,
+        'Bảo lưu': students.filter(s => s.status === 'Reserved' || s.status === 'Bảo lưu').length,
+        'Nghỉ học': students.filter(s => s.status === 'Dropped' || s.status === 'Nghỉ học').length,
         'HV mới': students.filter(s => {
           if (!s.createdAt) return false;
           const created = new Date(s.createdAt);
           const now = new Date();
           return (now.getTime() - created.getTime()) < 30 * 24 * 60 * 60 * 1000;
-        }).length || 8,
+        }).length,
       };
       
       const studentsByStatus = [
@@ -152,6 +176,34 @@ export const Dashboard: React.FC = () => {
       
       const totalRevenue = paidContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0) || 227536702;
       const totalDebt = debtContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0) || 138329744;
+      
+      // Fetch financial report data for pie chart
+      try {
+        const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        const financialSummary = await getRevenueSummary(currentMonth);
+        
+        if (financialSummary.revenueByCategory.length > 0) {
+          setRevenuePieData(financialSummary.revenueByCategory.map(item => ({
+            name: item.category,
+            value: item.amount,
+            color: item.color,
+          })));
+        } else {
+          // Fallback mock data nếu chưa có data
+          setRevenuePieData([
+            { name: 'Học phí', value: totalRevenue * 0.7, color: '#3b82f6' },
+            { name: 'Sách vở', value: totalRevenue * 0.2, color: '#f97316' },
+            { name: 'Khác', value: totalRevenue * 0.1, color: '#8b5cf6' },
+          ]);
+        }
+      } catch (err) {
+        console.error('Error fetching financial data:', err);
+        setRevenuePieData([
+          { name: 'Học phí', value: totalRevenue * 0.7, color: '#3b82f6' },
+          { name: 'Sách vở', value: totalRevenue * 0.2, color: '#f97316' },
+          { name: 'Khác', value: totalRevenue * 0.1, color: '#8b5cf6' },
+        ]);
+      }
       
       // Monthly revenue data (mock for now, can be calculated from contracts)
       const revenueData = [
@@ -278,12 +330,6 @@ export const Dashboard: React.FC = () => {
     { name: 'Nợ học phí', value: stats.debtStats.noHocPhi },
   ];
 
-  const revenuePieData = [
-    { name: 'Học phí', value: stats.totalRevenue * 0.7 },
-    { name: 'Sách vở', value: stats.totalRevenue * 0.2 },
-    { name: 'Khác', value: stats.totalRevenue * 0.1 },
-  ];
-
   // Lọc học viên theo category
   const getStudentsByCategory = (category: string): StudentData[] => {
     const now = new Date();
@@ -342,6 +388,13 @@ export const Dashboard: React.FC = () => {
               className="h-8 object-contain"
             />
           </div>
+          <button
+            onClick={handleSeedData}
+            disabled={seeding}
+            className="bg-white px-3 py-1 rounded text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {seeding ? 'Đang tạo...' : '🔧 Seed Data'}
+          </button>
         </div>
         <div className="flex gap-6">
           <div className="bg-white px-4 py-2 rounded shadow-sm">
@@ -515,7 +568,7 @@ export const Dashboard: React.FC = () => {
             <div className="flex justify-between items-center mb-2">
               <h3 className="font-bold text-gray-700 text-sm">Doanh số bán hàng</h3>
               <div className="text-right">
-                <div className="text-lg font-bold text-blue-600">{formatCurrency(stats.totalRevenue)}</div>
+                <div className="text-lg font-bold text-blue-600">{formatCurrency(revenuePieData.reduce((sum, item) => sum + item.value, 0) || stats.totalRevenue)}</div>
                 <span className="text-xs text-gray-500">{currentMonth}</span>
               </div>
             </div>
@@ -531,7 +584,7 @@ export const Dashboard: React.FC = () => {
                     label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
                   >
                     {revenuePieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      <Cell key={`cell-${index}`} fill={entry.color || PIE_COLORS[index % PIE_COLORS.length]} />
                     ))}
                   </Pie>
                   <Tooltip formatter={(value: number) => formatCurrency(value)} />
