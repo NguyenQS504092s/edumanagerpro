@@ -27,6 +27,9 @@ import { ContractList } from './pages/ContractList';
 import { FeedbackManager } from './pages/FeedbackManager';
 import { RevenueReport } from './pages/RevenueReport';
 import { DebtManager } from './pages/DebtManager';
+import { CustomerDatabase } from './pages/CustomerDatabase';
+import { CampaignManager } from './pages/CampaignManager';
+import { TrainingReport } from './pages/TrainingReport';
 import { Login } from './pages/Login';
 import { StudentStatus } from './types';
 import { useAuth } from './src/hooks/useAuth';
@@ -109,8 +112,8 @@ const App: React.FC = () => {
           <Route path="/customers/feedback" element={<FeedbackManager />} />
           
           {/* Business Routes */}
-          <Route path="/business/leads" element={<Placeholder title="Kho dữ liệu khách hàng" />} />
-          <Route path="/business/campaigns" element={<Placeholder title="Chiến dịch Sale/Marketing" />} />
+          <Route path="/business/leads" element={<CustomerDatabase />} />
+          <Route path="/business/campaigns" element={<CampaignManager />} />
           
           {/* HR Routes - Redirecting to Settings for now or can use Placeholder */}
           <Route path="/hr/staff" element={<Navigate to="/settings/staff" replace />} />
@@ -127,8 +130,8 @@ const App: React.FC = () => {
           <Route path="/finance/debt" element={<DebtManager />} />
           
           {/* Report Routes */}
-          <Route path="/reports/training" element={<Placeholder title="Báo cáo đào tạo" />} />
-          <Route path="/reports/finance" element={<Placeholder title="Báo cáo tài chính (Doanh số buổi nghỉ)" />} />
+          <Route path="/reports/training" element={<TrainingReport />} />
+          <Route path="/reports/finance" element={<RevenueReport />} />
           
           {/* Settings Routes */}
           <Route path="/settings/staff" element={<StaffManager />} />
