@@ -22,7 +22,9 @@ import { SalaryConfig } from './pages/SalaryConfig';
 import { WorkConfirmation } from './pages/WorkConfirmation';
 import { SalaryReportTeacher } from './pages/SalaryReportTeacher';
 import { SalaryReportStaff } from './pages/SalaryReportStaff';
+import { Login } from './pages/Login';
 import { StudentStatus } from './types';
+import { useAuth } from './src/hooks/useAuth';
 
 // Placeholder components for routes not fully implemented
 const Placeholder: React.FC<{ title: string }> = ({ title }) => (
@@ -47,12 +49,41 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   );
 };
 
+// Protected Route Component
+const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-center">
+          <div className="inline-block w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="text-gray-600">Đang tải...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
 const App: React.FC = () => {
   return (
     <HashRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
+      <Routes>
+        {/* Public Route */}
+        <Route path="/login" element={<Login />} />
+        
+        {/* Protected Routes */}
+        <Route path="/*" element={
+          <ProtectedRoute>
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
           
           {/* Training Routes */}
           <Route path="/training/classes" element={<ClassManager />} />
@@ -98,9 +129,12 @@ const App: React.FC = () => {
           <Route path="/settings/center" element={<Placeholder title="Thêm trung tâm" />} />
           <Route path="/settings/curriculum" element={<Placeholder title="Thêm giáo trình" />} />
           
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Layout>
+          </ProtectedRoute>
+        } />
+      </Routes>
     </HashRouter>
   );
 };
