@@ -1,27 +1,26 @@
 /**
- * useParents Hook
- * React hook for parent operations
+ * useParents Hook (Refactored)
+ * - Parents với children query từ students collection
  */
 
 import { useState, useEffect } from 'react';
-import { StudentStatus } from '../../types';
+import { Parent } from '../../types';
 import * as parentService from '../services/parentService';
-import { ParentData } from '../services/parentService';
+import { ParentWithChildren } from '../services/parentService';
 
 interface UseParentsReturn {
-  parents: ParentData[];
+  parents: ParentWithChildren[];
   loading: boolean;
   error: string | null;
-  createParent: (data: Omit<ParentData, 'id'>) => Promise<string>;
-  updateParent: (id: string, data: Partial<ParentData>) => Promise<void>;
+  createParent: (data: Omit<Parent, 'id'>) => Promise<string>;
+  updateParent: (id: string, data: Partial<Parent>) => Promise<void>;
   deleteParent: (id: string) => Promise<void>;
-  addChild: (parentId: string, child: { id: string; name: string; dob: string; class: string; status: StudentStatus }) => Promise<void>;
-  removeChild: (parentId: string, childId: string) => Promise<void>;
+  findByPhone: (phone: string) => Promise<Parent | null>;
   refresh: () => Promise<void>;
 }
 
 export const useParents = (searchTerm?: string): UseParentsReturn => {
-  const [parents, setParents] = useState<ParentData[]>([]);
+  const [parents, setParents] = useState<ParentWithChildren[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +28,7 @@ export const useParents = (searchTerm?: string): UseParentsReturn => {
     try {
       setLoading(true);
       setError(null);
-      const data = await parentService.getParents(searchTerm);
+      const data = await parentService.getParentsWithChildren(searchTerm);
       setParents(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -42,13 +41,13 @@ export const useParents = (searchTerm?: string): UseParentsReturn => {
     fetchParents();
   }, [searchTerm]);
 
-  const createParent = async (data: Omit<ParentData, 'id'>): Promise<string> => {
+  const createParent = async (data: Omit<Parent, 'id'>): Promise<string> => {
     const id = await parentService.createParent(data);
     await fetchParents();
     return id;
   };
 
-  const updateParent = async (id: string, data: Partial<ParentData>): Promise<void> => {
+  const updateParent = async (id: string, data: Partial<Parent>): Promise<void> => {
     await parentService.updateParent(id, data);
     await fetchParents();
   };
@@ -58,17 +57,8 @@ export const useParents = (searchTerm?: string): UseParentsReturn => {
     await fetchParents();
   };
 
-  const addChild = async (
-    parentId: string,
-    child: { id: string; name: string; dob: string; class: string; status: StudentStatus }
-  ): Promise<void> => {
-    await parentService.addChildToParent(parentId, child);
-    await fetchParents();
-  };
-
-  const removeChild = async (parentId: string, childId: string): Promise<void> => {
-    await parentService.removeChildFromParent(parentId, childId);
-    await fetchParents();
+  const findByPhone = async (phone: string): Promise<Parent | null> => {
+    return parentService.findParentByPhone(phone);
   };
 
   return {
@@ -78,8 +68,7 @@ export const useParents = (searchTerm?: string): UseParentsReturn => {
     createParent,
     updateParent,
     deleteParent,
-    addChild,
-    removeChild,
+    findByPhone,
     refresh: fetchParents,
   };
 };
