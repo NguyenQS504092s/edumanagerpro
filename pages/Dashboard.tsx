@@ -529,87 +529,9 @@ export const Dashboard: React.FC = () => {
               </div>
             )}
           </div>
-
-          {/* Bottom Tables Row */}
-          <div className="grid grid-cols-2 gap-4">
-            {/* Dự báo lương */}
-            <div className="bg-white rounded-lg p-3 shadow-sm">
-              <div className="flex justify-between items-center mb-2">
-                <h3 className="font-bold text-gray-700 text-xs">Dự báo lương</h3>
-                <span className="text-xs text-gray-500">{currentMonth}</span>
-              </div>
-              <table className="w-full text-xs">
-                <tbody>
-                  {stats.salaryForecast.map((item, idx) => (
-                    <tr key={idx} className={idx === stats.salaryForecast.length - 1 ? 'font-bold border-t' : ''}>
-                      <td className="py-1">{item.position}</td>
-                      <td className="py-1 text-right text-blue-600">{formatCurrency(item.amount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="text-xs text-gray-400 mt-2">Chiếm tỉ lệ: {stats.salaryPercent}%</div>
-            </div>
-
-            {/* Chỉ số sức khỏe doanh nghiệp */}
-            <div className="bg-white rounded-lg p-3 shadow-sm">
-              <div className="flex justify-between items-center mb-2">
-                <h3 className="font-bold text-gray-700 text-xs">CHỈ SỐ SỨC KHỎE DOANH NGHIỆP</h3>
-                <span className="text-xs text-gray-500">{currentMonth}</span>
-              </div>
-              <table className="w-full text-xs">
-                <thead className="text-gray-500">
-                  <tr>
-                    <th className="text-left py-1">Hạng mục</th>
-                    <th className="text-center py-1">Số liệu</th>
-                    <th className="text-right py-1">Đánh giá</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.businessHealth.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="py-1">{item.metric}</td>
-                      <td className="py-1 text-center">{item.value}%</td>
-                      <td className={`py-1 text-right font-medium ${
-                        item.status === 'Tốt' ? 'text-green-600' : 
-                        item.status === 'Cần cải thiện' ? 'text-red-500' : 'text-orange-500'
-                      }`}>{item.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Vật phẩm còn lại trong kho */}
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <h3 className="font-bold text-gray-700 text-xs mb-2 text-center border-b pb-2">VẬT PHẨM CÒN LẠI TRONG KHO</h3>
-            <table className="w-full text-xs">
-              <thead className="text-gray-500 border-b">
-                <tr>
-                  <th className="text-left py-1">Hạng Mục</th>
-                  <th className="text-right py-1">Số lượng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.lowStockProducts.length > 0 ? (
-                  stats.lowStockProducts.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="py-1">{item.name}</td>
-                      <td className="py-1 text-right font-bold text-blue-600">{item.quantity}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có sản phẩm</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         </div>
 
-        {/* Right Column */}
+        {/* Right Column - Pie Charts */}
         <div className="col-span-5 space-y-4">
           {/* Revenue Pie Chart */}
           <div className="bg-white rounded-lg p-4 shadow-sm">
@@ -624,14 +546,14 @@ export const Dashboard: React.FC = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={revenuePieData}
+                    data={revenuePieData.length > 0 ? revenuePieData : [{ name: 'Chưa có', value: 1, color: '#e5e7eb' }]}
                     cx="50%"
                     cy="50%"
                     outerRadius={60}
                     dataKey="value"
-                    label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+                    label={revenuePieData.length > 0 ? ({ percent }) => `${(percent * 100).toFixed(0)}%` : undefined}
                   >
-                    {revenuePieData.map((entry, index) => (
+                    {(revenuePieData.length > 0 ? revenuePieData : [{ color: '#e5e7eb' }]).map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color || PIE_COLORS[index % PIE_COLORS.length]} />
                     ))}
                   </Pie>
@@ -640,7 +562,6 @@ export const Dashboard: React.FC = () => {
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <p className="text-xs text-gray-400 text-center">Lấy từ báo cáo tài chính</p>
           </div>
 
           {/* Debt Pie Chart */}
@@ -661,7 +582,7 @@ export const Dashboard: React.FC = () => {
                     cy="50%"
                     outerRadius={60}
                     dataKey="value"
-                    label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+                    label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
                   >
                     <Cell fill="#3b82f6" />
                     <Cell fill="#eab308" />
@@ -672,76 +593,211 @@ export const Dashboard: React.FC = () => {
               </ResponsiveContainer>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Statistics Table */}
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <h3 className="font-bold text-gray-700 text-xs mb-2 text-center border-b pb-2">THỐNG KÊ</h3>
-            <div className="grid grid-cols-2 gap-4 text-xs">
-              <div>
-                <table className="w-full">
-                  <thead className="text-gray-500">
-                    <tr>
-                      <th className="text-left py-1">Tổng mức</th>
-                      <th className="text-right py-1">Số lượng</th>
+      {/* Bottom Section - 2 columns */}
+      <div className="grid grid-cols-2 gap-4 mt-4">
+        {/* Left Column */}
+        <div className="space-y-4">
+          {/* Dự báo lương */}
+          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
+            <div className="flex justify-between items-center mb-2 bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
+              <h3 className="font-bold text-white text-xs">Dự báo lương</h3>
+              <span className="text-xs text-white">{currentMonth}</span>
+            </div>
+            <table className="w-full text-xs mt-2">
+              <tbody>
+                {stats.salaryForecast.map((item, idx) => (
+                  <tr key={idx} className={idx === stats.salaryForecast.length - 1 ? 'font-bold border-t border-gray-300' : 'border-b border-gray-100'}>
+                    <td className="py-1.5">{item.position}</td>
+                    <td className="py-1.5 text-right text-blue-600">{formatCurrency(item.amount)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-gray-300">
+                  <td className="py-1.5 font-medium">Chiếm tỉ lệ</td>
+                  <td className="py-1.5 text-right text-blue-600 font-medium">{stats.salaryPercent}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Chỉ số sức khỏe doanh nghiệp */}
+          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
+            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
+              <h3 className="font-bold text-white text-xs text-center">CHỈ SỐ SỨC KHỎE DOANH NGHIỆP</h3>
+              <p className="text-white text-xs text-center">{currentMonth}</p>
+            </div>
+            <table className="w-full text-xs mt-2">
+              <thead className="text-gray-600 border-b">
+                <tr>
+                  <th className="text-left py-1">Hạng mục</th>
+                  <th className="text-center py-1">Số liệu</th>
+                  <th className="text-right py-1">Đánh giá</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.businessHealth.map((item, idx) => (
+                  <tr key={idx} className="border-b border-gray-100">
+                    <td className="py-1.5">{item.metric}</td>
+                    <td className="py-1.5 text-center">{item.value}%</td>
+                    <td className={`py-1.5 text-right font-medium ${
+                      item.status === 'Tốt' ? 'text-green-600' : 
+                      item.status === 'Cần cải thiện' ? 'text-red-500' : 'text-orange-500'
+                    }`}>{item.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Vật phẩm còn lại trong kho */}
+          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
+            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
+              <h3 className="font-bold text-white text-xs text-center">VẬT PHẨM CÒN LẠI TRONG KHO</h3>
+            </div>
+            <table className="w-full text-xs mt-2">
+              <thead className="text-gray-600 border-b">
+                <tr>
+                  <th className="text-left py-1">Hạng Mục</th>
+                  <th className="text-right py-1">Số lượng</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.lowStockProducts.length > 0 ? (
+                  stats.lowStockProducts.map((item, idx) => (
+                    <tr key={idx} className="border-b border-gray-100">
+                      <td className="py-1.5">{item.name}</td>
+                      <td className="py-1.5 text-right font-bold text-blue-600">{item.quantity}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    <tr><td>Học viên</td><td className="text-right">Học viên</td></tr>
-                    <tr><td>Khóa mới</td><td className="text-right">Tái đăng ký</td></tr>
-                    <tr><td>Thanh toán</td><td className="text-right">TOP 5</td></tr>
-                  </tbody>
-                </table>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có sản phẩm</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+{/* Right Column */}
+        <div className="space-y-4">
+          {/* THỐNG KÊ */}
+          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
+            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
+              <h3 className="font-bold text-white text-xs text-center">THỐNG KÊ</h3>
+            </div>
+            
+            {/* Filter row */}
+            <div className="grid grid-cols-2 gap-2 text-xs mt-2 mb-3 p-2 bg-green-50 rounded">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Xem theo tháng</span>
               </div>
-              <div>
-                <table className="w-full">
-                  <thead className="text-gray-500">
-                    <tr>
-                      <th className="text-left py-1">Tên lớp mức</th>
-                      <th className="text-right py-1">Sĩ số chi tiết</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats.classStats.map((item, idx) => (
-                      <tr key={idx}>
-                        <td className="py-1">{item.name}</td>
-                        <td className="py-1 text-right">{item.count}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div></div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Hạng mục thống kê</span>
+                <span className="text-green-600 font-medium">Lương nhân sự</span>
+              </div>
+              <div></div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Kiểu xem</span>
+                <span className="text-green-600 font-medium">Từ thấp tới cao</span>
+              </div>
+              <div></div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Hiển thị</span>
+                <span className="text-green-600 font-medium">TOP 5</span>
               </div>
             </div>
-            <div className="mt-3 pt-2 border-t text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div><span className="text-gray-500">Hạng mục</span> <span className="font-bold">Diễn giải</span></div>
-                <div><span className="text-gray-500">Tỉ lệ theo</span> <span>Tỉ lệ chuyển đổi của đơn hàng trưng tâm</span></div>
-                <div><span className="text-gray-500">Tỉ lệ bài bài</span> <span>Số học viên đăng học/ tổng số / nghỉ/bỏ học</span></div>
-              </div>
+
+            {/* Class stats table */}
+            <table className="w-full text-xs border border-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left py-1.5 px-2 border-b">Tên Hạng mục</th>
+                  <th className="text-right py-1.5 px-2 border-b">Số liệu chi tiết</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.classStats.length > 0 ? (
+                  stats.classStats.map((item, idx) => (
+                    <tr key={idx} className="border-b border-gray-100">
+                      <td className="py-1.5 px-2">{item.name}</td>
+                      <td className="py-1.5 px-2 text-right">{item.count}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có dữ liệu</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            {/* Diễn giải table */}
+            <div className="mt-3 pt-2 border-t">
+              <table className="w-full text-xs">
+                <thead className="text-gray-500">
+                  <tr>
+                    <th className="text-left py-1">Hạng mục</th>
+                    <th className="text-left py-1">Diễn giải</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5">Tỉ lệ đi học</td>
+                    <td className="py-1.5 text-gray-600 italic">Tỉ lệ chuyên cần của toàn trung tâm</td>
+                  </tr>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5">Tỉ lệ bồi bài</td>
+                    <td className="py-1.5 text-gray-600 italic">Tỉ lệ nghỉ được bồi</td>
+                  </tr>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5">Số lượng học sinh</td>
+                    <td className="py-1.5 text-gray-600 italic">Số học sinh đang học + nợ phí đang học</td>
+                  </tr>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5">Doanh thu thực tế</td>
+                    <td className="py-1.5 text-gray-600 italic">Doanh thu thực tế hiện tại</td>
+                  </tr>
+                  <tr className="border-b border-gray-100">
+                    <td className="py-1.5">Lợi nhuận thực tế</td>
+                    <td className="py-1.5 text-gray-600 italic">Doanh thu - chi phí giáo viên + trợ giảng của lớp</td>
+                  </tr>
+                  <tr>
+                    <td className="py-1.5">Lương nhân viên</td>
+                    <td className="py-1.5 text-gray-600 italic">Xếp hạng lương nhận được của nhân viên</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
-          {/* Sinh nhật của nhân sự */}
-          <div className="bg-white rounded-lg p-3 shadow-sm">
-            <h3 className="font-bold text-gray-700 text-xs mb-2 text-center border-b pb-2">SINH NHẬT CỦA NHÂN SỰ</h3>
-            <div className="flex items-center gap-2 text-xs mb-2">
+          {/* SINH NHẬT CỦA NHÂN SỰ */}
+          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
+            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
+              <h3 className="font-bold text-white text-xs text-center">SINH NHẬT CỦA NHÂN SỰ</h3>
+            </div>
+            <div className="flex items-center gap-2 text-xs mt-2 mb-2">
               <span className="text-gray-500">Hiển thị theo</span>
               <span className="font-medium text-green-600">Tháng</span>
             </div>
-            <table className="w-full text-xs">
-              <thead className="text-gray-500 border-b">
+            <table className="w-full text-xs border border-gray-200">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left py-1">Tên nhân sự</th>
-                  <th className="text-center py-1">Vị trí</th>
-                  <th className="text-right py-1">Ngày SN</th>
+                  <th className="text-left py-1.5 px-2 border-b">Tên nhân sự</th>
+                  <th className="text-center py-1.5 px-2 border-b">Vị trí</th>
+                  <th className="text-right py-1.5 px-2 border-b">Ngày SN</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.upcomingBirthdays.length > 0 ? (
                   stats.upcomingBirthdays.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="py-1">{item.name}</td>
-                      <td className="py-1 text-center">{item.position}</td>
-                      <td className="py-1 text-right">{item.date}</td>
+                    <tr key={idx} className="border-b border-gray-100">
+                      <td className="py-1.5 px-2">{item.name}</td>
+                      <td className="py-1.5 px-2 text-center">{item.position}</td>
+                      <td className="py-1.5 px-2 text-right">{item.date}</td>
                     </tr>
                   ))
                 ) : (
