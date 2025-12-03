@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Filter, MoreVertical, Eye, Edit, Trash, Users, BookOpen, Calendar, Clock, MapPin, ChevronDown, RotateCcw } from 'lucide-react';
+import { Search, Plus, Filter, MoreVertical, Eye, Edit, Trash, Users, BookOpen, Calendar, Clock, MapPin, ChevronDown, RotateCcw, History, X } from 'lucide-react';
 import { MOCK_CLASSES, MOCK_SCHEDULE } from '../mockData';
 import { ClassStatus, ClassModel } from '../types';
 
@@ -7,6 +7,7 @@ export const ClassManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [teacherFilter, setTeacherFilter] = useState('');
   const [viewMode, setViewMode] = useState<'stats' | 'curriculum'>('stats');
+  const [selectedClassHistory, setSelectedClassHistory] = useState<ClassModel | null>(null);
 
   // Derive unique teachers for the filter dropdown
   const teachers = useMemo(() => {
@@ -319,7 +320,14 @@ export const ClassManager: React.FC = () => {
                       )}
                       
                       <td className="px-6 py-5 align-top text-right">
-                        <div className="flex items-center justify-center gap-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <button 
+                            className="text-gray-400 hover:text-purple-600 transition-colors" 
+                            title="Lịch sử"
+                            onClick={() => setSelectedClassHistory(cls)}
+                          >
+                            <History size={18} />
+                          </button>
                           <button className="text-gray-400 hover:text-indigo-600 transition-colors" title="Chỉnh sửa">
                             <Edit size={18} />
                           </button>
@@ -356,6 +364,174 @@ export const ClassManager: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {/* History Modal */}
+      {selectedClassHistory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-purple-50 to-indigo-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <History className="text-purple-600" size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">Lịch sử lớp học</h3>
+                  <p className="text-sm text-gray-600">{selectedClassHistory.name}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedClassHistory(null)}
+                className="text-gray-400 hover:text-gray-600 p-2 hover:bg-white rounded-lg transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto flex-1">
+              {/* Class Info Summary */}
+              <div className="bg-gray-50 rounded-lg p-4 mb-6 border border-gray-200">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500 text-xs mb-1">Giáo trình</p>
+                    <p className="font-semibold text-gray-900">{selectedClassHistory.curriculum}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 text-xs mb-1">Độ tuổi</p>
+                    <p className="font-semibold text-gray-900">{selectedClassHistory.ageGroup}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 text-xs mb-1">Ngày bắt đầu</p>
+                    <p className="font-semibold text-gray-900">{selectedClassHistory.startDate}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 text-xs mb-1">Ngày kết thúc</p>
+                    <p className="font-semibold text-gray-900">{selectedClassHistory.endDate}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div className="space-y-6">
+                <h4 className="font-bold text-gray-700 text-sm uppercase tracking-wide">Dòng thời gian</h4>
+                
+                <div className="relative border-l-2 border-purple-200 ml-4 pl-6 space-y-6">
+                  {/* Event 1: Class Created */}
+                  <div className="relative">
+                    <div className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-green-500 ring-4 ring-white"></div>
+                    <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-1 rounded">Tạo lớp</span>
+                        <span className="text-xs text-gray-500">{selectedClassHistory.startDate}</span>
+                      </div>
+                      <p className="text-sm text-gray-800">
+                        Lớp học <span className="font-bold">{selectedClassHistory.name}</span> được tạo
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Giáo viên: {selectedClassHistory.teacher} | Sĩ số: {selectedClassHistory.studentsCount} học viên
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Event 2: Teacher Changed (Example) */}
+                  {selectedClassHistory.assistant && (
+                    <div className="relative">
+                      <div className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-blue-500 ring-4 ring-white"></div>
+                      <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">Thêm trợ giảng</span>
+                          <span className="text-xs text-gray-500">{selectedClassHistory.startDate}</span>
+                        </div>
+                        <p className="text-sm text-gray-800">
+                          Trợ giảng <span className="font-bold">{selectedClassHistory.assistant}</span> được thêm vào lớp
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Event 3: Foreign Teacher (Example) */}
+                  {selectedClassHistory.foreignTeacher && (
+                    <div className="relative">
+                      <div className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-purple-500 ring-4 ring-white"></div>
+                      <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-semibold text-purple-600 bg-purple-50 px-2 py-1 rounded">GV Nước ngoài</span>
+                          <span className="text-xs text-gray-500">{selectedClassHistory.startDate}</span>
+                        </div>
+                        <p className="text-sm text-gray-800">
+                          Giáo viên nước ngoài <span className="font-bold">{selectedClassHistory.foreignTeacher}</span> tham gia giảng dạy
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Event 4: Current Progress */}
+                  <div className="relative">
+                    <div className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-indigo-500 ring-4 ring-white"></div>
+                    <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">Tiến độ hiện tại</span>
+                        <span className="text-xs text-gray-500">Hôm nay</span>
+                      </div>
+                      <p className="text-sm text-gray-800 mb-2">
+                        Lớp đã học được <span className="font-bold">{selectedClassHistory.progress}</span>
+                      </p>
+                      <div className="w-full bg-gray-100 rounded-full h-2">
+                        <div 
+                          className="bg-indigo-500 h-2 rounded-full transition-all duration-500" 
+                          style={{ width: `${(parseInt(selectedClassHistory.progress.split('/')[0]) / parseInt(selectedClassHistory.progress.split('/')[1])) * 100}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Event 5: Status */}
+                  {selectedClassHistory.status === ClassStatus.FINISHED && (
+                    <div className="relative">
+                      <div className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-gray-700 ring-4 ring-white"></div>
+                      <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded">Kết thúc</span>
+                          <span className="text-xs text-gray-500">{selectedClassHistory.endDate}</span>
+                        </div>
+                        <p className="text-sm text-gray-800">
+                          Lớp học đã hoàn thành chương trình
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedClassHistory.status === ClassStatus.PAUSED && (
+                    <div className="relative">
+                      <div className="absolute -left-[29px] top-1 w-4 h-4 rounded-full bg-yellow-500 ring-4 ring-white"></div>
+                      <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="text-xs font-semibold text-yellow-700 bg-yellow-50 px-2 py-1 rounded">Tạm dừng</span>
+                          <span className="text-xs text-gray-500">Hôm nay</span>
+                        </div>
+                        <p className="text-sm text-gray-800">
+                          Lớp học tạm thời dừng hoạt động
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button 
+                onClick={() => setSelectedClassHistory(null)}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
