@@ -114,20 +114,21 @@ const generateStudents = (parentIds: string[], classIds: string[], classNames: s
   const recentDate = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000).toISOString();
   const oldDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
   
+  // Status enum values: 'Đang học' | 'Bảo lưu' | 'Đã nghỉ' | 'Học thử'
   return [
-    // Nợ phí - 12 học viên
-    { name: 'Nguyễn Minh An', phone: '0920000001', status: 'Nợ phí', hasDebt: true, className: classNames[0], classId: classIds[0], parentId: parentIds[0], birthDate: '2015-03-15', createdAt: oldDate },
-    { name: 'Trần Bảo Ngọc', phone: '0920000002', status: 'Nợ phí', hasDebt: true, className: classNames[0], classId: classIds[0], parentId: parentIds[1], birthDate: '2014-07-22', createdAt: oldDate },
-    { name: 'Lê Hoàng Nam', phone: '0920000003', status: 'Nợ phí', hasDebt: true, className: classNames[1], classId: classIds[1], parentId: parentIds[2], birthDate: '2015-11-08', createdAt: oldDate },
-    { name: 'Phạm Thu Hà', phone: '0920000004', status: 'Nợ phí', hasDebt: true, className: classNames[1], classId: classIds[1], parentId: parentIds[3], birthDate: '2014-05-20', createdAt: oldDate },
-    { name: 'Hoàng Gia Bảo', phone: '0920000005', status: 'Nợ phí', hasDebt: true, className: classNames[2], classId: classIds[2], parentId: parentIds[4], birthDate: '2013-09-12', createdAt: oldDate },
-    { name: 'Vũ Khánh Linh', phone: '0920000006', status: 'Nợ phí', hasDebt: true, className: classNames[2], classId: classIds[2], parentId: parentIds[5], birthDate: '2014-12-25', createdAt: oldDate },
-    { name: 'Đặng Quốc Huy', phone: '0920000007', status: 'Nợ phí', hasDebt: true, className: classNames[3], classId: classIds[3], parentId: parentIds[6], birthDate: '2012-04-18', createdAt: oldDate },
-    { name: 'Bùi Thanh Mai', phone: '0920000008', status: 'Nợ phí', hasDebt: true, className: classNames[3], classId: classIds[3], parentId: parentIds[7], birthDate: '2013-08-30', createdAt: oldDate },
-    { name: 'Ngô Đức Minh', phone: '0920000009', status: 'Nợ phí', hasDebt: true, className: classNames[4], classId: classIds[4], parentId: parentIds[8], birthDate: '2011-02-14', createdAt: oldDate },
-    { name: 'Đinh Phương Anh', phone: '0920000010', status: 'Nợ phí', hasDebt: true, className: classNames[4], classId: classIds[4], parentId: parentIds[9], birthDate: '2012-06-28', createdAt: oldDate },
-    { name: 'Trương Minh Khang', phone: '0920000011', status: 'Nợ phí', hasDebt: true, className: classNames[5], classId: classIds[5], parentId: parentIds[0], birthDate: '2010-10-05', createdAt: oldDate },
-    { name: 'Lý Thị Hương', phone: '0920000012', status: 'Nợ phí', hasDebt: true, className: classNames[5], classId: classIds[5], parentId: parentIds[1], birthDate: '2011-01-17', createdAt: oldDate },
+    // Đang học + Nợ phí - 12 học viên (hasDebt: true)
+    { name: 'Nguyễn Minh An', phone: '0920000001', status: 'Đang học', hasDebt: true, className: classNames[0], classId: classIds[0], parentId: parentIds[0], birthDate: '2015-03-15', createdAt: oldDate },
+    { name: 'Trần Bảo Ngọc', phone: '0920000002', status: 'Đang học', hasDebt: true, className: classNames[0], classId: classIds[0], parentId: parentIds[1], birthDate: '2014-07-22', createdAt: oldDate },
+    { name: 'Lê Hoàng Nam', phone: '0920000003', status: 'Đang học', hasDebt: true, className: classNames[1], classId: classIds[1], parentId: parentIds[2], birthDate: '2015-11-08', createdAt: oldDate },
+    { name: 'Phạm Thu Hà', phone: '0920000004', status: 'Đang học', hasDebt: true, className: classNames[1], classId: classIds[1], parentId: parentIds[3], birthDate: '2014-05-20', createdAt: oldDate },
+    { name: 'Hoàng Gia Bảo', phone: '0920000005', status: 'Đang học', hasDebt: true, className: classNames[2], classId: classIds[2], parentId: parentIds[4], birthDate: '2013-09-12', createdAt: oldDate },
+    { name: 'Vũ Khánh Linh', phone: '0920000006', status: 'Đang học', hasDebt: true, className: classNames[2], classId: classIds[2], parentId: parentIds[5], birthDate: '2014-12-25', createdAt: oldDate },
+    { name: 'Đặng Quốc Huy', phone: '0920000007', status: 'Đang học', hasDebt: true, className: classNames[3], classId: classIds[3], parentId: parentIds[6], birthDate: '2012-04-18', createdAt: oldDate },
+    { name: 'Bùi Thanh Mai', phone: '0920000008', status: 'Đang học', hasDebt: true, className: classNames[3], classId: classIds[3], parentId: parentIds[7], birthDate: '2013-08-30', createdAt: oldDate },
+    { name: 'Ngô Đức Minh', phone: '0920000009', status: 'Đang học', hasDebt: true, className: classNames[4], classId: classIds[4], parentId: parentIds[8], birthDate: '2011-02-14', createdAt: oldDate },
+    { name: 'Đinh Phương Anh', phone: '0920000010', status: 'Đang học', hasDebt: true, className: classNames[4], classId: classIds[4], parentId: parentIds[9], birthDate: '2012-06-28', createdAt: oldDate },
+    { name: 'Trương Minh Khang', phone: '0920000011', status: 'Đang học', hasDebt: true, className: classNames[5], classId: classIds[5], parentId: parentIds[0], birthDate: '2010-10-05', createdAt: oldDate },
+    { name: 'Lý Thị Hương', phone: '0920000012', status: 'Đang học', hasDebt: true, className: classNames[5], classId: classIds[5], parentId: parentIds[1], birthDate: '2011-01-17', createdAt: oldDate },
     
     // Học thử - 8 học viên
     { name: 'Cao Minh Tuấn', phone: '0920000013', status: 'Học thử', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[2], birthDate: '2015-05-10', createdAt: recentDate },
@@ -146,23 +147,23 @@ const generateStudents = (parentIds: string[], classIds: string[], classNames: s
     { name: 'Tạ Thanh Tâm', phone: '0920000024', status: 'Bảo lưu', hasDebt: false, className: classNames[3], classId: classIds[3], parentId: parentIds[3], birthDate: '2012-01-05', createdAt: oldDate },
     { name: 'Quách Hồng Nhung', phone: '0920000025', status: 'Bảo lưu', hasDebt: false, className: classNames[4], classId: classIds[4], parentId: parentIds[4], birthDate: '2011-05-19', createdAt: oldDate },
     
-    // Nghỉ học - 4 học viên
-    { name: 'Trịnh Tuấn Kiệt', phone: '0920000026', status: 'Nghỉ học', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[5], birthDate: '2015-09-03', createdAt: oldDate },
-    { name: 'Thái Bích Ngọc', phone: '0920000027', status: 'Nghỉ học', hasDebt: false, className: classNames[1], classId: classIds[1], parentId: parentIds[6], birthDate: '2014-12-17', createdAt: oldDate },
-    { name: 'La Văn Đạt', phone: '0920000028', status: 'Nghỉ học', hasDebt: false, className: classNames[2], classId: classIds[2], parentId: parentIds[7], birthDate: '2013-04-30', createdAt: oldDate },
-    { name: 'Mạc Thùy Dương', phone: '0920000029', status: 'Nghỉ học', hasDebt: false, className: classNames[3], classId: classIds[3], parentId: parentIds[8], birthDate: '2012-08-11', createdAt: oldDate },
+    // Đã nghỉ - 4 học viên
+    { name: 'Trịnh Tuấn Kiệt', phone: '0920000026', status: 'Đã nghỉ', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[5], birthDate: '2015-09-03', createdAt: oldDate },
+    { name: 'Thái Bích Ngọc', phone: '0920000027', status: 'Đã nghỉ', hasDebt: false, className: classNames[1], classId: classIds[1], parentId: parentIds[6], birthDate: '2014-12-17', createdAt: oldDate },
+    { name: 'La Văn Đạt', phone: '0920000028', status: 'Đã nghỉ', hasDebt: false, className: classNames[2], classId: classIds[2], parentId: parentIds[7], birthDate: '2013-04-30', createdAt: oldDate },
+    { name: 'Mạc Thùy Dương', phone: '0920000029', status: 'Đã nghỉ', hasDebt: false, className: classNames[3], classId: classIds[3], parentId: parentIds[8], birthDate: '2012-08-11', createdAt: oldDate },
     
-    // HV mới (Active, createdAt trong 30 ngày) - 10 học viên
-    { name: 'Âu Minh Quân', phone: '0920000030', status: 'Active', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[9], birthDate: '2015-01-25', createdAt: recentDate },
-    { name: 'Sầm Thanh Hằng', phone: '0920000031', status: 'Active', hasDebt: false, className: classNames[1], classId: classIds[1], parentId: parentIds[0], birthDate: '2014-05-08', createdAt: recentDate },
-    { name: 'Ôn Gia Hân', phone: '0920000032', status: 'Active', hasDebt: false, className: classNames[2], classId: classIds[2], parentId: parentIds[1], birthDate: '2013-09-21', createdAt: recentDate },
-    { name: 'Vi Đức Thịnh', phone: '0920000033', status: 'Active', hasDebt: false, className: classNames[3], classId: classIds[3], parentId: parentIds[2], birthDate: '2012-02-14', createdAt: recentDate },
-    { name: 'Nông Khánh Vy', phone: '0920000034', status: 'Active', hasDebt: false, className: classNames[4], classId: classIds[4], parentId: parentIds[3], birthDate: '2011-06-28', createdAt: recentDate },
-    { name: 'Giáp Minh Trí', phone: '0920000035', status: 'Active', hasDebt: false, className: classNames[5], classId: classIds[5], parentId: parentIds[4], birthDate: '2010-10-12', createdAt: recentDate },
-    { name: 'Ứng Phương Thảo', phone: '0920000036', status: 'Active', hasDebt: false, className: classNames[6], classId: classIds[6], parentId: parentIds[5], birthDate: '2009-03-05', createdAt: recentDate },
-    { name: 'Doãn Hoàng Long', phone: '0920000037', status: 'Active', hasDebt: false, className: classNames[7], classId: classIds[7], parentId: parentIds[6], birthDate: '2008-07-19', createdAt: recentDate },
-    { name: 'Cù Ngọc Diệp', phone: '0920000038', status: 'Active', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[7], birthDate: '2015-11-02', createdAt: recentDate },
-    { name: 'Khúc Văn Hưng', phone: '0920000039', status: 'Active', hasDebt: false, className: classNames[1], classId: classIds[1], parentId: parentIds[8], birthDate: '2014-04-16', createdAt: recentDate },
+    // HV mới (Đang học, createdAt trong 30 ngày) - 10 học viên
+    { name: 'Âu Minh Quân', phone: '0920000030', status: 'Đang học', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[9], birthDate: '2015-01-25', createdAt: recentDate },
+    { name: 'Sầm Thanh Hằng', phone: '0920000031', status: 'Đang học', hasDebt: false, className: classNames[1], classId: classIds[1], parentId: parentIds[0], birthDate: '2014-05-08', createdAt: recentDate },
+    { name: 'Ôn Gia Hân', phone: '0920000032', status: 'Đang học', hasDebt: false, className: classNames[2], classId: classIds[2], parentId: parentIds[1], birthDate: '2013-09-21', createdAt: recentDate },
+    { name: 'Vi Đức Thịnh', phone: '0920000033', status: 'Đang học', hasDebt: false, className: classNames[3], classId: classIds[3], parentId: parentIds[2], birthDate: '2012-02-14', createdAt: recentDate },
+    { name: 'Nông Khánh Vy', phone: '0920000034', status: 'Đang học', hasDebt: false, className: classNames[4], classId: classIds[4], parentId: parentIds[3], birthDate: '2011-06-28', createdAt: recentDate },
+    { name: 'Giáp Minh Trí', phone: '0920000035', status: 'Đang học', hasDebt: false, className: classNames[5], classId: classIds[5], parentId: parentIds[4], birthDate: '2010-10-12', createdAt: recentDate },
+    { name: 'Ứng Phương Thảo', phone: '0920000036', status: 'Đang học', hasDebt: false, className: classNames[6], classId: classIds[6], parentId: parentIds[5], birthDate: '2009-03-05', createdAt: recentDate },
+    { name: 'Doãn Hoàng Long', phone: '0920000037', status: 'Đang học', hasDebt: false, className: classNames[7], classId: classIds[7], parentId: parentIds[6], birthDate: '2008-07-19', createdAt: recentDate },
+    { name: 'Cù Ngọc Diệp', phone: '0920000038', status: 'Đang học', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[7], birthDate: '2015-11-02', createdAt: recentDate },
+    { name: 'Khúc Văn Hưng', phone: '0920000039', status: 'Đang học', hasDebt: false, className: classNames[1], classId: classIds[1], parentId: parentIds[8], birthDate: '2014-04-16', createdAt: recentDate },
     
     // Active bình thường - 20 học viên
     { name: 'Lương Thu Trang', phone: '0920000040', status: 'Active', hasDebt: false, className: classNames[0], classId: classIds[0], parentId: parentIds[9], birthDate: '2015-08-29', createdAt: oldDate },

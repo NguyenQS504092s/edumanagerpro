@@ -70,9 +70,10 @@ interface DashboardStats {
   totalRevenue: number;
   totalDebt: number;
   salaryForecast: { position: string; amount: number }[];
-  classSizeStats: { range: string; count: number; status: string }[];
+  salaryPercent: number;
+  businessHealth: { metric: string; value: number; status: string }[];
   lowStockProducts: { name: string; quantity: number }[];
-  upcomingBirthdays: { name: string; date: string; phone: string }[];
+  upcomingBirthdays: { name: string; position: string; date: string }[];
   classStats: { name: string; count: number }[];
 }
 
@@ -87,7 +88,8 @@ export const Dashboard: React.FC = () => {
     totalRevenue: 0,
     totalDebt: 0,
     salaryForecast: [],
-    classSizeStats: [],
+    salaryPercent: 0,
+    businessHealth: [],
     lowStockProducts: [],
     upcomingBirthdays: [],
     classStats: [],
@@ -246,8 +248,8 @@ export const Dashboard: React.FC = () => {
         })
         .map((s: any) => ({
           name: s.name,
-          date: new Date(s.birthDate).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }),
-          phone: s.phone || ''
+          position: s.position || 'Nhân viên',
+          date: new Date(s.birthDate).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
         }))
         .slice(0, 5);
       
@@ -257,27 +259,49 @@ export const Dashboard: React.FC = () => {
         count: c.currentStudents || 0,
       }));
       
-      // Salary forecast - calculate from salary rules and staff count
-      const salaryRulesSnap = await getDocs(collection(db, 'salaryRules'));
-      const salaryRules = salaryRulesSnap.docs.map(d => d.data());
-      const salaryForecast = salaryRules.length > 0 ? [
-        ...salaryRules.map((r: any) => ({
-          position: `Lương ${r.position}`,
-          amount: (r.baseSalary || 0) * 20 // Estimate 20 sessions/month
-        })),
-        { 
-          position: 'Tổng', 
-          amount: salaryRules.reduce((sum: number, r: any) => sum + (r.baseSalary || 0) * 20, 0)
-        }
-      ] : [];
+      // Salary forecast - theo vị trí: GV Việt, GV NN, Trợ giảng
+      const gvVietCount = staffList.filter((s: any) => s.position === 'Giáo viên' || s.position === 'GV Việt').length;
+      const gvNNCount = staffList.filter((s: any) => s.position === 'Giáo viên NN' || s.position === 'GV NN').length;
+      const troGiangCount = staffList.filter((s: any) => s.position === 'Trợ giảng').length;
       
-      // Class size stats - calculate from real data
-      const classSizeStats = classes.length > 0 ? [
-        { range: 'Lớp dưới 5 HV', count: classes.filter((c: any) => (c.currentStudents || 0) < 5).length, status: classes.filter((c: any) => (c.currentStudents || 0) < 5).length > 2 ? 'Cần cải thiện' : 'Tốt' },
-        { range: 'Lớp 5-10 HV', count: classes.filter((c: any) => (c.currentStudents || 0) >= 5 && (c.currentStudents || 0) <= 10).length, status: 'Trung Bình' },
-        { range: 'Lớp trên 10 HV', count: classes.filter((c: any) => (c.currentStudents || 0) > 10).length, status: 'Tốt' },
-        { range: 'Tỉ lệ học thử', count: Math.round((statusCounts['Học thử'] / Math.max(totalStudents, 1)) * 100), status: statusCounts['Học thử'] > 5 ? 'Tốt' : 'Trung Bình' },
-      ] : [];
+      const luongGVViet = gvVietCount * 12000000; // 12tr/GV Việt
+      const luongGVNN = gvNNCount * 25000000; // 25tr/GV NN
+      const luongTroGiang = troGiangCount * 4000000; // 4tr/Trợ giảng
+      const tongLuong = luongGVViet + luongGVNN + luongTroGiang;
+      
+      const salaryForecast = [
+        { position: 'Lương giáo viên Việt', amount: luongGVViet },
+        { position: 'Lương giáo viên NN', amount: luongGVNN },
+        { position: 'Lương trợ giảng', amount: luongTroGiang },
+        { position: 'Tổng', amount: tongLuong },
+      ];
+      const salaryPercent = totalRevenue > 0 ? Math.round((tongLuong / totalRevenue) * 100 * 100) / 100 : 0;
+      
+      // Chỉ số sức khỏe doanh nghiệp
+      const activeStudents = students.filter((s: any) => s.status === 'Đang học' || s.status === 'Active').length;
+      const debtStudents = students.filter((s: any) => s.hasDebt).length;
+      const droppedStudents = statusCounts['Nghỉ học'];
+      
+      const tiLeTaiTuc = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
+      const tiLeNoPhi = totalStudents > 0 ? Math.round((debtStudents / totalStudents) * 100) : 0;
+      const tiLeNghiHoc = totalStudents > 0 ? Math.round((droppedStudents / totalStudents) * 100) : 0;
+      const diemHaiLong = 84; // TODO: Calculate from feedback
+      const tiSuatLoiNhuan = totalRevenue > 0 ? Math.round(((totalRevenue - tongLuong) / totalRevenue) * 100) : 0;
+      
+      const getStatus = (value: number, goodThreshold: number, badThreshold: number, inverse = false) => {
+        if (inverse) {
+          return value <= goodThreshold ? 'Tốt' : value >= badThreshold ? 'Cần cải thiện' : 'Trung Bình';
+        }
+        return value >= goodThreshold ? 'Tốt' : value <= badThreshold ? 'Cần cải thiện' : 'Trung Bình';
+      };
+      
+      const businessHealth = [
+        { metric: 'Tỉ lệ tái tục', value: tiLeTaiTuc, status: getStatus(tiLeTaiTuc, 70, 40) },
+        { metric: 'Tỉ lệ nợ phí', value: tiLeNoPhi, status: getStatus(tiLeNoPhi, 10, 30, true) },
+        { metric: 'Tỉ lệ nghỉ học', value: tiLeNghiHoc, status: getStatus(tiLeNghiHoc, 5, 15, true) },
+        { metric: 'Điểm số hài lòng', value: diemHaiLong, status: getStatus(diemHaiLong, 80, 60) },
+        { metric: 'Tỉ suất lợi nhuận', value: tiSuatLoiNhuan, status: getStatus(tiSuatLoiNhuan, 40, 20) },
+      ];
       
       setStats({
         totalStudents,
@@ -292,7 +316,8 @@ export const Dashboard: React.FC = () => {
         totalRevenue,
         totalDebt,
         salaryForecast,
-        classSizeStats,
+        salaryPercent,
+        businessHealth,
         lowStockProducts,
         upcomingBirthdays,
         classStats,
@@ -317,7 +342,8 @@ export const Dashboard: React.FC = () => {
         totalRevenue: 0,
         totalDebt: 0,
         salaryForecast: [],
-        classSizeStats: [],
+        salaryPercent: 0,
+        businessHealth: [],
         lowStockProducts: [],
         upcomingBirthdays: [],
         classStats: [],
@@ -506,7 +532,7 @@ export const Dashboard: React.FC = () => {
 
           {/* Bottom Tables Row */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Salary Forecast */}
+            {/* Dự báo lương */}
             <div className="bg-white rounded-lg p-3 shadow-sm">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="font-bold text-gray-700 text-xs">Dự báo lương</h3>
@@ -522,29 +548,32 @@ export const Dashboard: React.FC = () => {
                   ))}
                 </tbody>
               </table>
-              <div className="text-xs text-gray-400 mt-2">Chiết tấu: 64.17%</div>
+              <div className="text-xs text-gray-400 mt-2">Chiếm tỉ lệ: {stats.salaryPercent}%</div>
             </div>
 
-            {/* Class Size Stats */}
+            {/* Chỉ số sức khỏe doanh nghiệp */}
             <div className="bg-white rounded-lg p-3 shadow-sm">
               <div className="flex justify-between items-center mb-2">
-                <h3 className="font-bold text-gray-700 text-xs">Giá sĩ số lớp học</h3>
+                <h3 className="font-bold text-gray-700 text-xs">CHỈ SỐ SỨC KHỎE DOANH NGHIỆP</h3>
                 <span className="text-xs text-gray-500">{currentMonth}</span>
               </div>
               <table className="w-full text-xs">
                 <thead className="text-gray-500">
                   <tr>
                     <th className="text-left py-1">Hạng mục</th>
-                    <th className="text-center py-1">Sĩ số</th>
+                    <th className="text-center py-1">Số liệu</th>
                     <th className="text-right py-1">Đánh giá</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stats.classSizeStats.map((item, idx) => (
+                  {stats.businessHealth.map((item, idx) => (
                     <tr key={idx}>
-                      <td className="py-1">{item.range}</td>
-                      <td className="py-1 text-center">{item.count}%</td>
-                      <td className="py-1 text-right text-orange-500">{item.status}</td>
+                      <td className="py-1">{item.metric}</td>
+                      <td className="py-1 text-center">{item.value}%</td>
+                      <td className={`py-1 text-right font-medium ${
+                        item.status === 'Tốt' ? 'text-green-600' : 
+                        item.status === 'Cần cải thiện' ? 'text-red-500' : 'text-orange-500'
+                      }`}>{item.status}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -552,9 +581,9 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Low Stock Products */}
+          {/* Vật phẩm còn lại trong kho */}
           <div className="bg-white rounded-lg p-3 shadow-sm">
-            <h3 className="font-bold text-gray-700 text-xs mb-2">Sản phẩm còn ít trong kho</h3>
+            <h3 className="font-bold text-gray-700 text-xs mb-2 text-center border-b pb-2">VẬT PHẨM CÒN LẠI TRONG KHO</h3>
             <table className="w-full text-xs">
               <thead className="text-gray-500 border-b">
                 <tr>
@@ -563,12 +592,18 @@ export const Dashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {stats.lowStockProducts.map((item, idx) => (
-                  <tr key={idx}>
-                    <td className="py-1">{item.name}</td>
-                    <td className="py-1 text-right font-bold text-red-500">{item.quantity}</td>
+                {stats.lowStockProducts.length > 0 ? (
+                  stats.lowStockProducts.map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="py-1">{item.name}</td>
+                      <td className="py-1 text-right font-bold text-blue-600">{item.quantity}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có sản phẩm</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -685,29 +720,35 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Upcoming Birthdays */}
+          {/* Sinh nhật của nhân sự */}
           <div className="bg-white rounded-lg p-3 shadow-sm">
-            <h3 className="font-bold text-gray-700 text-xs mb-2">Sinh nhật sắp đến nhân sự</h3>
+            <h3 className="font-bold text-gray-700 text-xs mb-2 text-center border-b pb-2">SINH NHẬT CỦA NHÂN SỰ</h3>
+            <div className="flex items-center gap-2 text-xs mb-2">
+              <span className="text-gray-500">Hiển thị theo</span>
+              <span className="font-medium text-green-600">Tháng</span>
+            </div>
             <table className="w-full text-xs">
               <thead className="text-gray-500 border-b">
                 <tr>
-                  <th className="text-left py-1">Hiển thị theo</th>
-                  <th className="text-center py-1">Tháng</th>
+                  <th className="text-left py-1">Tên nhân sự</th>
+                  <th className="text-center py-1">Vị trí</th>
+                  <th className="text-right py-1">Ngày SN</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b">
-                  <td className="py-1">Tên nhân sự</td>
-                  <td className="py-1">Ngày sinh</td>
-                  <td className="py-1">Liên hệ</td>
-                </tr>
-                {stats.upcomingBirthdays.map((item, idx) => (
-                  <tr key={idx}>
-                    <td className="py-1">{item.name}</td>
-                    <td className="py-1">{item.date}</td>
-                    <td className="py-1">{item.phone}</td>
+                {stats.upcomingBirthdays.length > 0 ? (
+                  stats.upcomingBirthdays.map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="py-1">{item.name}</td>
+                      <td className="py-1 text-center">{item.position}</td>
+                      <td className="py-1 text-right">{item.date}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} className="py-2 text-center text-gray-400">Không có sinh nhật trong tháng</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
