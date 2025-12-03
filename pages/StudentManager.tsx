@@ -48,8 +48,9 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
   const getStatusColor = (status: StudentStatus) => {
     switch(status) {
       case StudentStatus.ACTIVE: return 'text-green-600 bg-green-50 ring-green-500/10';
+      case StudentStatus.DEBT: return 'text-red-600 bg-red-50 ring-red-500/10';
       case StudentStatus.RESERVED: return 'text-yellow-600 bg-yellow-50 ring-yellow-500/10';
-      case StudentStatus.DROPPED: return 'text-red-600 bg-red-50 ring-red-500/10';
+      case StudentStatus.DROPPED: return 'text-gray-600 bg-gray-50 ring-gray-500/10';
       case StudentStatus.TRIAL: return 'text-purple-600 bg-purple-50 ring-purple-500/10';
       default: return 'text-gray-600 bg-gray-50 ring-gray-500/10';
     }
@@ -200,8 +201,10 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                     <td className="px-4 py-3">
                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold text-white ${
                             student.status === StudentStatus.ACTIVE ? 'bg-blue-500' : 
+                            student.status === StudentStatus.DEBT ? 'bg-red-500' :
                             student.status === StudentStatus.RESERVED ? 'bg-orange-500' :
-                            student.status === StudentStatus.DROPPED ? 'bg-red-500' : 'bg-gray-400'
+                            student.status === StudentStatus.DROPPED ? 'bg-gray-500' :
+                            student.status === StudentStatus.TRIAL ? 'bg-purple-500' : 'bg-gray-400'
                         }`}>
                             {student.status}
                         </span>
