@@ -14,7 +14,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Student, StudentStatus, CareLog } from '../types';
+import { Student, StudentStatus, CareLog } from '../../types';
 
 const COLLECTION_NAME = 'students';
 

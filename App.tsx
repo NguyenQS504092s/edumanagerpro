@@ -23,6 +23,7 @@ import { WorkConfirmation } from './pages/WorkConfirmation';
 import { SalaryReportTeacher } from './pages/SalaryReportTeacher';
 import { SalaryReportStaff } from './pages/SalaryReportStaff';
 import { ContractCreation } from './pages/ContractCreation';
+import { ContractList } from './pages/ContractList';
 import { Login } from './pages/Login';
 import { StudentStatus } from './types';
 import { useAuth } from './src/hooks/useAuth';
@@ -116,7 +117,7 @@ const App: React.FC = () => {
           <Route path="/hr/salary-staff" element={<SalaryReportStaff />} />
           
           {/* Finance Routes */}
-          <Route path="/finance/contracts" element={<Placeholder title="Danh sách hợp đồng" />} />
+          <Route path="/finance/contracts" element={<ContractList />} />
           <Route path="/finance/contracts/create" element={<ContractCreation />} />
           <Route path="/finance/invoices" element={<Placeholder title="Hóa đơn bán sách" />} />
           

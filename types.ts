@@ -13,6 +13,13 @@ export enum StudentStatus {
   TRIAL = 'Học thử'
 }
 
+export enum AttendanceStatus {
+  PRESENT = 'Có mặt',
+  ABSENT = 'Vắng',
+  RESERVED = 'Bảo lưu',
+  TUTORED = 'Đã bồi'
+}
+
 export interface ClassSession {
   id: string;
   className: string;
@@ -93,12 +100,30 @@ export interface TutoringSession {
 
 export interface AttendanceRecord {
   id: string;
+  classId: string;
   className: string;
   date: string;
+  sessionNumber?: number;
   totalStudents: number;
   present: number;
   absent: number;
+  reserved: number;
+  tutored: number;
   status: 'Đã điểm danh' | 'Chưa điểm danh';
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StudentAttendance {
+  id?: string;
+  attendanceId: string;
+  studentId: string;
+  studentName: string;
+  studentCode: string;
+  status: AttendanceStatus;
+  note?: string;
+  createdAt?: string;
 }
 
 export interface Product {
