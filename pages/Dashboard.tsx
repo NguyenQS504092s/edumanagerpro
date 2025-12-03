@@ -219,7 +219,7 @@ export const Dashboard: React.FC = () => {
       
       // Revenue comparison data from contracts
       const revenueData = totalRevenue > 0 ? [
-        { month: 'D.vọng', expected: totalRevenue * 1.2, actual: 0 },
+        { month: 'Kỳ vọng', expected: totalRevenue * 1.2, actual: 0 },
         { month: 'Thực tế', expected: 0, actual: totalRevenue },
         { month: 'Chênh lệch', expected: 0, actual: totalRevenue * 0.2 },
       ] : [];
@@ -464,41 +464,44 @@ export const Dashboard: React.FC = () => {
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex justify-between items-center mb-2">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Tháng 4</span>
-                <span className="text-sm font-bold text-blue-600">$103,288,533</span>
+                <span className="text-xs text-gray-500">{currentMonth}</span>
+                <span className="text-sm font-bold text-blue-600">{formatCurrency(stats.totalRevenue)}</span>
               </div>
               <div className="flex gap-4 text-xs">
                 <span className="font-bold">Doanh thu thực tế / Doanh thu kỳ vọng</span>
-                <span className="text-gray-500">{currentMonth}</span>
               </div>
             </div>
-            <div className="h-40">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart 
-                  data={[
-                    { name: 'D.vọng', value: 120000000 },
-                    { name: 'Thực tế', value: 103288533 },
-                    { name: 'Chênh lệch', value: 16711467 },
-                  ]} 
-                  margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${(v/1000000).toFixed(0)}tr`} />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    <Cell fill="#3b82f6" />
-                    <Cell fill="#22c55e" />
-                    <Cell fill="#ef4444" />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex gap-4 mt-2 text-xs justify-center">
-              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded"></div> D.vọng</div>
-              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div> Thực tế</div>
-              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Chênh lệch</div>
-            </div>
+            {stats.revenueData.length > 0 ? (
+              <>
+                <div className="h-40">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={stats.revenueData.map(r => ({ name: r.month, value: r.expected || r.actual }))}
+                      margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                      <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${(v/1000000).toFixed(0)}tr`} />
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                        <Cell fill="#3b82f6" />
+                        <Cell fill="#22c55e" />
+                        <Cell fill="#ef4444" />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex gap-4 mt-2 text-xs justify-center">
+                  <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded"></div> Kỳ vọng</div>
+                  <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div> Thực tế</div>
+                  <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Chênh lệch</div>
+                </div>
+              </>
+            ) : (
+              <div className="h-40 flex items-center justify-center text-gray-400 text-sm">
+                Chưa có dữ liệu doanh thu
+              </div>
+            )}
           </div>
 
           {/* Bottom Tables Row */}
