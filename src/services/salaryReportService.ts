@@ -1,0 +1,92 @@
+/**
+ * Salary Report Service
+ * Calculate and aggregate salary data from work sessions
+ */
+
+import { getWorkSessions, WorkSession } from './workSessionService';
+import { getSalaryRules, SalaryRule } from './salaryConfigService';
+
+export interface SalarySummary {
+  staffId: string;
+  staffName: string;
+  position: string;
+  totalSessions: number;
+  confirmedSessions: number;
+  estimatedSalary: number;
+  workDetails: WorkSessionDetail[];
+}
+
+export interface WorkSessionDetail {
+  id: string;
+  date: string;
+  time: string;
+  className: string;
+  type: string;
+  salary: number;
+  studentCount?: number;
+}
+
+export const getSalaryReport = async (month?: number, year?: number): Promise<SalarySummary[]> => {
+  try {
+    // Get all confirmed work sessions
+    const sessions = await getWorkSessions({ status: 'Đã xác nhận' });
+    const rules = await getSalaryRules();
+    
+    // Filter by month/year if provided
+    let filteredSessions = sessions;
+    if (month && year) {
+      filteredSessions = sessions.filter(s => {
+        const date = new Date(s.date);
+        return date.getMonth() + 1 === month && date.getFullYear() === year;
+      });
+    }
+    
+    // Group by staff
+    const staffMap = new Map<string, WorkSession[]>();
+    filteredSessions.forEach(session => {
+      const key = session.staffName;
+      if (!staffMap.has(key)) {
+        staffMap.set(key, []);
+      }
+      staffMap.get(key)!.push(session);
+    });
+    
+    // Calculate salary for each staff
+    const summaries: SalarySummary[] = [];
+    
+    staffMap.forEach((staffSessions, staffName) => {
+      const firstSession = staffSessions[0];
+      
+      // Find salary rule for this staff
+      const rule = rules.find(r => r.staffName === staffName);
+      const baseRate = rule?.ratePerSession || 200000;
+      
+      const workDetails: WorkSessionDetail[] = staffSessions.map(s => ({
+        id: s.id!,
+        date: s.date,
+        time: `${s.timeStart} - ${s.timeEnd}`,
+        className: s.className || '-',
+        type: s.type,
+        salary: baseRate,
+        studentCount: s.studentCount,
+      }));
+      
+      const totalSalary = workDetails.reduce((sum, d) => sum + d.salary, 0);
+      
+      summaries.push({
+        staffId: firstSession.staffId || staffName,
+        staffName,
+        position: firstSession.position,
+        totalSessions: staffSessions.length,
+        confirmedSessions: staffSessions.filter(s => s.status === 'Đã xác nhận').length,
+        estimatedSalary: totalSalary,
+        workDetails,
+      });
+    });
+    
+    return summaries.sort((a, b) => b.estimatedSalary - a.estimatedSalary);
+  } catch (error) {
+    console.error('Error generating salary report:', error);
+    throw new Error('Không thể tạo báo cáo lương');
+  }
+};
