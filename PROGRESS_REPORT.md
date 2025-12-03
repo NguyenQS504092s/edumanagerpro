@@ -399,29 +399,281 @@
 
 ---
 
-## 📈 ROADMAP ĐỀ XUẤT
+## 📋 CHI TIẾT YÊU CẦU TỪ EXCEL (Chưa implement)
 
-### **SPRINT 1: Core Operations (Week 1)**
-- [ ] Attendance & Attendance History
-- [ ] Tutoring Schedule Management
-- [ ] Parent Manager CRUD
+### **1. ĐIỂM DANH (Critical - Cần làm đầu tiên)**
+```
+Yêu cầu từ Excel:
+├── Chọn Lớp → Chọn Buổi học
+├── 4 Trạng thái:
+│   ├── Có mặt → Tính phí
+│   ├── Vắng mặt → Tính phí + Chuyển DS bồi bài
+│   ├── Nghỉ bảo lưu → Không tính phí, không bồi
+│   └── Đã bồi
+├── Điểm danh hàng loạt
+└── Tự động chuyển sang Lịch Bồi khi vắng
 
-### **SPRINT 2: Finance & HR (Week 2)**
-- [ ] Contract List & Payment tracking
-- [ ] Salary Configuration
-- [ ] Work Confirmation
+Cần implement:
+□ attendanceService.ts
+□ useAttendance hook
+□ Attendance.tsx với logic 4 trạng thái
+□ Auto-create tutoring record khi vắng
+```
 
-### **SPRINT 3: Customer & Sales (Week 3)**
-- [ ] Feedback System (Call & Form)
-- [ ] Customer Database
-- [ ] Campaign Management
-- [ ] Trial Students
+### **2. LỊCH BỒI (Liên kết với Điểm danh)**
+```
+Yêu cầu từ Excel:
+├── 2 Loại:
+│   ├── DS Học sinh nghỉ học cần bồi (từ Điểm danh)
+│   └── DS Học sinh yếu cần bồi (thêm thủ công)
+├── Columns: STT | Tên HV | Lớp | Buổi nghỉ | Ngày bồi | Người bồi | Trạng thái
+├── Đặt lịch bồi: Chọn buổi nghỉ, Lịch bồi, Người bồi
+├── Trạng thái: Chưa bồi → Đã bồi
+├── Filter: Trạng thái, Tháng
+└── Xem báo cáo
 
-### **SPRINT 4: Polish & Deploy (Week 4)**
-- [ ] Bug fixes
-- [ ] Performance optimization
-- [ ] Documentation
-- [ ] Production deployment
+Cần implement:
+□ tutoringService.ts
+□ useTutoring hook
+□ TutoringManager.tsx với 2 tabs (Nghỉ học / Yếu)
+□ Modal đặt lịch bồi
+```
+
+### **3. PHỤ HUYNH (Quick Win)**
+```
+Yêu cầu từ Excel:
+├── Tìm kiếm: Tên PH, SĐT
+├── Columns: No | Tên PH + SĐT | Học sinh | Trạng thái | Lớp học | Hành động
+├── 1 PH có thể có nhiều con
+├── Hiển thị trạng thái chung (Đang học / Bảo lưu)
+└── CRUD phụ huynh
+
+Cần implement:
+□ parentService.ts (simple)
+□ useParents hook
+□ ParentManager.tsx với search, CRUD
+```
+
+### **4. CẤU HÌNH LƯƠNG (Complex)**
+```
+Yêu cầu từ Excel:
+├── Cách tính: 1 ca = 90 phút | 1 giờ = 60 phút
+├── Columns: Tên | Vị trí | Lớp | Cách tính lương | Mức tối thiểu | Cách tính công | Sĩ số TB | Tiền/ca | Ngày hiệu lực
+├── Cách tính công:
+│   ├── Cố định → Nhân theo mức tối thiểu
+│   └── Theo sĩ số → Lấy theo sĩ số TB thực tế
+├── Bảng lương theo sĩ số: <5, 5-9, 10-20
+├── Trợ giảng có thêm: Nhận xét, Dạy chính
+└── Ngày hiệu lực
+
+Cần implement:
+□ salaryConfigService.ts
+□ useSalaryConfig hook
+□ SalaryConfig.tsx với complex form
+□ Attendance rate ranges UI
+```
+
+### **5. XÁC NHẬN CÔNG (Liên kết với Cấu hình lương)**
+```
+Yêu cầu từ Excel:
+├── Filter: Thời gian | Trạng thái | Vị trí | Tên nhân sự
+├── Tự động load từ TKB + Lịch nghỉ
+├── Columns: Tên NV | Thời gian | Lớp | Kiểu tính công | Xác nhận
+├── Kiểu tính công: Dạy chính | Trợ giảng | Nhận xét
+├── Trạng thái: Chờ xác nhận | Đã xác nhận
+├── Xác nhận hàng loạt
+├── Thêm công (+) thủ công
+└── Sau xác nhận → Chuyển sang báo cáo lương
+
+Cần implement:
+□ workSessionService.ts
+□ useWorkSessions hook
+□ WorkConfirmation.tsx
+□ Batch confirm UI
+```
+
+### **6. FEEDBACK CALL (Medium)**
+```
+Yêu cầu từ Excel:
+├── Filter: Lớp | Tháng | Trạng thái
+├── Columns: PH + SĐT | HV | Lớp | Trạng thái | GV | Chương trình | CSKH | CSVC | Điểm TB | Người gọi
+├── Chấm điểm: GV (9) | Chương trình (9) | CSVC (8) | CSKH (7) → TB: 8.25
+├── Trạng thái: Cần gọi | Đã gọi
+├── Xem theo nhân viên gọi
+└── Xem báo cáo
+
+Cần implement:
+□ feedbackService.ts
+□ useFeedback hook
+□ FeedbackCall.tsx với rating system
+□ Report view
+```
+
+### **7. CHIẾN DỊCH (Advanced)**
+```
+Yêu cầu từ Excel:
+├── Columns: Tên | Thời gian | Số KH | KH đăng ký | Tỉ lệ chuyển đổi | Trạng thái | Báo cáo
+├── Tạo chiến dịch: Tên, Thời gian, Khách hàng, Link kịch bản, Mô tả
+├── Thêm K/H | Thêm nhóm K/H
+├── Trạng thái: Đang mở | Kết thúc
+├── Ẩn chiến dịch đã kết thúc
+└── Báo cáo chi tiết
+
+Cần implement:
+□ campaignService.ts
+□ useCampaigns hook
+□ CampaignManager.tsx
+□ CampaignDetail.tsx
+□ CampaignReport.tsx
+```
+
+### **8. HỌC VIÊN HỌC THỬ (Medium)**
+```
+Yêu cầu từ Excel:
+├── Quy trình: Chờ test → Test xong → Chờ học thử → Học thử b1/b2 → Đăng ký/Không
+├── Columns: Họ tên | PH | Trạng thái | Lớp học thử | Lịch sử học thử
+├── Thêm HV tiềm năng = Tạo HV + Tư vấn viên
+├── Tự động ghi danh 2 buổi học thử
+├── Lịch sử: Buổi 1, Buổi 2
+├── Số buổi nợ phí nếu vượt 2 buổi
+└── Tư vấn viên hiển thị người tạo
+
+Cần implement:
+□ trialStudentService.ts
+□ useTrialStudents hook
+□ TrialStudentManager.tsx
+□ Workflow logic (status transitions)
+```
+
+### **9. PHÂN QUYỀN (Advanced)**
+```
+Yêu cầu từ Excel:
+├── BỘ PHẬN VĂN PHÒNG - Vị trí CSKH:
+│   ├── Dashboard hiển thị: [x]
+│   ├── Tài chính: [x]
+│   ├── Xóa hóa đơn: Cần Admin duyệt
+│   └── DS Nhân viên: Chỉ xem
+├── BỘ PHẬN ĐÀO TẠO - GV/TG:
+│   ├── Lớp học: Chỉ lớp đang dạy
+│   ├── Ẩn SĐT phụ huynh
+│   ├── TKB: Chỉ lớp đang dạy
+│   ├── Lịch nghỉ: Ẩn
+│   ├── Điểm danh: Chỉ lớp đang dạy
+│   └── Lịch sử ghi danh: Ẩn
+
+Cần implement:
+□ permissionService.ts
+□ usePermissions hook
+□ PermissionManager.tsx
+□ Role-based UI filtering
+```
+
+---
+
+## 📈 OPTIMIZED ROADMAP (Chi tiết)
+
+### **SESSION 1: Quick Wins + Core (3-4 giờ)**
+*Mục tiêu: 4 features, 35% progress*
+
+```
+1. ParentManager (30 phút)
+   □ Copy StudentManager pattern
+   □ parentService.ts
+   □ useParents hook
+   □ Search by name/phone
+   □ CRUD modal
+
+2. ContractList (30 phút)
+   □ List contracts with filters
+   □ Status badges
+   □ View/Delete actions
+
+3. Attendance (2 giờ) ⭐ CRITICAL
+   □ attendanceService.ts
+   □ Select class → Select session
+   □ 4 status: Có mặt/Vắng/Bảo lưu/Đã bồi
+   □ Batch attendance
+   □ Auto-create tutoring when absent
+
+4. TutoringManager (1 giờ)
+   □ tutoringService.ts
+   □ 2 tabs: Nghỉ học / Học yếu
+   □ Schedule modal
+   □ Link từ Attendance
+```
+
+### **SESSION 2: HR Module (4-5 giờ)**
+*Mục tiêu: Salary system hoàn chỉnh*
+
+```
+5. SalaryConfig (2 giờ)
+   □ Complex form: Per staff, per class
+   □ Calculation types: Ca/Giờ, Cố định/Sĩ số
+   □ Rate ranges (<5, 5-9, 10-20)
+   □ Effective dates
+
+6. WorkConfirmation (1.5 giờ)
+   □ Auto-load từ TKB
+   □ Filter: Date, Status, Position, Staff
+   □ Batch confirm
+   □ Manual add (+)
+
+7. SalaryReport (1.5 giờ)
+   □ Load from WorkSessions
+   □ Calculate based on SalaryConfig
+   □ Export functionality
+```
+
+### **SESSION 3: Customer & Marketing (4-5 giờ)**
+*Mục tiêu: Sales pipeline*
+
+```
+8. FeedbackCall (2 giờ)
+   □ Rating system (GV, Chương trình, CSVC, CSKH)
+   □ Average calculation
+   □ Status: Cần gọi/Đã gọi
+   □ Filter by class, month, staff
+
+9. TrialStudentManager (2 giờ)
+   □ Workflow: Chờ test → Học thử → Đăng ký
+   □ Auto-enroll 2 trial sessions
+   □ Trial history tracking
+   □ Consultant assignment
+```
+
+### **SESSION 4: Advanced Features (5-6 giờ)**
+*Mục tiêu: Full-featured system*
+
+```
+10. CampaignManager (2 giờ)
+    □ CRUD campaigns
+    □ Add customers/groups
+    □ Conversion tracking
+    □ Basic report
+
+11. PermissionManager (2 giờ)
+    □ Role-based permissions
+    □ Feature toggle per role
+    □ UI filtering based on role
+
+12. Polish & Fix (2 giờ)
+    □ Bug fixes
+    □ UI improvements
+    □ Performance optimization
+```
+
+---
+
+## ⏱️ ESTIMATED TIMELINE
+
+| Session | Features | Time | Progress |
+|---------|----------|------|----------|
+| 1: Quick + Core | Parent, Contract, Attendance, Tutoring | 3-4h | 21% → 40% |
+| 2: HR Module | SalaryConfig, WorkConfirm, SalaryReport | 4-5h | 40% → 55% |
+| 3: Customer | Feedback, TrialStudents | 4-5h | 55% → 70% |
+| 4: Advanced | Campaign, Permissions, Polish | 5-6h | 70% → 90% |
+
+**Tổng: 16-20 giờ để hoàn thành ~90% yêu cầu**
 
 ---
 
