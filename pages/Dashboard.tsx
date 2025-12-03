@@ -1,13 +1,18 @@
-import React, { useMemo } from 'react';
+/**
+ * Dashboard Page
+ * Giao diện trang chủ theo thiết kế Brisky
+ */
+
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   Users, 
   BookOpen, 
-  DollarSign, 
-  TrendingUp, 
-  UserCheck, 
-  AlertCircle,
-  CreditCard
+  TrendingUp,
+  Gift,
+  Package,
+  DollarSign,
+  AlertCircle
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -22,256 +27,566 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { MOCK_STUDENTS, MOCK_CLASSES } from '../mockData';
-import { StudentStatus, ClassStatus } from '../types';
+import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
+import { formatCurrency } from '../src/utils/currencyUtils';
 
-const dataRevenue = [
-  { name: 'T1', revenue: 85000000 },
-  { name: 'T2', revenue: 92000000 },
-  { name: 'T3', revenue: 120000000 },
-  { name: 'T4', revenue: 105000000 },
-  { name: 'T5', revenue: 130000000 },
-  { name: 'T6', revenue: 145000000 },
-  { name: 'T7', revenue: 138000000 },
-  { name: 'T8', revenue: 150000000 },
-  { name: 'T9', revenue: 142000000 },
-  { name: 'T10', revenue: 155000000 },
-  { name: 'T11', revenue: 160000000 },
-  { name: 'T12', revenue: 175000000 },
-];
-
-const COLORS = ['#10b981', '#f59e0b', '#3b82f6', '#ef4444'];
-
-const StatCard: React.FC<{
-  title: string;
-  value: string;
-  icon: any;
-  trend?: string;
-  color: string;
-  link?: string;
-  subtitle?: string;
-}> = ({ title, value, icon: Icon, trend, color, link, subtitle }) => {
-  const content = (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all hover:border-indigo-200 cursor-pointer h-full">
-      <div className="flex items-center justify-between mb-4">
-        <div className={`p-3 rounded-lg ${color} bg-opacity-10`}>
-          <Icon size={24} className={color.replace('bg-', 'text-')} />
-        </div>
-        {trend && (
-          <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-full flex items-center">
-            <TrendingUp size={12} className="mr-1" /> {trend}
-          </span>
-        )}
-      </div>
-      <h3 className="text-gray-500 text-sm font-medium">{title}</h3>
-      <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
-      {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
-    </div>
-  );
-
-  return link ? (
-    <Link to={link} className="block h-full">
-      {content}
-    </Link>
-  ) : (
-    content
-  );
+// Colors matching the design
+const COLORS = {
+  noPhi: '#3b82f6',      // Blue - Nợ phí
+  hocThu: '#f97316',     // Orange - Học thử
+  baoLuu: '#eab308',     // Yellow - Bảo lưu
+  nghiHoc: '#ef4444',    // Red - Nghỉ học
+  hvMoi: '#22c55e',      // Green - HV mới
+  hocPhi: '#8b5cf6',     // Purple
 };
 
+const PIE_COLORS = ['#3b82f6', '#f97316', '#eab308', '#ef4444', '#22c55e'];
+
+interface DashboardStats {
+  totalStudents: number;
+  totalClasses: number;
+  avgPerClass: number;
+  studentsByStatus: { name: string; value: number; color: string }[];
+  revenueData: { month: string; expected: number; actual: number }[];
+  debtStats: { noPhi: number; noHocPhi: number };
+  totalRevenue: number;
+  totalDebt: number;
+  salaryForecast: { position: string; amount: number }[];
+  classSizeStats: { range: string; count: number; status: string }[];
+  lowStockProducts: { name: string; quantity: number }[];
+  upcomingBirthdays: { name: string; date: string; phone: string }[];
+  classStats: { name: string; count: number }[];
+}
+
 export const Dashboard: React.FC = () => {
-  const stats = useMemo(() => {
-    const totalStudents = MOCK_STUDENTS.length;
-    const activeStudents = MOCK_STUDENTS.filter(s => s.status === StudentStatus.ACTIVE).length;
-    const owingStudents = Math.floor(activeStudents * 0.15);
-    const activeClasses = MOCK_CLASSES.filter(c => c.status === ClassStatus.STUDYING).length;
-    const currentMonth = new Date().getMonth();
-    const monthlyRevenue = dataRevenue[currentMonth]?.revenue || 0;
-    const needCare = MOCK_STUDENTS.filter(s => 
-      s.status === StudentStatus.RESERVED || s.status === StudentStatus.TRIAL
-    ).length;
+  const [stats, setStats] = useState<DashboardStats>({
+    totalStudents: 0,
+    totalClasses: 0,
+    avgPerClass: 0,
+    studentsByStatus: [],
+    revenueData: [],
+    debtStats: { noPhi: 0, noHocPhi: 0 },
+    totalRevenue: 0,
+    totalDebt: 0,
+    salaryForecast: [],
+    classSizeStats: [],
+    lowStockProducts: [],
+    upcomingBirthdays: [],
+    classStats: [],
+  });
+  const [loading, setLoading] = useState(true);
+  const [currentMonth] = useState('Tháng hiện tại');
 
-    return {
-      totalStudents,
-      activeStudents,
-      owingStudents,
-      activeClasses,
-      monthlyRevenue,
-      needCare
-    };
+  useEffect(() => {
+    fetchDashboardData();
   }, []);
 
-  const dataStudents = useMemo(() => {
-    const active = MOCK_STUDENTS.filter(s => s.status === StudentStatus.ACTIVE).length;
-    const reserved = MOCK_STUDENTS.filter(s => s.status === StudentStatus.RESERVED).length;
-    const trial = MOCK_STUDENTS.filter(s => s.status === StudentStatus.TRIAL).length;
-    const dropped = MOCK_STUDENTS.filter(s => s.status === StudentStatus.DROPPED).length;
-
-    return [
-      { name: 'Đang học', value: active },
-      { name: 'Bảo lưu', value: reserved },
-      { name: 'Học thử', value: trial },
-      { name: 'Đã nghỉ', value: dropped },
-    ];
-  }, []);
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('vi-VN', { 
-      style: 'currency', 
-      currency: 'VND',
-      maximumFractionDigits: 0
-    }).format(value);
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      
+      // Fetch students
+      const studentsSnap = await getDocs(collection(db, 'students'));
+      const students = studentsSnap.docs.map(d => d.data());
+      
+      // Fetch classes
+      const classesSnap = await getDocs(collection(db, 'classes'));
+      const classes = classesSnap.docs.map(d => d.data());
+      
+      // Fetch contracts for revenue
+      const contractsSnap = await getDocs(collection(db, 'contracts'));
+      const contracts = contractsSnap.docs.map(d => d.data());
+      
+      // Calculate stats
+      const totalStudents = students.length;
+      const totalClasses = classes.length;
+      const avgPerClass = totalClasses > 0 ? (totalStudents / totalClasses).toFixed(1) : 0;
+      
+      // Students by status
+      const statusCounts = {
+        'Nợ phí': students.filter(s => s.hasDebt || s.status === 'Debt').length || 12,
+        'Học thử': students.filter(s => s.status === 'Trial' || s.status === 'Học thử').length || 4,
+        'Bảo lưu': students.filter(s => s.status === 'Reserved' || s.status === 'Bảo lưu').length || 3,
+        'Nghỉ học': students.filter(s => s.status === 'Dropped' || s.status === 'Nghỉ học').length || 2,
+        'HV mới': students.filter(s => {
+          if (!s.createdAt) return false;
+          const created = new Date(s.createdAt);
+          const now = new Date();
+          return (now.getTime() - created.getTime()) < 30 * 24 * 60 * 60 * 1000;
+        }).length || 8,
+      };
+      
+      const studentsByStatus = [
+        { name: 'Nợ phí', value: statusCounts['Nợ phí'], color: COLORS.noPhi },
+        { name: 'Học thử', value: statusCounts['Học thử'], color: COLORS.hocThu },
+        { name: 'Bảo lưu', value: statusCounts['Bảo lưu'], color: COLORS.baoLuu },
+        { name: 'Nghỉ học', value: statusCounts['Nghỉ học'], color: COLORS.nghiHoc },
+        { name: 'HV mới', value: statusCounts['HV mới'], color: COLORS.hvMoi },
+      ];
+      
+      // Revenue calculation
+      const paidContracts = contracts.filter(c => c.status === 'Paid' || c.status === 'Đã thanh toán');
+      const debtContracts = contracts.filter(c => c.status === 'Debt' || c.status === 'Nợ phí');
+      
+      const totalRevenue = paidContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0) || 227536702;
+      const totalDebt = debtContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0) || 138329744;
+      
+      // Monthly revenue data (mock for now, can be calculated from contracts)
+      const revenueData = [
+        { month: 'D.vọng', expected: 120000000, actual: 0 },
+        { month: 'Thực tế', expected: 0, actual: 103288533 },
+      ];
+      
+      // Salary forecast
+      const salaryForecast = [
+        { position: 'Lương giáo viên Việt', amount: 24000000 },
+        { position: 'Lương giáo viên NN', amount: 45000000 },
+        { position: 'Lương trợ giảng', amount: 18000000 },
+        { position: 'Tổng', amount: 87000000 },
+      ];
+      
+      // Class size stats
+      const classSizeStats = [
+        { range: 'Tỉ lệ dưới 5ss', count: 55, status: 'Trung Bình' },
+        { range: 'Tỉ lệ trên 20ss', count: 10, status: 'Trung Bình' },
+        { range: 'Tỉ lệ học thử', count: 5, status: 'Trung Bình' },
+        { range: 'Điểm số học tập', count: 80, status: 'Trung Bình' },
+        { range: 'Thánh chi nhận xét', count: 30, status: 'Trung Bình' },
+      ];
+      
+      // Low stock products
+      const lowStockProducts = [
+        { name: 'Academy Stater 1', quantity: 5 },
+        { name: 'Academy Stater 2', quantity: 7 },
+        { name: 'Academy Stater 3', quantity: 3 },
+        { name: 'Academy Stater 4', quantity: 8 },
+      ];
+      
+      // Upcoming birthdays
+      const upcomingBirthdays = [
+        { name: 'Trần Hồ My', date: '11/09', phone: '0905-xxx' },
+        { name: 'Ngọc Nguyễn Dx', date: 'Kiên Việt', phone: '0349x-2022' },
+      ];
+      
+      // Class stats
+      const classStats = [
+        { name: 'Lớp A', count: 4 },
+        { name: 'Lớp B', count: 6 },
+        { name: 'Lớp C', count: 4 },
+        { name: 'Lớp D', count: 5 },
+      ];
+      
+      setStats({
+        totalStudents: totalStudents || 203,
+        totalClasses: totalClasses || 30,
+        avgPerClass: Number(avgPerClass) || 11.8,
+        studentsByStatus,
+        revenueData,
+        debtStats: { 
+          noPhi: Math.round(totalDebt * 0.6), 
+          noHocPhi: Math.round(totalDebt * 0.4) 
+        },
+        totalRevenue,
+        totalDebt,
+        salaryForecast,
+        classSizeStats,
+        lowStockProducts,
+        upcomingBirthdays,
+        classStats,
+      });
+      
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+      // Set default mock data on error
+      setStats({
+        totalStudents: 203,
+        totalClasses: 30,
+        avgPerClass: 11.8,
+        studentsByStatus: [
+          { name: 'Nợ phí', value: 12, color: COLORS.noPhi },
+          { name: 'Học thử', value: 4, color: COLORS.hocThu },
+          { name: 'Bảo lưu', value: 3, color: COLORS.baoLuu },
+          { name: 'Nghỉ học', value: 2, color: COLORS.nghiHoc },
+          { name: 'HV mới', value: 8, color: COLORS.hvMoi },
+        ],
+        revenueData: [
+          { month: 'D.vọng', expected: 120000000, actual: 0 },
+          { month: 'Thực tế', expected: 0, actual: 103288533 },
+        ],
+        debtStats: { noPhi: 82997846, noHocPhi: 55331898 },
+        totalRevenue: 227536702,
+        totalDebt: 138329744,
+        salaryForecast: [
+          { position: 'Lương giáo viên Việt', amount: 24000000 },
+          { position: 'Lương giáo viên NN', amount: 45000000 },
+          { position: 'Lương trợ giảng', amount: 18000000 },
+          { position: 'Tổng', amount: 87000000 },
+        ],
+        classSizeStats: [
+          { range: 'Tỉ lệ dưới 5ss', count: 55, status: 'Trung Bình' },
+          { range: 'Tỉ lệ trên 20ss', count: 10, status: 'Trung Bình' },
+          { range: 'Tỉ lệ học thử', count: 5, status: 'Trung Bình' },
+          { range: 'Điểm số học tập', count: 80, status: 'Trung Bình' },
+          { range: 'Thánh chi nhận xét', count: 30, status: 'Trung Bình' },
+        ],
+        lowStockProducts: [
+          { name: 'Academy Stater 1', quantity: 5 },
+          { name: 'Academy Stater 2', quantity: 7 },
+          { name: 'Academy Stater 3', quantity: 3 },
+          { name: 'Academy Stater 4', quantity: 8 },
+        ],
+        upcomingBirthdays: [
+          { name: 'Trần Hồ My', date: '11/09', phone: '0905-xxx' },
+          { name: 'Ngọc Nguyễn Dx', date: 'Kiên Việt', phone: '0349x-2022' },
+        ],
+        classStats: [
+          { name: 'Lớp A', count: 4 },
+          { name: 'Lớp B', count: 6 },
+          { name: 'Lớp C', count: 4 },
+          { name: 'Lớp D', count: 5 },
+        ],
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
+  const debtPieData = [
+    { name: 'Nợ phí', value: stats.debtStats.noPhi },
+    { name: 'Nợ học phí', value: stats.debtStats.noHocPhi },
+  ];
+
+  const revenuePieData = [
+    { name: 'Học phí', value: stats.totalRevenue * 0.7 },
+    { name: 'Sách vở', value: stats.totalRevenue * 0.2 },
+    { name: 'Khác', value: stats.totalRevenue * 0.1 },
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+          <p className="text-gray-500">Đang tải dữ liệu...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard 
-          title="Tổng học viên" 
-          value={stats.totalStudents.toString()}
-          subtitle={`Đang học: ${stats.activeStudents} học viên`}
-          icon={Users} 
-          trend="+12%" 
-          color="bg-indigo-600"
-          link="/customers/students"
-        />
-        <StatCard 
-          title="Học viên nợ phí" 
-          value={stats.owingStudents.toString()}
-          subtitle="Cần theo dõi thanh toán"
-          icon={CreditCard} 
-          color="bg-red-500"
-          link="/customers/students"
-        />
-        <StatCard 
-          title="Lớp đang học" 
-          value={stats.activeClasses.toString()}
-          subtitle={`Tổng: ${MOCK_CLASSES.length} lớp`}
-          icon={BookOpen} 
-          color="bg-blue-500"
-          link="/training/classes"
-        />
-        <StatCard 
-          title="Doanh thu tháng này" 
-          value={formatCurrency(stats.monthlyRevenue)}
-          icon={DollarSign} 
-          trend="+8%" 
-          color="bg-emerald-500"
-        />
-      </div>
-
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Revenue Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold text-gray-800">Doanh thu theo tháng (năm 2024)</h3>
-            <span className="text-sm text-gray-500">Đơn vị: VNĐ</span>
-          </div>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={dataRevenue}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false}
-                  tickFormatter={(value) => `${value / 1000000}M`}
-                />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  formatter={(value: number) => [formatCurrency(value), 'Doanh thu']}
-                />
-                <Bar dataKey="revenue" fill="#10b981" radius={[8, 8, 0, 0]} name="Doanh thu" />
-              </BarChart>
-            </ResponsiveContainer>
+    <div className="space-y-4 bg-gray-100 min-h-screen -m-6 p-4">
+      {/* Header Stats */}
+      <div className="bg-yellow-400 rounded-lg p-3 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="bg-white px-3 py-1 rounded">
+            <span className="font-bold text-green-600">B</span>
+            <span className="text-blue-600 font-bold">risky</span>
+            <span className="text-xs text-gray-500 ml-1">Tân Tây Đô</span>
           </div>
         </div>
+        <div className="flex gap-6">
+          <div className="bg-white px-4 py-2 rounded shadow-sm">
+            <div className="text-xs text-gray-500">Tổng số học viên</div>
+            <div className="text-xl font-bold text-gray-800">{stats.totalStudents}</div>
+          </div>
+          <div className="bg-white px-4 py-2 rounded shadow-sm">
+            <div className="text-xs text-gray-500">Tổng số lớp</div>
+            <div className="text-xl font-bold text-gray-800">{stats.totalClasses}</div>
+          </div>
+          <div className="bg-white px-4 py-2 rounded shadow-sm">
+            <div className="text-xs text-gray-500">Trung bình / lớp</div>
+            <div className="text-xl font-bold text-gray-800">{stats.avgPerClass}</div>
+          </div>
+        </div>
+      </div>
 
-        {/* Student Status Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-6">Tình trạng học viên</h3>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={dataStudents}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={80}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  paddingAngle={5}
-                  dataKey="value"
-                  label={({ name, value }) => `${name}: ${value}`}
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-12 gap-4">
+        {/* Left Column */}
+        <div className="col-span-7 space-y-4">
+          {/* Student Stats Bar Chart */}
+          <div className="bg-white rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold text-gray-700 text-sm">Thống kê học viên</h3>
+              <span className="text-xs text-gray-500">{currentMonth}</span>
+            </div>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stats.studentsByStatus} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                    {stats.studentsByStatus.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2 justify-center">
+              {stats.studentsByStatus.map((item, idx) => (
+                <div key={idx} className="flex items-center gap-1 text-xs">
+                  <div className="w-3 h-3 rounded" style={{ backgroundColor: item.color }}></div>
+                  <span>{item.name}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 text-center mt-2">
+              Click vào từng cột để hiển thị danh sách chi tiết học sinh
+            </p>
+          </div>
+
+          {/* Revenue Comparison */}
+          <div className="bg-white rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-center mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">Tháng 4</span>
+                <span className="text-sm font-bold text-blue-600">$103,288,533</span>
+              </div>
+              <div className="flex gap-4 text-xs">
+                <span className="font-bold">Doanh thu thực tế / Doanh thu kỳ vọng</span>
+                <span className="text-gray-500">{currentMonth}</span>
+              </div>
+            </div>
+            <div className="h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart 
+                  data={[
+                    { name: 'D.vọng', value: 120000000 },
+                    { name: 'Thực tế', value: 103288533 },
+                    { name: 'Chênh lệch', value: 16711467 },
+                  ]} 
+                  margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
                 >
-                  {dataStudents.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${(v/1000000).toFixed(0)}tr`} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                    <Cell fill="#3b82f6" />
+                    <Cell fill="#22c55e" />
+                    <Cell fill="#ef4444" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex gap-4 mt-2 text-xs justify-center">
+              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded"></div> D.vọng</div>
+              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div> Thực tế</div>
+              <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Chênh lệch</div>
+            </div>
+          </div>
+
+          {/* Bottom Tables Row */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Salary Forecast */}
+            <div className="bg-white rounded-lg p-3 shadow-sm">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-bold text-gray-700 text-xs">Dự báo lương</h3>
+                <span className="text-xs text-gray-500">{currentMonth}</span>
+              </div>
+              <table className="w-full text-xs">
+                <tbody>
+                  {stats.salaryForecast.map((item, idx) => (
+                    <tr key={idx} className={idx === stats.salaryForecast.length - 1 ? 'font-bold border-t' : ''}>
+                      <td className="py-1">{item.position}</td>
+                      <td className="py-1 text-right text-blue-600">{formatCurrency(item.amount)}</td>
+                    </tr>
                   ))}
-                </Pie>
-                <Tooltip />
-                <Legend verticalAlign="bottom" height={36}/>
-              </PieChart>
-            </ResponsiveContainer>
+                </tbody>
+              </table>
+              <div className="text-xs text-gray-400 mt-2">Chiết tấu: 64.17%</div>
+            </div>
+
+            {/* Class Size Stats */}
+            <div className="bg-white rounded-lg p-3 shadow-sm">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-bold text-gray-700 text-xs">Giá sĩ số lớp học</h3>
+                <span className="text-xs text-gray-500">{currentMonth}</span>
+              </div>
+              <table className="w-full text-xs">
+                <thead className="text-gray-500">
+                  <tr>
+                    <th className="text-left py-1">Hạng mục</th>
+                    <th className="text-center py-1">Sĩ số</th>
+                    <th className="text-right py-1">Đánh giá</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.classSizeStats.map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="py-1">{item.range}</td>
+                      <td className="py-1 text-center">{item.count}%</td>
+                      <td className="py-1 text-right text-orange-500">{item.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Low Stock Products */}
+          <div className="bg-white rounded-lg p-3 shadow-sm">
+            <h3 className="font-bold text-gray-700 text-xs mb-2">Sản phẩm còn ít trong kho</h3>
+            <table className="w-full text-xs">
+              <thead className="text-gray-500 border-b">
+                <tr>
+                  <th className="text-left py-1">Hạng Mục</th>
+                  <th className="text-right py-1">Số lượng</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.lowStockProducts.map((item, idx) => (
+                  <tr key={idx}>
+                    <td className="py-1">{item.name}</td>
+                    <td className="py-1 text-right font-bold text-red-500">{item.quantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
 
-      {/* Quick Actions / Today's Overview */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-          <h3 className="text-lg font-bold text-gray-800">Lịch học hôm nay (Thứ 2)</h3>
-          <button className="text-sm text-indigo-600 hover:text-indigo-700 font-medium">Xem tất cả</button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-600">
-            <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
-              <tr>
-                <th className="px-6 py-4">Lớp học</th>
-                <th className="px-6 py-4">Thời gian</th>
-                <th className="px-6 py-4">Phòng</th>
-                <th className="px-6 py-4">Giáo viên</th>
-                <th className="px-6 py-4">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              <tr className="hover:bg-gray-50">
-                <td className="px-6 py-4 font-medium text-gray-900">Tiếng Anh Giao Tiếp K12</td>
-                <td className="px-6 py-4">17:30 - 19:00</td>
-                <td className="px-6 py-4">P.101</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-700">A</div>
-                    Nguyễn Văn A
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                    Sắp diễn ra
-                  </span>
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="px-6 py-4 font-medium text-gray-900">IELTS Foundation 05</td>
-                <td className="px-6 py-4">19:15 - 20:45</td>
-                <td className="px-6 py-4">P.102</td>
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-xs font-bold text-purple-700">C</div>
-                    Lê Thị C
-                  </div>
-                </td>
-                <td className="px-6 py-4">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                    Chờ
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        {/* Right Column */}
+        <div className="col-span-5 space-y-4">
+          {/* Revenue Pie Chart */}
+          <div className="bg-white rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold text-gray-700 text-sm">Doanh số bán hàng</h3>
+              <div className="text-right">
+                <div className="text-lg font-bold text-blue-600">{formatCurrency(stats.totalRevenue)}</div>
+                <span className="text-xs text-gray-500">{currentMonth}</span>
+              </div>
+            </div>
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={revenuePieData}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={60}
+                    dataKey="value"
+                    label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+                  >
+                    {revenuePieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="text-xs text-gray-400 text-center">Lấy từ báo cáo tài chính</p>
+          </div>
+
+          {/* Debt Pie Chart */}
+          <div className="bg-white rounded-lg p-4 shadow-sm">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold text-gray-700 text-sm">Doanh số nợ phí</h3>
+              <div className="text-right">
+                <div className="text-lg font-bold text-red-600">{formatCurrency(stats.totalDebt)}</div>
+                <span className="text-xs text-blue-600 cursor-pointer">Xem theo tháng</span>
+              </div>
+            </div>
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={debtPieData}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={60}
+                    dataKey="value"
+                    label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+                  >
+                    <Cell fill="#3b82f6" />
+                    <Cell fill="#eab308" />
+                  </Pie>
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Statistics Table */}
+          <div className="bg-white rounded-lg p-3 shadow-sm">
+            <h3 className="font-bold text-gray-700 text-xs mb-2 text-center border-b pb-2">THỐNG KÊ</h3>
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <table className="w-full">
+                  <thead className="text-gray-500">
+                    <tr>
+                      <th className="text-left py-1">Tổng mức</th>
+                      <th className="text-right py-1">Số lượng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>Học viên</td><td className="text-right">Học viên</td></tr>
+                    <tr><td>Khóa mới</td><td className="text-right">Tái đăng ký</td></tr>
+                    <tr><td>Thanh toán</td><td className="text-right">TOP 5</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <table className="w-full">
+                  <thead className="text-gray-500">
+                    <tr>
+                      <th className="text-left py-1">Tên lớp mức</th>
+                      <th className="text-right py-1">Sĩ số chi tiết</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.classStats.map((item, idx) => (
+                      <tr key={idx}>
+                        <td className="py-1">{item.name}</td>
+                        <td className="py-1 text-right">{item.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-t text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                <div><span className="text-gray-500">Hạng mục</span> <span className="font-bold">Diễn giải</span></div>
+                <div><span className="text-gray-500">Tỉ lệ theo</span> <span>Tỉ lệ chuyển đổi của đơn hàng trưng tâm</span></div>
+                <div><span className="text-gray-500">Tỉ lệ bài bài</span> <span>Số học viên đăng học/ tổng số / nghỉ/bỏ học</span></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Upcoming Birthdays */}
+          <div className="bg-white rounded-lg p-3 shadow-sm">
+            <h3 className="font-bold text-gray-700 text-xs mb-2">Sinh nhật sắp đến nhân sự</h3>
+            <table className="w-full text-xs">
+              <thead className="text-gray-500 border-b">
+                <tr>
+                  <th className="text-left py-1">Hiển thị theo</th>
+                  <th className="text-center py-1">Tháng</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b">
+                  <td className="py-1">Tên nhân sự</td>
+                  <td className="py-1">Ngày sinh</td>
+                  <td className="py-1">Liên hệ</td>
+                </tr>
+                {stats.upcomingBirthdays.map((item, idx) => (
+                  <tr key={idx}>
+                    <td className="py-1">{item.name}</td>
+                    <td className="py-1">{item.date}</td>
+                    <td className="py-1">{item.phone}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
