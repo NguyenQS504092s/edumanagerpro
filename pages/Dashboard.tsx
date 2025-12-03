@@ -335,10 +335,12 @@ export const Dashboard: React.FC = () => {
       {/* Header Stats */}
       <div className="bg-yellow-400 rounded-lg p-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <div className="bg-white px-3 py-1 rounded">
-            <span className="font-bold text-green-600">B</span>
-            <span className="text-blue-600 font-bold">risky</span>
-            <span className="text-xs text-gray-500 ml-1">Tân Tây Đô</span>
+          <div className="bg-white px-2 py-1 rounded">
+            <img 
+              src="/logo.jpg" 
+              alt="Brisky Logo" 
+              className="h-8 object-contain"
+            />
           </div>
         </div>
         <div className="flex gap-6">
