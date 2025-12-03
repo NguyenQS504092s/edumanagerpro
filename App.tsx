@@ -30,6 +30,9 @@ import { DebtManager } from './pages/DebtManager';
 import { CustomerDatabase } from './pages/CustomerDatabase';
 import { CampaignManager } from './pages/CampaignManager';
 import { TrainingReport } from './pages/TrainingReport';
+import { InvoiceManager } from './pages/InvoiceManager';
+import { CenterSettings } from './pages/CenterSettings';
+import { CurriculumManager } from './pages/CurriculumManager';
 import { Login } from './pages/Login';
 import { StudentStatus } from './types';
 import { useAuth } from './src/hooks/useAuth';
@@ -125,7 +128,7 @@ const App: React.FC = () => {
           {/* Finance Routes */}
           <Route path="/finance/contracts" element={<ContractList />} />
           <Route path="/finance/contracts/create" element={<ContractCreation />} />
-          <Route path="/finance/invoices" element={<Placeholder title="Hóa đơn bán sách" />} />
+          <Route path="/finance/invoices" element={<InvoiceManager />} />
           <Route path="/finance/revenue" element={<RevenueReport />} />
           <Route path="/finance/debt" element={<DebtManager />} />
           
@@ -138,8 +141,8 @@ const App: React.FC = () => {
           <Route path="/settings/products" element={<ProductManager />} />
           <Route path="/settings/inventory" element={<InventoryManager />} />
           <Route path="/settings/rooms" element={<RoomManager />} />
-          <Route path="/settings/center" element={<Placeholder title="Thêm trung tâm" />} />
-          <Route path="/settings/curriculum" element={<Placeholder title="Thêm giáo trình" />} />
+          <Route path="/settings/center" element={<CenterSettings />} />
+          <Route path="/settings/curriculum" element={<CurriculumManager />} />
           
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
