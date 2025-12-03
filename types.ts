@@ -8,6 +8,7 @@ export enum ClassStatus {
 
 export enum StudentStatus {
   ACTIVE = 'Đang học',
+  DEBT = 'Nợ phí',
   RESERVED = 'Bảo lưu',
   DROPPED = 'Đã nghỉ',
   TRIAL = 'Học thử'
