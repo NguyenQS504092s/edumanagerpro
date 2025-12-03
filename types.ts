@@ -246,3 +246,112 @@ export type MenuItem = {
   path?: string;
   subItems?: MenuItem[];
 };
+
+// ==========================================
+// CONTRACT TYPES
+// ==========================================
+
+export enum ContractType {
+  STUDENT = 'Học viên',
+  PRODUCT = 'Học liệu'
+}
+
+export enum ContractStatus {
+  DRAFT = 'Nháp',
+  PAID = 'Đã thanh toán',
+  DEBT = 'Nợ phí',
+  CANCELLED = 'Đã hủy'
+}
+
+export enum PaymentMethod {
+  FULL = 'Toàn bộ',
+  INSTALLMENT = 'Trả góp',
+  TRANSFER = 'Chuyển khoản',
+  CASH = 'Tiền mặt'
+}
+
+export interface Course {
+  id: string;
+  code: string;
+  name: string;
+  totalSessions: number;
+  pricePerSession: number;
+  totalPrice: number;
+  curriculum?: string;
+  level?: string;
+  ageGroup?: string;
+  status: 'Active' | 'Inactive';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContractItem {
+  type: 'course' | 'product';
+  id: string;
+  name: string;
+  classId?: string;
+  className?: string;
+  unitPrice: number;
+  quantity: number;
+  subtotal: number;
+  discount: number; // 0-1 (0.2 = 20%)
+  finalPrice: number;
+  debtSessions?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface Contract {
+  id: string;
+  code: string;
+  type: ContractType;
+  
+  // Student Info
+  studentId?: string;
+  studentName?: string;
+  studentDOB?: string;
+  parentName?: string;
+  parentPhone?: string;
+  
+  // Items
+  items: ContractItem[];
+  
+  // Financial
+  subtotal: number;
+  totalDiscount: number;
+  totalAmount: number;
+  totalAmountInWords: string;
+  
+  // Payment
+  paymentMethod: PaymentMethod;
+  paidAmount: number;
+  remainingAmount: number;
+  
+  // Dates
+  contractDate: string;
+  paymentDate?: string;
+  
+  // Status
+  status: ContractStatus;
+  
+  // Notes
+  notes?: string;
+  
+  // Metadata
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface ContractPayment {
+  id: string;
+  contractId: string;
+  contractCode: string;
+  amount: number;
+  paymentMethod: 'Tiền mặt' | 'Chuyển khoản' | 'Thẻ';
+  paymentDate: string;
+  receiptNumber?: string;
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
