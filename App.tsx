@@ -24,6 +24,9 @@ import { SalaryReportTeacher } from './pages/SalaryReportTeacher';
 import { SalaryReportStaff } from './pages/SalaryReportStaff';
 import { ContractCreation } from './pages/ContractCreation';
 import { ContractList } from './pages/ContractList';
+import { FeedbackManager } from './pages/FeedbackManager';
+import { RevenueReport } from './pages/RevenueReport';
+import { DebtManager } from './pages/DebtManager';
 import { Login } from './pages/Login';
 import { StudentStatus } from './types';
 import { useAuth } from './src/hooks/useAuth';
@@ -103,7 +106,7 @@ const App: React.FC = () => {
           <Route path="/customers/dropped" element={<StudentManager initialStatusFilter={StudentStatus.DROPPED} title="Danh sách học viên đã nghỉ" />} />
           <Route path="/customers/reserved" element={<StudentManager initialStatusFilter={StudentStatus.RESERVED} title="Danh sách học viên bảo lưu" />} />
           <Route path="/customers/trial" element={<StudentManager initialStatusFilter={StudentStatus.TRIAL} title="Danh sách học viên học thử" />} />
-          <Route path="/customers/feedback" element={<Placeholder title="Phản hồi khách hàng" />} />
+          <Route path="/customers/feedback" element={<FeedbackManager />} />
           
           {/* Business Routes */}
           <Route path="/business/leads" element={<Placeholder title="Kho dữ liệu khách hàng" />} />
@@ -120,6 +123,8 @@ const App: React.FC = () => {
           <Route path="/finance/contracts" element={<ContractList />} />
           <Route path="/finance/contracts/create" element={<ContractCreation />} />
           <Route path="/finance/invoices" element={<Placeholder title="Hóa đơn bán sách" />} />
+          <Route path="/finance/revenue" element={<RevenueReport />} />
+          <Route path="/finance/debt" element={<DebtManager />} />
           
           {/* Report Routes */}
           <Route path="/reports/training" element={<Placeholder title="Báo cáo đào tạo" />} />
