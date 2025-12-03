@@ -12,7 +12,10 @@ import {
   Gift,
   Package,
   DollarSign,
-  AlertCircle
+  AlertCircle,
+  X,
+  Phone,
+  Mail
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -42,6 +45,18 @@ const COLORS = {
 };
 
 const PIE_COLORS = ['#3b82f6', '#f97316', '#eab308', '#ef4444', '#22c55e'];
+
+interface StudentData {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  className?: string;
+  status?: string;
+  hasDebt?: boolean;
+  createdAt?: string;
+  parentPhone?: string;
+}
 
 interface DashboardStats {
   totalStudents: number;
@@ -77,6 +92,11 @@ export const Dashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [currentMonth] = useState('Tháng hiện tại');
+  
+  // State cho modal danh sách học viên
+  const [allStudents, setAllStudents] = useState<StudentData[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showStudentModal, setShowStudentModal] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -88,7 +108,8 @@ export const Dashboard: React.FC = () => {
       
       // Fetch students
       const studentsSnap = await getDocs(collection(db, 'students'));
-      const students = studentsSnap.docs.map(d => d.data());
+      const students = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() })) as StudentData[];
+      setAllStudents(students);
       
       // Fetch classes
       const classesSnap = await getDocs(collection(db, 'classes'));
@@ -263,6 +284,41 @@ export const Dashboard: React.FC = () => {
     { name: 'Khác', value: stats.totalRevenue * 0.1 },
   ];
 
+  // Lọc học viên theo category
+  const getStudentsByCategory = (category: string): StudentData[] => {
+    const now = new Date();
+    const thirtyDaysAgo = now.getTime() - 30 * 24 * 60 * 60 * 1000;
+    
+    switch (category) {
+      case 'Nợ phí':
+        return allStudents.filter(s => s.hasDebt || s.status === 'Debt');
+      case 'Học thử':
+        return allStudents.filter(s => s.status === 'Trial' || s.status === 'Học thử');
+      case 'Bảo lưu':
+        return allStudents.filter(s => s.status === 'Reserved' || s.status === 'Bảo lưu');
+      case 'Nghỉ học':
+        return allStudents.filter(s => s.status === 'Dropped' || s.status === 'Nghỉ học');
+      case 'HV mới':
+        return allStudents.filter(s => {
+          if (!s.createdAt) return false;
+          const created = new Date(s.createdAt);
+          return created.getTime() > thirtyDaysAgo;
+        });
+      default:
+        return [];
+    }
+  };
+
+  // Handle click vào cột chart
+  const handleBarClick = (data: any) => {
+    if (data && data.name) {
+      setSelectedCategory(data.name);
+      setShowStudentModal(true);
+    }
+  };
+
+  const filteredStudents = selectedCategory ? getStudentsByCategory(selectedCategory) : [];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -318,7 +374,7 @@ export const Dashboard: React.FC = () => {
                   <XAxis dataKey="name" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} onClick={handleBarClick} className="cursor-pointer">
                     {stats.studentsByStatus.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
@@ -589,6 +645,99 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Modal danh sách học viên */}
+      {showStudentModal && selectedCategory && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b" style={{ backgroundColor: stats.studentsByStatus.find(s => s.name === selectedCategory)?.color || '#3b82f6' }}>
+              <h2 className="text-lg font-bold text-white">
+                Danh sách học viên: {selectedCategory}
+              </h2>
+              <button
+                onClick={() => setShowStudentModal(false)}
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {/* Content */}
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              {filteredStudents.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p>Không có học viên trong danh mục này</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-sm text-gray-500 mb-3">
+                    Tổng: {filteredStudents.length} học viên
+                  </div>
+                  <table className="w-full">
+                    <thead className="bg-gray-50 text-xs text-gray-600">
+                      <tr>
+                        <th className="text-left p-2">STT</th>
+                        <th className="text-left p-2">Họ tên</th>
+                        <th className="text-left p-2">Lớp</th>
+                        <th className="text-left p-2">Liên hệ</th>
+                        <th className="text-left p-2">Trạng thái</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-sm">
+                      {filteredStudents.map((student, idx) => (
+                        <tr key={student.id} className="border-b hover:bg-gray-50">
+                          <td className="p-2 text-gray-500">{idx + 1}</td>
+                          <td className="p-2 font-medium">{student.name}</td>
+                          <td className="p-2">{student.className || '-'}</td>
+                          <td className="p-2">
+                            <div className="flex items-center gap-2 text-xs text-gray-600">
+                              {student.phone && (
+                                <span className="flex items-center gap-1">
+                                  <Phone className="w-3 h-3" />
+                                  {student.phone}
+                                </span>
+                              )}
+                              {student.parentPhone && !student.phone && (
+                                <span className="flex items-center gap-1">
+                                  <Phone className="w-3 h-3" />
+                                  {student.parentPhone} (PH)
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-2">
+                            <span className={`px-2 py-1 rounded-full text-xs ${
+                              student.hasDebt ? 'bg-red-100 text-red-700' :
+                              student.status === 'Trial' || student.status === 'Học thử' ? 'bg-orange-100 text-orange-700' :
+                              student.status === 'Reserved' || student.status === 'Bảo lưu' ? 'bg-yellow-100 text-yellow-700' :
+                              student.status === 'Dropped' || student.status === 'Nghỉ học' ? 'bg-gray-100 text-gray-700' :
+                              'bg-green-100 text-green-700'
+                            }`}>
+                              {student.status || (student.hasDebt ? 'Nợ phí' : 'HV mới')}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            
+            {/* Footer */}
+            <div className="p-4 border-t bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setShowStudentModal(false)}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
