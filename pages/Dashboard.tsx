@@ -34,7 +34,7 @@ import { collection, getDocs, query, where, orderBy, limit } from 'firebase/fire
 import { db } from '../src/config/firebase';
 import { formatCurrency } from '../src/utils/currencyUtils';
 import { getRevenueSummary, RevenueByCategory } from '../src/services/financialReportService';
-import { seedDashboardData } from '../scripts/seedDashboardData';
+import { seedAllData, clearAllData } from '../scripts/seedAllData';
 
 // Colors matching the design
 const COLORS = {
@@ -107,16 +107,36 @@ export const Dashboard: React.FC = () => {
   // Seed test data
   const handleSeedData = async () => {
     if (seeding) return;
-    if (!confirm('Bạn có muốn tạo dữ liệu test cho Dashboard không?')) return;
+    if (!confirm('Bạn có muốn tạo dữ liệu test TOÀN BỘ cho app không?\n\nSẽ tạo: Students, Classes, Parents, Contracts, Staff, Products, Leads, Campaigns, Attendance, Tutoring, Feedback, Invoices, Work Sessions...')) return;
     
     setSeeding(true);
     try {
-      await seedDashboardData();
-      alert('Đã tạo dữ liệu test thành công! Đang reload...');
+      const results = await seedAllData();
+      const total = Object.values(results).reduce((a, b) => a + b, 0);
+      alert(`✅ Đã tạo ${total} records thành công!\n\nChi tiết:\n${Object.entries(results).map(([k, v]) => `- ${k}: ${v}`).join('\n')}`);
       fetchDashboardData(); // Refresh data
     } catch (error) {
       console.error('Error seeding data:', error);
-      alert('Lỗi khi tạo dữ liệu test: ' + (error as Error).message);
+      alert('❌ Lỗi khi tạo dữ liệu: ' + (error as Error).message);
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  // Clear all data
+  const handleClearData = async () => {
+    if (seeding) return;
+    if (!confirm('⚠️ CẢNH BÁO: Bạn có chắc muốn XÓA TOÀN BỘ dữ liệu không?\n\nHành động này không thể hoàn tác!')) return;
+    if (!confirm('Xác nhận lần cuối: XÓA TẤT CẢ DỮ LIỆU?')) return;
+    
+    setSeeding(true);
+    try {
+      await clearAllData();
+      alert('✅ Đã xóa toàn bộ dữ liệu!');
+      fetchDashboardData(); // Refresh data
+    } catch (error) {
+      console.error('Error clearing data:', error);
+      alert('❌ Lỗi khi xóa dữ liệu: ' + (error as Error).message);
     } finally {
       setSeeding(false);
     }
@@ -391,9 +411,16 @@ export const Dashboard: React.FC = () => {
           <button
             onClick={handleSeedData}
             disabled={seeding}
-            className="bg-white px-3 py-1 rounded text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+            className="bg-white px-3 py-1 rounded text-xs font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
           >
-            {seeding ? 'Đang tạo...' : '🔧 Seed Data'}
+            {seeding ? '⏳ Đang xử lý...' : '🌱 Seed All Data'}
+          </button>
+          <button
+            onClick={handleClearData}
+            disabled={seeding}
+            className="bg-white px-3 py-1 rounded text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            🗑️ Clear All
           </button>
         </div>
         <div className="flex gap-6">
