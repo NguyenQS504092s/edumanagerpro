@@ -1,15 +1,45 @@
 
 import React, { useState } from 'react';
-import { Search, Plus, Phone } from 'lucide-react';
-import { MOCK_PARENTS } from '../mockData';
+import { Search, Plus, Phone, Edit, Trash2, X } from 'lucide-react';
+import { useParents } from '../src/hooks/useParents';
+import { ParentData } from '../src/services/parentService';
+import { StudentStatus } from '../types';
 
 export const ParentManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingParent, setEditingParent] = useState<ParentData | null>(null);
   
-  const filteredParents = MOCK_PARENTS.filter(p => 
-    p.fatherName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.fatherPhone.includes(searchTerm)
-  );
+  const { parents, loading, error, createParent, updateParent, deleteParent } = useParents(searchTerm);
+
+  const handleCreate = async (data: Omit<ParentData, 'id'>) => {
+    try {
+      await createParent(data);
+      setShowCreateModal(false);
+    } catch (err) {
+      alert('Không thể tạo phụ huynh');
+    }
+  };
+
+  const handleUpdate = async (id: string, data: Partial<ParentData>) => {
+    try {
+      await updateParent(id, data);
+      setShowEditModal(false);
+      setEditingParent(null);
+    } catch (err) {
+      alert('Không thể cập nhật phụ huynh');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa phụ huynh này?')) return;
+    try {
+      await deleteParent(id);
+    } catch (err) {
+      alert('Không thể xóa phụ huynh');
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -40,8 +70,11 @@ export const ParentManager: React.FC = () => {
                />
             </div>
          </div>
-         <button className="flex items-center gap-2 bg-white border border-gray-300 px-4 py-2 rounded text-gray-700 hover:bg-gray-50 text-sm font-medium">
-             Thêm phụ huynh
+         <button 
+           onClick={() => setShowCreateModal(true)}
+           className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm font-medium"
+         >
+           <Plus size={16} /> Thêm phụ huynh
          </button>
       </div>
 
@@ -59,55 +92,86 @@ export const ParentManager: React.FC = () => {
                </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-               {filteredParents.map((parent, index) => (
+               {loading ? (
+                  <tr>
+                     <td colSpan={6} className="text-center py-8 text-gray-500">
+                        <div className="flex items-center justify-center gap-2">
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
+                          Đang tải...
+                        </div>
+                     </td>
+                  </tr>
+               ) : error ? (
+                  <tr>
+                     <td colSpan={6} className="text-center py-8 text-red-500">
+                        Lỗi: {error}
+                     </td>
+                  </tr>
+               ) : parents.length > 0 ? parents.map((parent, index) => (
                   <tr key={parent.id} className="hover:bg-gray-50">
                      <td className="px-4 py-3 border-r border-gray-200 text-center align-top pt-4">{index + 1}</td>
                      <td className="px-4 py-3 border-r border-gray-200 align-top pt-4">
-                        <div className="font-bold text-gray-900">{parent.fatherName}</div>
+                        <div className="font-bold text-gray-900">{parent.name}</div>
                         <div className="flex items-center gap-1 text-gray-600 mt-1">
-                           <span className="text-xs">SĐT: {parent.fatherPhone}</span>
+                           <span className="text-xs">SĐT: {parent.phone}</span>
                         </div>
                      </td>
                      
                      {/* Children Column */}
                      <td className="px-0 py-0 border-r border-gray-200 align-top p-0">
-                        {parent.children.map((child, cIndex) => (
+                        {(parent.children || []).length > 0 ? parent.children.map((child, cIndex) => (
                            <div key={child.id} className={`px-4 py-3 flex flex-col justify-center h-16 ${cIndex !== parent.children.length - 1 ? 'border-b border-gray-200' : ''}`}>
                               <div className="font-medium text-gray-900">{child.name}</div>
                            </div>
-                        ))}
+                        )) : (
+                           <div className="px-4 py-3 text-gray-400 italic">Chưa có con</div>
+                        )}
                      </td>
 
                      {/* Status Column */}
                      <td className="px-0 py-0 border-r border-gray-200 align-top p-0">
-                        {parent.children.map((child, cIndex) => (
+                        {(parent.children || []).length > 0 ? parent.children.map((child, cIndex) => (
                            <div key={child.id} className={`px-4 py-3 flex items-center h-16 ${cIndex !== parent.children.length - 1 ? 'border-b border-gray-200' : ''}`}>
                               <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                                 child.status === 'Đang học' ? 'bg-green-100 text-green-700' : 
-                                 child.status === 'Bảo lưu' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
+                                 child.status === StudentStatus.ACTIVE ? 'bg-green-100 text-green-700' : 
+                                 child.status === StudentStatus.RESERVED ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
                               }`}>
                                  {child.status}
                               </span>
                            </div>
-                        ))}
+                        )) : <div className="px-4 py-3">-</div>}
                      </td>
 
                      {/* Class Column */}
                      <td className="px-0 py-0 border-r border-gray-200 align-top p-0">
-                        {parent.children.map((child, cIndex) => (
+                        {(parent.children || []).length > 0 ? parent.children.map((child, cIndex) => (
                            <div key={child.id} className={`px-4 py-3 flex items-center h-16 ${cIndex !== parent.children.length - 1 ? 'border-b border-gray-200' : ''}`}>
-                              <span className="text-gray-900">{child.class}</span>
+                              <span className="text-gray-900">{child.class || '-'}</span>
                            </div>
-                        ))}
+                        )) : <div className="px-4 py-3">-</div>}
                      </td>
 
                      {/* Action Column */}
                      <td className="px-4 py-3 align-top pt-4">
-                        {/* Actions could go here */}
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => { setEditingParent(parent); setShowEditModal(true); }}
+                            className="text-gray-400 hover:text-indigo-600 p-1"
+                            title="Chỉnh sửa"
+                          >
+                            <Edit size={16} />
+                          </button>
+                          <button 
+                            onClick={() => parent.id && handleDelete(parent.id)}
+                            className="text-gray-400 hover:text-red-600 p-1"
+                            title="Xóa"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                      </td>
                   </tr>
-               ))}
-               {filteredParents.length === 0 && (
+               )) : (
                   <tr>
                      <td colSpan={6} className="text-center py-8 text-gray-500">
                         Không tìm thấy phụ huynh nào.
@@ -116,6 +180,134 @@ export const ParentManager: React.FC = () => {
                )}
             </tbody>
          </table>
+      </div>
+
+      {/* Create Parent Modal */}
+      {showCreateModal && (
+        <ParentModal
+          onClose={() => setShowCreateModal(false)}
+          onSubmit={handleCreate}
+        />
+      )}
+
+      {/* Edit Parent Modal */}
+      {showEditModal && editingParent && (
+        <ParentModal
+          parent={editingParent}
+          onClose={() => { setShowEditModal(false); setEditingParent(null); }}
+          onSubmit={(data) => editingParent.id && handleUpdate(editingParent.id, data)}
+        />
+      )}
+    </div>
+  );
+};
+
+// ============================================
+// PARENT MODAL (Create/Edit)
+// ============================================
+interface ParentModalProps {
+  parent?: ParentData;
+  onClose: () => void;
+  onSubmit: (data: Omit<ParentData, 'id'>) => void;
+}
+
+const ParentModal: React.FC<ParentModalProps> = ({ parent, onClose, onSubmit }) => {
+  const [formData, setFormData] = useState({
+    name: parent?.name || '',
+    phone: parent?.phone || '',
+    email: parent?.email || '',
+    address: parent?.address || '',
+    children: parent?.children || [],
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full">
+        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-800">
+            {parent ? 'Chỉnh sửa phụ huynh' : 'Thêm phụ huynh mới'}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={24} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Họ tên phụ huynh <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              placeholder="Nguyễn Văn A"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Số điện thoại <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="tel"
+              required
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              placeholder="0123456789"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email
+            </label>
+            <input
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              placeholder="email@example.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Địa chỉ
+            </label>
+            <input
+              type="text"
+              value={formData.address}
+              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              placeholder="Số nhà, đường, quận..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+            >
+              {parent ? 'Lưu thay đổi' : 'Thêm phụ huynh'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

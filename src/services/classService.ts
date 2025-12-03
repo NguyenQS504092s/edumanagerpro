@@ -13,7 +13,7 @@ import {
   QueryConstraint
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { ClassModel, ClassStatus } from '../types';
+import { ClassModel, ClassStatus } from '../../types';
 
 const COLLECTION_NAME = 'classes';
 
