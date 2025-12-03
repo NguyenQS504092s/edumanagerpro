@@ -480,13 +480,18 @@ export const seedAllData = async () => {
       const parentIndex = parentIds.indexOf(student.parentId);
       const parentData = parents[parentIndex] || parents[0];
       
+      // Transform fields to match StudentManager expectations
+      const { name, birthDate, ...rest } = student;
+      
       const ref = await addDoc(collection(db, 'students'), {
-        ...student,
+        ...rest,
+        fullName: name,                   // name → fullName
+        dob: birthDate,                   // birthDate → dob
         parentName: parentData.name,      // Denormalized
         parentPhone: parentData.phone,    // Denormalized
       });
       studentIds.push(ref.id);
-      studentNames.push(student.name);
+      studentNames.push(name);
       studentClassIds.push(student.classId);
       
       // Track children per parent

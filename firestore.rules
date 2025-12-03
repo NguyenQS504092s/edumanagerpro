@@ -2,58 +2,65 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function isAdmin() {
-      return isAuthenticated() && 
-        get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role in ['Quản trị viên', 'Quản lý'];
-    }
-    
-    function isStaff() {
-      return isAuthenticated() && 
-        exists(/databases/$(database)/documents/staff/$(request.auth.uid));
-    }
-    
-    match /students/{studentId} {
-      allow read: if isStaff();
-      allow write: if isAdmin();
-    }
-    
-    match /classes/{classId} {
-      allow read: if isStaff();
-      allow write: if isAdmin();
-    }
-    
-    match /staff/{staffId} {
-      allow read: if isStaff();
-      allow write: if isAdmin();
-    }
-    
-    match /parents/{parentId} {
-      allow read: if isStaff();
-      allow write: if isAdmin();
-    }
-    
-    match /attendance/{attendanceId} {
-      allow read: if isStaff();
-      allow write: if isStaff();
-    }
-    
-    match /tutoring/{tutoringId} {
-      allow read: if isStaff();
-      allow write: if isStaff();
-    }
-    
-    match /contracts/{contractId} {
-      allow read: if isStaff();
-      allow write: if isAdmin();
-    }
-    
+    // ⚠️ DEV MODE: Open rules for testing
+    // TODO: Restore strict rules for production
     match /{document=**} {
-      allow read: if isStaff();
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
+    
+    // === PRODUCTION RULES (uncomment when ready) ===
+    // function isAuthenticated() {
+    //   return request.auth != null;
+    // }
+    // 
+    // function isAdmin() {
+    //   return isAuthenticated() && 
+    //     get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role in ['Quản trị viên', 'Quản lý'];
+    // }
+    // 
+    // function isStaff() {
+    //   return isAuthenticated() && 
+    //     exists(/databases/$(database)/documents/staff/$(request.auth.uid));
+    // }
+    // 
+    // match /students/{studentId} {
+    //   allow read: if isStaff();
+    //   allow write: if isAdmin();
+    // }
+    // 
+    // match /classes/{classId} {
+    //   allow read: if isStaff();
+    //   allow write: if isAdmin();
+    // }
+    // 
+    // match /staff/{staffId} {
+    //   allow read: if isStaff();
+    //   allow write: if isAdmin();
+    // }
+    // 
+    // match /parents/{parentId} {
+    //   allow read: if isStaff();
+    //   allow write: if isAdmin();
+    // }
+    // 
+    // match /attendance/{attendanceId} {
+    //   allow read: if isStaff();
+    //   allow write: if isStaff();
+    // }
+    // 
+    // match /tutoring/{tutoringId} {
+    //   allow read: if isStaff();
+    //   allow write: if isStaff();
+    // }
+    // 
+    // match /contracts/{contractId} {
+    //   allow read: if isStaff();
+    //   allow write: if isAdmin();
+    // }
+    // 
+    // match /{document=**} {
+    //   allow read: if isStaff();
+    //   allow write: if isAdmin();
+    // }
   }
 }
