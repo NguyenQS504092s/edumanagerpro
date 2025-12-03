@@ -1,9 +1,23 @@
 /**
  * Comprehensive Seed Data Script
- * Tạo dữ liệu test đầy đủ và đồng bộ cho toàn bộ app
+ * Tạo dữ liệu test đầy đủ với RELATIONAL INTEGRITY
+ * 
+ * Relationships:
+ * - Student → Parent (parentId)
+ * - Student → Class (classId)
+ * - Class → Staff/Teacher (teacherId, assistantId)
+ * - Class → Curriculum (curriculumId)
+ * - Contract → Student + Class
+ * - Attendance → Student + Class
+ * - WorkSession → Staff + Class
+ * - Tutoring → Student + Class
+ * - Feedback → Student + Parent
+ * - Invoice → Student + Products
+ * - Lead → Campaign
+ * - FinancialTransaction → Student/Contract/Invoice
  */
 
-import { collection, addDoc, getDocs, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 
 // Helper functions
@@ -174,26 +188,44 @@ const generateStudents = (parentIds: string[], classIds: string[], classNames: s
   ];
 };
 
-// 9. Contracts
-const generateContracts = (studentIds: string[], studentNames: string[], classIds: string[]) => {
+// 9. Contracts - link to actual student's class
+const generateContracts = (studentIds: string[], studentNames: string[], studentClassIds: string[], classNames: string[]) => {
   const now = new Date();
   const currentMonth = getCurrentMonth();
   
-  return studentIds.slice(0, 40).map((studentId, idx) => ({
-    code: `HD${currentMonth.replace('-', '')}${String(idx + 1).padStart(3, '0')}`,
-    studentId,
-    studentName: studentNames[idx],
-    classId: classIds[idx % classIds.length],
-    startDate: getDateInMonth(1),
-    endDate: `${now.getFullYear()}-${String(now.getMonth() + 4).padStart(2, '0')}-01`,
-    tuition: [3500000, 4000000, 5000000, 6000000][idx % 4],
-    discount: idx % 5 === 0 ? 500000 : 0,
-    finalTotal: [3500000, 4000000, 5000000, 6000000][idx % 4] - (idx % 5 === 0 ? 500000 : 0),
-    status: idx < 12 ? 'Nợ phí' : 'Đã thanh toán',
-    paymentMethod: ['Tiền mặt', 'Chuyển khoản', 'Thẻ'][idx % 3],
-    notes: '',
-    createdAt: new Date(now.getTime() - (40 - idx) * 24 * 60 * 60 * 1000).toISOString(),
-  }));
+  // Create a map from classId to className
+  const classIdToName = new Map<string, string>();
+  studentClassIds.forEach((classId, idx) => {
+    // Find the class name for this classId from the studentsData
+    const classIndex = studentClassIds.indexOf(classId);
+    if (!classIdToName.has(classId)) {
+      // Get class name from the classes array based on index
+      const classNameIndex = [...new Set(studentClassIds)].indexOf(classId);
+      classIdToName.set(classId, classNames[classNameIndex] || `Class ${classNameIndex}`);
+    }
+  });
+  
+  return studentIds.slice(0, 40).map((studentId, idx) => {
+    const classId = studentClassIds[idx];
+    const className = classIdToName.get(classId) || '';
+    
+    return {
+      code: `HD${currentMonth.replace('-', '')}${String(idx + 1).padStart(3, '0')}`,
+      studentId,
+      studentName: studentNames[idx],
+      classId,              // FK → Classes (student's actual class)
+      className,            // Denormalized
+      startDate: getDateInMonth(1),
+      endDate: `${now.getFullYear()}-${String(now.getMonth() + 4).padStart(2, '0')}-01`,
+      tuition: [3500000, 4000000, 5000000, 6000000][idx % 4],
+      discount: idx % 5 === 0 ? 500000 : 0,
+      finalTotal: [3500000, 4000000, 5000000, 6000000][idx % 4] - (idx % 5 === 0 ? 500000 : 0),
+      status: idx < 12 ? 'Nợ phí' : 'Đã thanh toán',
+      paymentMethod: ['Tiền mặt', 'Chuyển khoản', 'Thẻ'][idx % 3],
+      notes: '',
+      createdAt: new Date(now.getTime() - (40 - idx) * 24 * 60 * 60 * 1000).toISOString(),
+    };
+  });
 };
 
 // 10. Financial Transactions
@@ -374,8 +406,10 @@ export const seedAllData = async () => {
     
     // 3. Curriculum
     console.log('3. Seeding curriculums...');
+    const curriculumIds: string[] = [];
     for (const curr of curriculums) {
-      await addDoc(collection(db, 'curriculums'), { ...curr, createdAt: new Date().toISOString() });
+      const ref = await addDoc(collection(db, 'curriculums'), { ...curr, createdAt: new Date().toISOString() });
+      curriculumIds.push(ref.id);
     }
     results['curriculums'] = curriculums.length;
     
@@ -397,12 +431,27 @@ export const seedAllData = async () => {
     }
     results['staff'] = staff.length;
     
-    // 6. Classes
+    // 6. Classes - with proper FK relationships
     console.log('6. Seeding classes...');
     const classIds: string[] = [];
     const classNames: string[] = [];
+    const staffMap = new Map(staff.map((s, i) => [s.name, staffIds[i]]));
+    const curriculumMap = new Map(curriculums.map((c, i) => [c.name, curriculumIds[i]]));
+    
     for (const cls of classes) {
-      const ref = await addDoc(collection(db, 'classes'), { ...cls, status: 'Active', createdAt: new Date().toISOString() });
+      const teacherId = staffMap.get(cls.teacherName) || '';
+      const assistantId = cls.assistantName ? staffMap.get(cls.assistantName) || '' : null;
+      const curriculumId = curriculumMap.get(cls.curriculum) || '';
+      
+      const ref = await addDoc(collection(db, 'classes'), { 
+        ...cls, 
+        teacherId,           // FK → Staff
+        assistantId,         // FK → Staff
+        curriculumId,        // FK → Curriculum
+        currentStudents: 0,
+        status: 'Active', 
+        createdAt: new Date().toISOString() 
+      });
       classIds.push(ref.id);
       classNames.push(cls.name);
     }
@@ -417,23 +466,60 @@ export const seedAllData = async () => {
     }
     results['parents'] = parents.length;
     
-    // 8. Students
+    // 8. Students - with denormalized parent data
     console.log('8. Seeding students...');
     const studentIds: string[] = [];
     const studentNames: string[] = [];
+    const studentClassIds: string[] = [];
     const studentsData = generateStudents(parentIds, classIds, classNames);
+    const parentChildrenMap: Map<string, string[]> = new Map();
+    const classStudentCount: Map<string, number> = new Map();
+    
     for (const student of studentsData) {
-      const ref = await addDoc(collection(db, 'students'), student);
+      // Get parent info for denormalization
+      const parentIndex = parentIds.indexOf(student.parentId);
+      const parentData = parents[parentIndex] || parents[0];
+      
+      const ref = await addDoc(collection(db, 'students'), {
+        ...student,
+        parentName: parentData.name,      // Denormalized
+        parentPhone: parentData.phone,    // Denormalized
+      });
       studentIds.push(ref.id);
       studentNames.push(student.name);
+      studentClassIds.push(student.classId);
+      
+      // Track children per parent
+      const children = parentChildrenMap.get(student.parentId) || [];
+      children.push(ref.id);
+      parentChildrenMap.set(student.parentId, children);
+      
+      // Track students per class
+      const count = classStudentCount.get(student.classId) || 0;
+      classStudentCount.set(student.classId, count + 1);
     }
+    
+    // Update parent.childrenIds
+    console.log('   Updating parent.childrenIds...');
+    for (const [parentId, childrenIds] of parentChildrenMap) {
+      await updateDoc(doc(db, 'parents', parentId), { childrenIds });
+    }
+    
+    // Update class.currentStudents
+    console.log('   Updating class.currentStudents...');
+    for (const [classId, count] of classStudentCount) {
+      await updateDoc(doc(db, 'classes', classId), { currentStudents: count });
+    }
+    
     results['students'] = studentsData.length;
     
-    // 9. Contracts
+    // 9. Contracts - with denormalized class data
     console.log('9. Seeding contracts...');
-    const contractsData = generateContracts(studentIds, studentNames, classIds);
+    const contractIds: string[] = [];
+    const contractsData = generateContracts(studentIds, studentNames, studentClassIds, classNames);
     for (const contract of contractsData) {
-      await addDoc(collection(db, 'contracts'), contract);
+      const ref = await addDoc(collection(db, 'contracts'), contract);
+      contractIds.push(ref.id);
     }
     results['contracts'] = contractsData.length;
     
