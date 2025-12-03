@@ -194,8 +194,8 @@ export const Dashboard: React.FC = () => {
       const paidContracts = contracts.filter(c => c.status === 'Paid' || c.status === 'Đã thanh toán');
       const debtContracts = contracts.filter(c => c.status === 'Debt' || c.status === 'Nợ phí');
       
-      const totalRevenue = paidContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0) || 227536702;
-      const totalDebt = debtContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0) || 138329744;
+      const totalRevenue = paidContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0);
+      const totalDebt = debtContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0);
       
       // Fetch financial report data for pie chart
       try {
@@ -209,71 +209,80 @@ export const Dashboard: React.FC = () => {
             color: item.color,
           })));
         } else {
-          // Fallback mock data nếu chưa có data
-          setRevenuePieData([
-            { name: 'Học phí', value: totalRevenue * 0.7, color: '#3b82f6' },
-            { name: 'Sách vở', value: totalRevenue * 0.2, color: '#f97316' },
-            { name: 'Khác', value: totalRevenue * 0.1, color: '#8b5cf6' },
-          ]);
+          // No data - show empty
+          setRevenuePieData([]);
         }
       } catch (err) {
         console.error('Error fetching financial data:', err);
-        setRevenuePieData([
-          { name: 'Học phí', value: totalRevenue * 0.7, color: '#3b82f6' },
-          { name: 'Sách vở', value: totalRevenue * 0.2, color: '#f97316' },
-          { name: 'Khác', value: totalRevenue * 0.1, color: '#8b5cf6' },
-        ]);
+        setRevenuePieData([]);
       }
       
-      // Monthly revenue data (mock for now, can be calculated from contracts)
-      const revenueData = [
-        { month: 'D.vọng', expected: 120000000, actual: 0 },
-        { month: 'Thực tế', expected: 0, actual: 103288533 },
-      ];
+      // Revenue comparison data from contracts
+      const revenueData = totalRevenue > 0 ? [
+        { month: 'D.vọng', expected: totalRevenue * 1.2, actual: 0 },
+        { month: 'Thực tế', expected: 0, actual: totalRevenue },
+        { month: 'Chênh lệch', expected: 0, actual: totalRevenue * 0.2 },
+      ] : [];
       
-      // Salary forecast
-      const salaryForecast = [
-        { position: 'Lương giáo viên Việt', amount: 24000000 },
-        { position: 'Lương giáo viên NN', amount: 45000000 },
-        { position: 'Lương trợ giảng', amount: 18000000 },
-        { position: 'Tổng', amount: 87000000 },
-      ];
+      // Fetch products for low stock - real data from Firebase
+      const productsSnap = await getDocs(collection(db, 'products'));
+      const products = productsSnap.docs.map(d => d.data());
+      const lowStockProducts = products
+        .filter((p: any) => p.stock < (p.minStock || 10))
+        .map((p: any) => ({ name: p.name, quantity: p.stock }))
+        .slice(0, 5);
       
-      // Class size stats
-      const classSizeStats = [
-        { range: 'Tỉ lệ dưới 5ss', count: 55, status: 'Trung Bình' },
-        { range: 'Tỉ lệ trên 20ss', count: 10, status: 'Trung Bình' },
-        { range: 'Tỉ lệ học thử', count: 5, status: 'Trung Bình' },
-        { range: 'Điểm số học tập', count: 80, status: 'Trung Bình' },
-        { range: 'Thánh chi nhận xét', count: 30, status: 'Trung Bình' },
-      ];
+      // Fetch staff for birthday - real data from Firebase
+      const staffSnap = await getDocs(collection(db, 'staff'));
+      const staffList = staffSnap.docs.map(d => d.data());
+      const now = new Date();
+      const upcomingBirthdays = staffList
+        .filter((s: any) => {
+          if (!s.birthDate) return false;
+          const bday = new Date(s.birthDate);
+          const thisYearBday = new Date(now.getFullYear(), bday.getMonth(), bday.getDate());
+          const daysUntil = Math.ceil((thisYearBday.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          return daysUntil >= 0 && daysUntil <= 30;
+        })
+        .map((s: any) => ({
+          name: s.name,
+          date: new Date(s.birthDate).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }),
+          phone: s.phone || ''
+        }))
+        .slice(0, 5);
       
-      // Low stock products
-      const lowStockProducts = [
-        { name: 'Academy Stater 1', quantity: 5 },
-        { name: 'Academy Stater 2', quantity: 7 },
-        { name: 'Academy Stater 3', quantity: 3 },
-        { name: 'Academy Stater 4', quantity: 8 },
-      ];
+      // Class stats from real data
+      const classStats = classes.slice(0, 5).map((c: any) => ({
+        name: c.name,
+        count: c.currentStudents || 0,
+      }));
       
-      // Upcoming birthdays
-      const upcomingBirthdays = [
-        { name: 'Trần Hồ My', date: '11/09', phone: '0905-xxx' },
-        { name: 'Ngọc Nguyễn Dx', date: 'Kiên Việt', phone: '0349x-2022' },
-      ];
+      // Salary forecast - calculate from salary rules and staff count
+      const salaryRulesSnap = await getDocs(collection(db, 'salaryRules'));
+      const salaryRules = salaryRulesSnap.docs.map(d => d.data());
+      const salaryForecast = salaryRules.length > 0 ? [
+        ...salaryRules.map((r: any) => ({
+          position: `Lương ${r.position}`,
+          amount: (r.baseSalary || 0) * 20 // Estimate 20 sessions/month
+        })),
+        { 
+          position: 'Tổng', 
+          amount: salaryRules.reduce((sum: number, r: any) => sum + (r.baseSalary || 0) * 20, 0)
+        }
+      ] : [];
       
-      // Class stats
-      const classStats = [
-        { name: 'Lớp A', count: 4 },
-        { name: 'Lớp B', count: 6 },
-        { name: 'Lớp C', count: 4 },
-        { name: 'Lớp D', count: 5 },
-      ];
+      // Class size stats - calculate from real data
+      const classSizeStats = classes.length > 0 ? [
+        { range: 'Lớp dưới 5 HV', count: classes.filter((c: any) => (c.currentStudents || 0) < 5).length, status: classes.filter((c: any) => (c.currentStudents || 0) < 5).length > 2 ? 'Cần cải thiện' : 'Tốt' },
+        { range: 'Lớp 5-10 HV', count: classes.filter((c: any) => (c.currentStudents || 0) >= 5 && (c.currentStudents || 0) <= 10).length, status: 'Trung Bình' },
+        { range: 'Lớp trên 10 HV', count: classes.filter((c: any) => (c.currentStudents || 0) > 10).length, status: 'Tốt' },
+        { range: 'Tỉ lệ học thử', count: Math.round((statusCounts['Học thử'] / Math.max(totalStudents, 1)) * 100), status: statusCounts['Học thử'] > 5 ? 'Tốt' : 'Trung Bình' },
+      ] : [];
       
       setStats({
-        totalStudents: totalStudents || 203,
-        totalClasses: totalClasses || 30,
-        avgPerClass: Number(avgPerClass) || 11.8,
+        totalStudents,
+        totalClasses,
+        avgPerClass: Number(avgPerClass),
         studentsByStatus,
         revenueData,
         debtStats: { 
@@ -291,55 +300,29 @@ export const Dashboard: React.FC = () => {
       
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      // Set default mock data on error
+      // Show empty data on error - no mock data
       setStats({
-        totalStudents: 203,
-        totalClasses: 30,
-        avgPerClass: 11.8,
+        totalStudents: 0,
+        totalClasses: 0,
+        avgPerClass: 0,
         studentsByStatus: [
-          { name: 'Nợ phí', value: 12, color: COLORS.noPhi },
-          { name: 'Học thử', value: 4, color: COLORS.hocThu },
-          { name: 'Bảo lưu', value: 3, color: COLORS.baoLuu },
-          { name: 'Nghỉ học', value: 2, color: COLORS.nghiHoc },
-          { name: 'HV mới', value: 8, color: COLORS.hvMoi },
+          { name: 'Nợ phí', value: 0, color: COLORS.noPhi },
+          { name: 'Học thử', value: 0, color: COLORS.hocThu },
+          { name: 'Bảo lưu', value: 0, color: COLORS.baoLuu },
+          { name: 'Nghỉ học', value: 0, color: COLORS.nghiHoc },
+          { name: 'HV mới', value: 0, color: COLORS.hvMoi },
         ],
-        revenueData: [
-          { month: 'D.vọng', expected: 120000000, actual: 0 },
-          { month: 'Thực tế', expected: 0, actual: 103288533 },
-        ],
-        debtStats: { noPhi: 82997846, noHocPhi: 55331898 },
-        totalRevenue: 227536702,
-        totalDebt: 138329744,
-        salaryForecast: [
-          { position: 'Lương giáo viên Việt', amount: 24000000 },
-          { position: 'Lương giáo viên NN', amount: 45000000 },
-          { position: 'Lương trợ giảng', amount: 18000000 },
-          { position: 'Tổng', amount: 87000000 },
-        ],
-        classSizeStats: [
-          { range: 'Tỉ lệ dưới 5ss', count: 55, status: 'Trung Bình' },
-          { range: 'Tỉ lệ trên 20ss', count: 10, status: 'Trung Bình' },
-          { range: 'Tỉ lệ học thử', count: 5, status: 'Trung Bình' },
-          { range: 'Điểm số học tập', count: 80, status: 'Trung Bình' },
-          { range: 'Thánh chi nhận xét', count: 30, status: 'Trung Bình' },
-        ],
-        lowStockProducts: [
-          { name: 'Academy Stater 1', quantity: 5 },
-          { name: 'Academy Stater 2', quantity: 7 },
-          { name: 'Academy Stater 3', quantity: 3 },
-          { name: 'Academy Stater 4', quantity: 8 },
-        ],
-        upcomingBirthdays: [
-          { name: 'Trần Hồ My', date: '11/09', phone: '0905-xxx' },
-          { name: 'Ngọc Nguyễn Dx', date: 'Kiên Việt', phone: '0349x-2022' },
-        ],
-        classStats: [
-          { name: 'Lớp A', count: 4 },
-          { name: 'Lớp B', count: 6 },
-          { name: 'Lớp C', count: 4 },
-          { name: 'Lớp D', count: 5 },
-        ],
+        revenueData: [],
+        debtStats: { noPhi: 0, noHocPhi: 0 },
+        totalRevenue: 0,
+        totalDebt: 0,
+        salaryForecast: [],
+        classSizeStats: [],
+        lowStockProducts: [],
+        upcomingBirthdays: [],
+        classStats: [],
       });
+      setRevenuePieData([]);
     } finally {
       setLoading(false);
     }
