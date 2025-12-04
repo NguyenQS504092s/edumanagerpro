@@ -165,7 +165,7 @@ export const findParentByPhone = async (phone: string): Promise<Parent | null> =
 };
 
 /**
- * Update parent
+ * Update parent and sync to all related students
  */
 export const updateParent = async (id: string, data: Partial<Parent>): Promise<void> => {
   try {
@@ -174,6 +174,23 @@ export const updateParent = async (id: string, data: Partial<Parent>): Promise<v
       ...data,
       updatedAt: new Date().toISOString(),
     });
+    
+    // Sync to all students with this parentId
+    if (data.name || data.phone) {
+      const children = await getChildrenByParentId(id);
+      const studentUpdates: any = {};
+      if (data.name) studentUpdates.parentName = data.name;
+      if (data.phone) studentUpdates.parentPhone = data.phone;
+      
+      // Update each student's denormalized parent fields
+      for (const child of children) {
+        const studentDocRef = doc(db, STUDENTS_COLLECTION, child.id);
+        await updateDoc(studentDocRef, {
+          ...studentUpdates,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
   } catch (error) {
     console.error('Error updating parent:', error);
     throw new Error('Không thể cập nhật phụ huynh');

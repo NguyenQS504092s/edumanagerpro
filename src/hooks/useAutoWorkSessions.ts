@@ -1,0 +1,315 @@
+/**
+ * useAutoWorkSessions Hook
+ * Tự động tạo danh sách công từ TKB và lịch nghỉ
+ * - Đọc schedule từ classes
+ * - Loại trừ ngày nghỉ
+ * - Merge với công đã xác nhận trong Firebase
+ */
+
+import { useState, useEffect, useMemo } from 'react';
+import { collection, getDocs, query, where, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { ClassModel } from '../../types';
+
+export interface WorkSession {
+  id?: string;
+  staffName: string;
+  staffId?: string;
+  position: string;
+  date: string;
+  timeStart: string;
+  timeEnd: string;
+  classId?: string;
+  className: string;
+  type: 'Dạy chính' | 'Trợ giảng' | 'Nhận xét' | 'Dạy thay' | 'Bồi bài';
+  status: 'Chờ xác nhận' | 'Đã xác nhận' | 'Từ chối';
+  isFromTKB?: boolean; // true = auto from schedule, false = manual
+  confirmedAt?: string;
+  confirmedBy?: string;
+}
+
+// Parse schedule string to get days and time
+const parseSchedule = (schedule: string): { days: number[]; timeStart: string; timeEnd: string } => {
+  if (!schedule) return { days: [], timeStart: '', timeEnd: '' };
+  
+  const timeMatch = schedule.match(/(\d{1,2}[h:]?\d{2})\s*-\s*(\d{1,2}[h:]?\d{2})/);
+  let timeStart = '';
+  let timeEnd = '';
+  if (timeMatch) {
+    timeStart = timeMatch[1].replace('h', ':');
+    timeEnd = timeMatch[2].replace('h', ':');
+  }
+  
+  const dayMatch = schedule.match(/Th[ứử]\s*(\d)(?:\s*,\s*(\d))?/i);
+  const days: number[] = [];
+  if (dayMatch) {
+    if (dayMatch[1]) days.push(parseInt(dayMatch[1]));
+    if (dayMatch[2]) days.push(parseInt(dayMatch[2]));
+  }
+  
+  return { days, timeStart, timeEnd };
+};
+
+// Get dates for a specific day of week within a date range
+const getDatesForDayOfWeek = (dayOfWeek: number, startDate: Date, endDate: Date): Date[] => {
+  const dates: Date[] = [];
+  const current = new Date(startDate);
+  
+  const jsDayOfWeek = dayOfWeek === 7 ? 0 : dayOfWeek - 1;
+  
+  while (current.getDay() !== jsDayOfWeek && current <= endDate) {
+    current.setDate(current.getDate() + 1);
+  }
+  
+  while (current <= endDate) {
+    dates.push(new Date(current));
+    current.setDate(current.getDate() + 7);
+  }
+  
+  return dates;
+};
+
+const formatDate = (date: Date): string => {
+  return date.toISOString().split('T')[0];
+};
+
+export const useAutoWorkSessions = (weekStartDate: Date) => {
+  const [confirmedSessions, setConfirmedSessions] = useState<WorkSession[]>([]);
+  const [manualSessions, setManualSessions] = useState<WorkSession[]>([]);
+  const [holidays, setHolidays] = useState<string[]>([]);
+  const [classes, setClasses] = useState<ClassModel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Calculate week end date
+  const weekEndDate = useMemo(() => {
+    const end = new Date(weekStartDate);
+    end.setDate(end.getDate() + 6); // Sunday
+    return end;
+  }, [weekStartDate]);
+
+  const startDateStr = formatDate(weekStartDate);
+  const endDateStr = formatDate(weekEndDate);
+
+  // Fetch data from Firebase
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      setError(null);
+      
+      try {
+        // Fetch classes
+        const classesSnapshot = await getDocs(collection(db, 'classes'));
+        const classesData = classesSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as ClassModel))
+          .filter(cls => cls.status === 'Đang học');
+        
+        console.log('Fetched classes:', classesData.length, classesData.map(c => ({ name: c.name, schedule: c.schedule, teacher: c.teacher })));
+        setClasses(classesData);
+        
+        // Fetch holidays
+        const holidaysSnapshot = await getDocs(collection(db, 'holidays'));
+        const holidaysData: string[] = [];
+        holidaysSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          const holidayDate = data.date?.toDate?.()?.toISOString().split('T')[0] || data.date;
+          if (holidayDate >= startDateStr && holidayDate <= endDateStr) {
+            holidaysData.push(holidayDate);
+          }
+        });
+        setHolidays(holidaysData);
+        
+        // Fetch confirmed work sessions for this week
+        const sessionsSnapshot = await getDocs(collection(db, 'workSessions'));
+        const sessionsData = sessionsSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as WorkSession))
+          .filter(s => s.date >= startDateStr && s.date <= endDateStr);
+        
+        setConfirmedSessions(sessionsData.filter(s => s.status === 'Đã xác nhận'));
+        setManualSessions(sessionsData.filter(s => !s.isFromTKB));
+        
+      } catch (err: any) {
+        console.error('Error fetching data:', err);
+        setError(err.message || 'Không thể tải dữ liệu');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchData();
+  }, [startDateStr, endDateStr]);
+
+  // Auto-generate sessions from TKB
+  const autoGeneratedSessions = useMemo((): WorkSession[] => {
+    const sessions: WorkSession[] = [];
+    
+    for (const cls of classes) {
+      const { days, timeStart, timeEnd } = parseSchedule(cls.schedule || '');
+      
+      if (days.length === 0 || !timeStart || !timeEnd) continue;
+      
+      for (const dayOfWeek of days) {
+        const dates = getDatesForDayOfWeek(dayOfWeek, weekStartDate, weekEndDate);
+        
+        for (const date of dates) {
+          const dateStr = formatDate(date);
+          
+          // Skip holidays
+          if (holidays.includes(dateStr)) continue;
+          
+          // Check if already confirmed
+          const isConfirmed = (staffName: string) => 
+            confirmedSessions.some(s => 
+              s.staffName === staffName && 
+              s.date === dateStr && 
+              s.className === cls.name
+            );
+          
+          // Vietnamese teacher
+          if (cls.teacher && !isConfirmed(cls.teacher)) {
+            sessions.push({
+              staffName: cls.teacher,
+              position: 'Giáo viên Việt',
+              date: dateStr,
+              timeStart,
+              timeEnd,
+              classId: cls.id,
+              className: cls.name,
+              type: 'Dạy chính',
+              status: 'Chờ xác nhận',
+              isFromTKB: true,
+            });
+          }
+          
+          // Foreign teacher
+          if (cls.foreignTeacher && !isConfirmed(cls.foreignTeacher)) {
+            sessions.push({
+              staffName: cls.foreignTeacher,
+              position: 'Giáo viên Nước ngoài',
+              date: dateStr,
+              timeStart,
+              timeEnd,
+              classId: cls.id,
+              className: cls.name,
+              type: 'Dạy chính',
+              status: 'Chờ xác nhận',
+              isFromTKB: true,
+            });
+          }
+          
+          // Assistant
+          if (cls.assistant && !isConfirmed(cls.assistant)) {
+            sessions.push({
+              staffName: cls.assistant,
+              position: 'Trợ giảng',
+              date: dateStr,
+              timeStart,
+              timeEnd,
+              classId: cls.id,
+              className: cls.name,
+              type: 'Trợ giảng',
+              status: 'Chờ xác nhận',
+              isFromTKB: true,
+            });
+          }
+        }
+      }
+    }
+    
+    return sessions;
+  }, [classes, holidays, confirmedSessions, weekStartDate, weekEndDate]);
+
+  // Combined sessions (auto + manual pending + confirmed)
+  const allSessions = useMemo(() => {
+    return [
+      ...autoGeneratedSessions,
+      ...manualSessions.filter(s => s.status === 'Chờ xác nhận'),
+      ...confirmedSessions,
+    ].sort((a, b) => {
+      // Sort by date, then by time
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.timeStart.localeCompare(b.timeStart);
+    });
+  }, [autoGeneratedSessions, manualSessions, confirmedSessions]);
+
+  // Confirm a single session (save to Firebase)
+  const confirmSession = async (session: WorkSession) => {
+    try {
+      const sessionData = {
+        ...session,
+        status: 'Đã xác nhận',
+        confirmedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      delete sessionData.id;
+      
+      await addDoc(collection(db, 'workSessions'), sessionData);
+      
+      // Update local state
+      setConfirmedSessions(prev => [...prev, { ...sessionData, status: 'Đã xác nhận' } as WorkSession]);
+    } catch (err: any) {
+      console.error('Error confirming session:', err);
+      throw new Error('Không thể xác nhận công');
+    }
+  };
+
+  // Confirm multiple sessions
+  const confirmMultiple = async (sessions: WorkSession[]) => {
+    for (const session of sessions) {
+      await confirmSession(session);
+    }
+  };
+
+  // Add manual session
+  const addManualSession = async (session: Omit<WorkSession, 'id' | 'isFromTKB'>) => {
+    try {
+      const sessionData = {
+        ...session,
+        isFromTKB: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      
+      const docRef = await addDoc(collection(db, 'workSessions'), sessionData);
+      setManualSessions(prev => [...prev, { ...sessionData, id: docRef.id } as WorkSession]);
+      return docRef.id;
+    } catch (err: any) {
+      console.error('Error adding manual session:', err);
+      throw new Error('Không thể thêm công');
+    }
+  };
+
+  // Delete session
+  const deleteSession = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'workSessions', id));
+      setConfirmedSessions(prev => prev.filter(s => s.id !== id));
+      setManualSessions(prev => prev.filter(s => s.id !== id));
+    } catch (err: any) {
+      console.error('Error deleting session:', err);
+      throw new Error('Không thể xóa công');
+    }
+  };
+
+  // Stats
+  const stats = useMemo(() => ({
+    pending: allSessions.filter(s => s.status === 'Chờ xác nhận').length,
+    confirmed: allSessions.filter(s => s.status === 'Đã xác nhận').length,
+    total: allSessions.length,
+  }), [allSessions]);
+
+  return {
+    sessions: allSessions,
+    pendingSessions: allSessions.filter(s => s.status === 'Chờ xác nhận'),
+    confirmedSessions: allSessions.filter(s => s.status === 'Đã xác nhận'),
+    holidays,
+    loading,
+    error,
+    stats,
+    confirmSession,
+    confirmMultiple,
+    addManualSession,
+    deleteSession,
+  };
+};

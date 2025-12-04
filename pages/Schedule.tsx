@@ -1,151 +1,249 @@
 import React, { useState, useMemo } from 'react';
-import { Printer, ChevronLeft, ChevronRight, Calendar, Filter, User, MapPin } from 'lucide-react';
-import { MOCK_SCHEDULE } from '../mockData';
+import { Printer, ChevronLeft, ChevronRight, ChevronDown, Plus, X } from 'lucide-react';
+import { useClasses } from '../src/hooks/useClasses';
+import { ClassModel } from '../types';
+
+// Color palette for teachers
+const TEACHER_COLORS: Record<string, string> = {
+  'default': 'bg-gray-100',
+  'Maria': 'bg-yellow-200',
+  'Habib': 'bg-pink-200',
+  'Thu Hà': 'bg-green-200',
+  'Thuý Nga': 'bg-cyan-200',
+  'Diệu Linh': 'bg-purple-200',
+  'Minh Huyền': 'bg-orange-200',
+  'Ngọc Ánh': 'bg-lime-200',
+  'Uyên Trang': 'bg-rose-200',
+  'Thu Trang': 'bg-teal-200',
+  'Thuý': 'bg-amber-200',
+  'Tiên': 'bg-emerald-200',
+  'Linh': 'bg-sky-200',
+  'Mai': 'bg-indigo-200',
+  'Điệp': 'bg-fuchsia-200',
+};
+
+const getTeacherColor = (teacher: string): string => {
+  return TEACHER_COLORS[teacher] || TEACHER_COLORS['default'];
+};
 
 export const Schedule: React.FC = () => {
-  const [currentWeek, setCurrentWeek] = useState('Tuần 42 (16/10 - 22/10)');
-  const [selectedTeacher, setSelectedTeacher] = useState('');
-  const [selectedRoom, setSelectedRoom] = useState('');
+  const [selectedBranch, setSelectedBranch] = useState('Cơ sở 1');
+  const [currentWeekStart, setCurrentWeekStart] = useState(() => {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(today.setDate(diff));
+  });
+
+  const { classes } = useClasses({});
+
+  const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6'];
+  const branches = ['Cơ sở 1', 'Cơ sở 2', 'Cơ sở 3'];
+
+  // Format week display
+  const weekDisplay = useMemo(() => {
+    const endDate = new Date(currentWeekStart);
+    endDate.setDate(endDate.getDate() + 4);
+    return `${currentWeekStart.toLocaleDateString('vi-VN')} - ${endDate.toLocaleDateString('vi-VN')}`;
+  }, [currentWeekStart]);
+
+  // Navigate weeks
+  const prevWeek = () => {
+    const newDate = new Date(currentWeekStart);
+    newDate.setDate(newDate.getDate() - 7);
+    setCurrentWeekStart(newDate);
+  };
+
+  const nextWeek = () => {
+    const newDate = new Date(currentWeekStart);
+    newDate.setDate(newDate.getDate() + 7);
+    setCurrentWeekStart(newDate);
+  };
+
+  // Parse days from schedule string (e.g., "18:00-19:00 Thứ 2, 4" -> [2, 4])
+  const parseDaysFromSchedule = (schedule: string): number[] => {
+    if (!schedule) return [];
+    
+    // Find the day part after time (e.g., "Thứ 2, 4" or "Thứ 2, 5")
+    const dayMatch = schedule.match(/Th[ứử]\s*(\d)(?:\s*,\s*(\d))?/i);
+    if (!dayMatch) return [];
+    
+    const days: number[] = [];
+    if (dayMatch[1]) days.push(parseInt(dayMatch[1]));
+    if (dayMatch[2]) days.push(parseInt(dayMatch[2]));
+    
+    return days;
+  };
+
+  // Map day name to number
+  const dayNameToNumber: Record<string, number> = {
+    'Thứ 2': 2,
+    'Thứ 3': 3,
+    'Thứ 4': 4,
+    'Thứ 5': 5,
+    'Thứ 6': 6,
+  };
+
+  // Group classes by day
+  const scheduleByDay = useMemo(() => {
+    const result: Record<string, ClassModel[]> = {};
+    days.forEach(day => {
+      const dayNumber = dayNameToNumber[day];
+      result[day] = classes.filter(cls => {
+        const scheduleDays = parseDaysFromSchedule(cls.schedule || '');
+        return scheduleDays.includes(dayNumber);
+      });
+    });
+    return result;
+  }, [classes]);
 
   const handlePrint = () => {
     window.print();
   };
 
-  const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật'];
-  const shifts = ['17:30 - 19:00', '19:15 - 20:45'];
-
-  // Extract unique options for filters
-  const teachers = useMemo(() => Array.from(new Set(MOCK_SCHEDULE.map(s => s.teacher))), []);
-  const rooms = useMemo(() => Array.from(new Set(MOCK_SCHEDULE.map(s => s.room))), []);
-
-  // Filter logic
-  const filteredSchedule = useMemo(() => {
-    return MOCK_SCHEDULE.filter(session => {
-      const matchTeacher = selectedTeacher ? session.teacher === selectedTeacher : true;
-      const matchRoom = selectedRoom ? session.room === selectedRoom : true;
-      return matchTeacher && matchRoom;
-    });
-  }, [selectedTeacher, selectedRoom]);
+  // Parse class info for display
+  const parseClassDisplay = (cls: ClassModel) => {
+    const schedule = cls.schedule || '';
+    const timeMatch = schedule.match(/(\d{1,2}[h:]\d{2}\s*-\s*\d{1,2}[h:]\d{2})/);
+    const time = timeMatch ? timeMatch[0] : '17:30 - 19:00';
+    
+    return {
+      time,
+      year: cls.ageGroup || '',
+      className: cls.name,
+      teacher: cls.teacher,
+      room: cls.room || '',
+      foreignTeacher: cls.foreignTeacher,
+      assistant: cls.assistant,
+    };
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Header & Controls */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100 no-print">
-        
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200 no-print">
         <div className="flex items-center gap-4">
-          <div className="p-2 bg-indigo-50 rounded-lg">
-             <Calendar className="text-indigo-600" size={24} />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-gray-800">Thời khóa biểu</h2>
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-                <button className="hover:text-indigo-600 transition-colors"><ChevronLeft size={16} /></button>
-                <span className="font-medium text-gray-700">{currentWeek}</span>
-                <button className="hover:text-indigo-600 transition-colors"><ChevronRight size={16} /></button>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-            {/* Filters */}
-            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200 hover:border-indigo-300 transition-colors">
-                <User size={16} className="text-gray-400" />
-                <select 
-                    className="bg-transparent border-none text-sm focus:outline-none text-gray-600 min-w-[120px] cursor-pointer"
-                    value={selectedTeacher}
-                    onChange={(e) => setSelectedTeacher(e.target.value)}
-                >
-                    <option value="">Tất cả giáo viên</option>
-                    {teachers.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-            </div>
-
-            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200 hover:border-indigo-300 transition-colors">
-                <MapPin size={16} className="text-gray-400" />
-                <select 
-                    className="bg-transparent border-none text-sm focus:outline-none text-gray-600 min-w-[100px] cursor-pointer"
-                    value={selectedRoom}
-                    onChange={(e) => setSelectedRoom(e.target.value)}
-                >
-                    <option value="">Tất cả phòng</option>
-                    {rooms.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-            </div>
-
-            <div className="h-8 w-px bg-gray-300 mx-1 hidden md:block"></div>
-
-            <button 
-                onClick={handlePrint}
-                className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium shadow-sm"
+          {/* Branch Selector */}
+          <div className="relative">
+            <select
+              value={selectedBranch}
+              onChange={(e) => setSelectedBranch(e.target.value)}
+              className="appearance-none bg-indigo-600 text-white px-4 py-2 pr-10 rounded-lg font-bold text-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400"
             >
-                <Printer size={16} />
-                <span className="hidden sm:inline">In TKB</span>
+              {branches.map(b => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-white pointer-events-none" size={18} />
+          </div>
+
+          {/* Week Navigator */}
+          <div className="flex items-center gap-2">
+            <button onClick={prevWeek} className="p-2 hover:bg-gray-100 rounded-lg">
+              <ChevronLeft size={20} className="text-gray-600" />
             </button>
+            <span className="text-sm font-medium text-gray-700 min-w-[180px] text-center">
+              {weekDisplay}
+            </span>
+            <button onClick={nextWeek} className="p-2 hover:bg-gray-100 rounded-lg">
+              <ChevronRight size={20} className="text-gray-600" />
+            </button>
+          </div>
         </div>
+
+        <button 
+          onClick={handlePrint}
+          className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-900 text-sm font-medium"
+        >
+          <Printer size={16} />
+          In TKB
+        </button>
       </div>
 
       {/* Schedule Grid */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden print:shadow-none print:border-none">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        {/* Branch Title */}
+        <div className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white text-center py-3 text-xl font-bold">
+          {selectedBranch} (Ô 40 - LK4)
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                <th className="p-4 border-b border-r border-gray-100 bg-gray-50/80 text-xs font-bold uppercase text-gray-500 w-28 sticky left-0 z-10 backdrop-blur-sm">
-                  Ca học
-                </th>
                 {days.map((day, index) => (
-                  <th key={day} className={`p-4 border-b border-gray-100 bg-gray-50/50 text-xs font-bold uppercase text-gray-500 min-w-[160px] ${index === 0 ? 'border-l' : ''}`}>
+                  <th 
+                    key={day} 
+                    className="p-3 border border-gray-300 bg-gray-100 text-sm font-bold text-gray-700 min-w-[200px]"
+                    style={{ width: '20%' }}
+                  >
                     {day}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {shifts.map((shift, shiftIndex) => (
-                <tr key={shift}>
-                  <td className="p-4 border-b border-r border-gray-100 text-xs font-bold text-gray-700 bg-gray-50/30 sticky left-0 z-10 backdrop-blur-sm">
-                    {shift}
-                  </td>
-                  {days.map(day => {
-                    const session = filteredSchedule.find(s => s.dayOfWeek === day && s.time === shift);
-                    
-                    return (
-                      <td key={`${day}-${shift}`} className="p-2 border-b border-gray-100 h-36 align-top hover:bg-gray-50/50 transition-colors border-r last:border-r-0 relative group">
-                        {session ? (
-                          <div className="bg-indigo-50/80 border border-indigo-100 rounded-lg p-3 h-full flex flex-col justify-between cursor-pointer hover:shadow-md hover:border-indigo-300 transition-all group-hover:scale-[1.02]">
-                            <div>
-                              <div className="flex justify-between items-start mb-1">
-                                <span className="text-[10px] font-bold text-indigo-600 bg-white px-1.5 py-0.5 rounded shadow-sm border border-indigo-50">
-                                    {session.room}
-                                </span>
-                              </div>
-                              <p className="font-bold text-sm text-gray-800 line-clamp-2 leading-tight mb-1">{session.className}</p>
-                            </div>
+              <tr>
+                {days.map(day => {
+                  const dayClasses = scheduleByDay[day] || [];
+                  
+                  return (
+                    <td key={day} className="border border-gray-300 p-1 align-top" style={{ verticalAlign: 'top' }}>
+                      <div className="space-y-1 min-h-[500px]">
+                        {dayClasses.length > 0 ? (
+                          dayClasses.map((cls) => {
+                            const info = parseClassDisplay(cls);
+                            const bgColor = getTeacherColor(info.teacher);
                             
-                            <div className="mt-2 pt-2 border-t border-indigo-100/50 flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-indigo-200 flex items-center justify-center text-[10px] font-bold text-indigo-700 shrink-0">
-                                    {session.teacher.charAt(0)}
-                                </div>
-                                <p className="text-xs text-gray-600 truncate">{session.teacher}</p>
-                            </div>
-                          </div>
+                            return (
+                              <div 
+                                key={cls.id}
+                                className={`${bgColor} p-2 rounded text-xs border border-gray-300 cursor-pointer hover:shadow-md transition-shadow`}
+                              >
+                                <p className="font-bold text-gray-800">
+                                  {info.time} {info.year && `(${info.year})`} {info.className} ({info.room})
+                                  {info.teacher && ` - ${info.teacher}`}
+                                </p>
+                                {info.foreignTeacher && (
+                                  <p className="text-gray-700">
+                                    GVNN: {info.foreignTeacher}
+                                  </p>
+                                )}
+                                {info.assistant && (
+                                  <p className="text-gray-700">
+                                    TG: {info.assistant}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })
                         ) : (
-                          <div className="h-full w-full rounded-lg border-2 border-dashed border-transparent hover:border-gray-200 flex items-center justify-center group/add transition-all">
-                             <button className="w-8 h-8 rounded-full bg-gray-50 text-gray-300 group-hover/add:bg-indigo-600 group-hover/add:text-white flex items-center justify-center transition-all opacity-0 group-hover/add:opacity-100 no-print">
-                                +
-                             </button>
+                          <div className="h-full flex items-center justify-center text-gray-300 text-xs">
+                            Chưa có lịch
                           </div>
                         )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
-      
+
+      {/* Legend */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 no-print">
+        <h3 className="text-sm font-bold text-gray-700 mb-3">Chú thích màu giáo viên:</h3>
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(TEACHER_COLORS).filter(([k]) => k !== 'default').map(([teacher, color]) => (
+            <div key={teacher} className={`${color} px-3 py-1 rounded text-xs font-medium text-gray-700 border border-gray-200`}>
+              {teacher}
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Print Footer */}
       <div className="hidden print:block text-center text-xs text-gray-400 mt-8">
         <p>Hệ thống quản lý đào tạo EduManager Pro</p>

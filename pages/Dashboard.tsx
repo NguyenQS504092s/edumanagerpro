@@ -35,6 +35,7 @@ import { db } from '../src/config/firebase';
 import { formatCurrency } from '../src/utils/currencyUtils';
 import { getRevenueSummary, RevenueByCategory } from '../src/services/financialReportService';
 import { seedAllData, clearAllData } from '../scripts/seedAllData';
+import { useSalaryReport } from '../src/hooks/useSalaryReport';
 
 // Colors matching the design
 const COLORS = {
@@ -50,10 +51,11 @@ const PIE_COLORS = ['#3b82f6', '#f97316', '#eab308', '#ef4444', '#22c55e'];
 
 interface StudentData {
   id: string;
-  name: string;
+  fullName: string;
   phone?: string;
   email?: string;
   className?: string;
+  currentClassName?: string;
   status?: string;
   hasDebt?: boolean;
   createdAt?: string;
@@ -96,6 +98,22 @@ export const Dashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [currentMonth] = useState('Tháng hiện tại');
+  
+  // State cho bảng thống kê
+  const [statsMonth, setStatsMonth] = useState(new Date().getMonth() + 1);
+  const [statsYear, setStatsYear] = useState(new Date().getFullYear());
+  const [statsCategory, setStatsCategory] = useState('Lương nhân viên');
+  const [statsSortOrder, setStatsSortOrder] = useState('asc'); // asc = thấp đến cao
+  const [statsLimit, setStatsLimit] = useState(5);
+  
+  // Fetch salary report data
+  const { summaries: salaryReportData } = useSalaryReport(statsMonth, statsYear);
+  
+  // State cho bảng sinh nhật
+  const [birthdayFilter, setBirthdayFilter] = useState<'month' | 'week' | 'today'>('month');
+  
+  // State cho bảng vật phẩm kho
+  const [stockFilter, setStockFilter] = useState<'low' | 'all'>('low');
   
   // State cho modal danh sách học viên
   const [allStudents, setAllStudents] = useState<StudentData[]>([]);
@@ -170,12 +188,12 @@ export const Dashboard: React.FC = () => {
       const totalClasses = classes.length;
       const avgPerClass = totalClasses > 0 ? (totalStudents / totalClasses).toFixed(1) : 0;
       
-      // Students by status - fetch real data
+      // Students by status - fetch real data (dùng giá trị Vietnamese từ enum)
       const statusCounts = {
-        'Nợ phí': students.filter(s => s.hasDebt || s.status === 'Debt' || s.status === 'Nợ phí').length,
-        'Học thử': students.filter(s => s.status === 'Trial' || s.status === 'Học thử').length,
-        'Bảo lưu': students.filter(s => s.status === 'Reserved' || s.status === 'Bảo lưu').length,
-        'Nghỉ học': students.filter(s => s.status === 'Dropped' || s.status === 'Nghỉ học').length,
+        'Nợ phí': students.filter(s => s.hasDebt || s.status === 'Nợ phí').length,
+        'Học thử': students.filter(s => s.status === 'Học thử').length,
+        'Bảo lưu': students.filter(s => s.status === 'Bảo lưu').length,
+        'Nghỉ học': students.filter(s => s.status === 'Nghỉ học').length,
         'HV mới': students.filter(s => {
           if (!s.createdAt) return false;
           const created = new Date(s.createdAt);
@@ -234,24 +252,57 @@ export const Dashboard: React.FC = () => {
         .map((p: any) => ({ name: p.name, quantity: p.stock }))
         .slice(0, 5);
       
-      // Fetch staff for birthday - real data from Firebase
+      // Fetch staff for birthday and salary - real data from Firebase
       const staffSnap = await getDocs(collection(db, 'staff'));
-      const staffList = staffSnap.docs.map(d => d.data());
+      const staffList = staffSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // Also get staff from staffSalaries if staff collection is empty
+      let allStaff = staffList;
+      if (staffList.length === 0) {
+        const staffSalariesSnap = await getDocs(collection(db, 'staffSalaries'));
+        const uniqueStaff = new Map();
+        staffSalariesSnap.docs.forEach(d => {
+          const data = d.data();
+          if (!uniqueStaff.has(data.staffId)) {
+            uniqueStaff.set(data.staffId, {
+              id: data.staffId,
+              name: data.staffName,
+              position: data.position,
+              birthDate: data.birthDate || data.dob,
+            });
+          }
+        });
+        allStaff = Array.from(uniqueStaff.values());
+      }
+      
       const now = new Date();
-      const upcomingBirthdays = staffList
+      const thisMonth = now.getMonth();
+      const thisYear = now.getFullYear();
+      
+      // Get all birthdays in current month (for filter to work)
+      // Check multiple possible field names
+      const upcomingBirthdays = allStaff
         .filter((s: any) => {
-          if (!s.birthDate) return false;
-          const bday = new Date(s.birthDate);
-          const thisYearBday = new Date(now.getFullYear(), bday.getMonth(), bday.getDate());
-          const daysUntil = Math.ceil((thisYearBday.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-          return daysUntil >= 0 && daysUntil <= 30;
+          const bdayStr = s['sinh nhật'] || s['ngày sinh'] || s.birthDate || s.dob || s.dateOfBirth;
+          if (!bdayStr) return false;
+          const bday = bdayStr.toDate ? bdayStr.toDate() : new Date(bdayStr);
+          if (isNaN(bday.getTime())) return false;
+          // Include all birthdays in current month
+          return bday.getMonth() === thisMonth;
         })
-        .map((s: any) => ({
-          name: s.name,
-          position: s.position || 'Nhân viên',
-          date: new Date(s.birthDate).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-        }))
-        .slice(0, 5);
+        .map((s: any) => {
+          const bdayStr = s['sinh nhật'] || s['ngày sinh'] || s.birthDate || s.dob || s.dateOfBirth;
+          const bday = bdayStr.toDate ? bdayStr.toDate() : new Date(bdayStr);
+          return {
+            name: s.name || s.staffName,
+            position: s.position || 'Nhân viên',
+            date: `${String(bday.getDate()).padStart(2, '0')}/${String(bday.getMonth() + 1).padStart(2, '0')}/${bday.getFullYear()}`,
+            dayOfMonth: bday.getDate(),
+          };
+        })
+        .sort((a: any, b: any) => a.dayOfMonth - b.dayOfMonth);
+      
+      console.log('Staff list:', allStaff.length, 'Birthdays this month:', upcomingBirthdays.length);
       
       // Class stats from real data
       const classStats = classes.slice(0, 5).map((c: any) => ({
@@ -259,48 +310,82 @@ export const Dashboard: React.FC = () => {
         count: c.currentStudents || 0,
       }));
       
-      // Salary forecast - theo vị trí: GV Việt, GV NN, Trợ giảng
-      const gvVietCount = staffList.filter((s: any) => s.position === 'Giáo viên' || s.position === 'GV Việt').length;
-      const gvNNCount = staffList.filter((s: any) => s.position === 'Giáo viên NN' || s.position === 'GV NN').length;
-      const troGiangCount = staffList.filter((s: any) => s.position === 'Trợ giảng').length;
+      // Fetch work sessions for real salary calculation
+      const workSessionsSnap = await getDocs(collection(db, 'workSessions'));
+      const workSessions = workSessionsSnap.docs.map(d => d.data());
+      const confirmedSessions = workSessions.filter((ws: any) => ws.status === 'Đã xác nhận');
       
-      const luongGVViet = gvVietCount * 12000000; // 12tr/GV Việt
-      const luongGVNN = gvNNCount * 25000000; // 25tr/GV NN
-      const luongTroGiang = troGiangCount * 4000000; // 4tr/Trợ giảng
-      const tongLuong = luongGVViet + luongGVNN + luongTroGiang;
+      // Calculate salary by position from confirmed work sessions
+      const salaryByPosition: { [key: string]: number } = {
+        'Giáo viên Việt': 0,
+        'Giáo viên Nước ngoài': 0,
+        'Trợ giảng': 0,
+      };
+      
+      // Salary rates per session
+      const salaryRates: { [key: string]: number } = {
+        'Giáo viên Việt': 200000,
+        'Giáo viên Nước ngoài': 400000,
+        'Trợ giảng': 100000,
+      };
+      
+      confirmedSessions.forEach((ws: any) => {
+        const pos = ws.position || 'Trợ giảng';
+        const rate = salaryRates[pos] || 100000;
+        if (pos.includes('Việt') || pos === 'Giáo viên') {
+          salaryByPosition['Giáo viên Việt'] += rate;
+        } else if (pos.includes('Nước ngoài') || pos.includes('NN')) {
+          salaryByPosition['Giáo viên Nước ngoài'] += rate;
+        } else {
+          salaryByPosition['Trợ giảng'] += rate;
+        }
+      });
+      
+      const tongLuong = Object.values(salaryByPosition).reduce((a, b) => a + b, 0);
       
       const salaryForecast = [
-        { position: 'Lương giáo viên Việt', amount: luongGVViet },
-        { position: 'Lương giáo viên NN', amount: luongGVNN },
-        { position: 'Lương trợ giảng', amount: luongTroGiang },
+        { position: 'Lương giáo viên Việt', amount: salaryByPosition['Giáo viên Việt'] },
+        { position: 'Lương giáo viên NN', amount: salaryByPosition['Giáo viên Nước ngoài'] },
+        { position: 'Lương trợ giảng', amount: salaryByPosition['Trợ giảng'] },
         { position: 'Tổng', amount: tongLuong },
       ];
       const salaryPercent = totalRevenue > 0 ? Math.round((tongLuong / totalRevenue) * 100 * 100) / 100 : 0;
       
-      // Chỉ số sức khỏe doanh nghiệp
-      const activeStudents = students.filter((s: any) => s.status === 'Đang học' || s.status === 'Active').length;
-      const debtStudents = students.filter((s: any) => s.hasDebt).length;
+      // Chỉ số sức khỏe doanh nghiệp - tính từ dữ liệu thực
+      const activeStudents = students.filter((s: any) => s.status === 'Đang học').length;
+      const debtStudents = students.filter((s: any) => s.hasDebt || s.status === 'Nợ phí').length;
       const droppedStudents = statusCounts['Nghỉ học'];
       
       const tiLeTaiTuc = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
       const tiLeNoPhi = totalStudents > 0 ? Math.round((debtStudents / totalStudents) * 100) : 0;
       const tiLeNghiHoc = totalStudents > 0 ? Math.round((droppedStudents / totalStudents) * 100) : 0;
-      const diemHaiLong = 84; // TODO: Calculate from feedback
+      const diemHaiLong = 84; // TODO: Calculate from feedback collection
       const tiSuatLoiNhuan = totalRevenue > 0 ? Math.round(((totalRevenue - tongLuong) / totalRevenue) * 100) : 0;
       
-      const getStatus = (value: number, goodThreshold: number, badThreshold: number, inverse = false) => {
-        if (inverse) {
-          return value <= goodThreshold ? 'Tốt' : value >= badThreshold ? 'Cần cải thiện' : 'Trung Bình';
-        }
-        return value >= goodThreshold ? 'Tốt' : value <= badThreshold ? 'Cần cải thiện' : 'Trung Bình';
+      // Đánh giá: <10% Tốt, <20% Khá, <30% Trung Bình, <50% Yếu, >=50% Rất yếu
+      const getStatusInverse = (value: number) => {
+        if (value < 10) return 'Tốt';
+        if (value < 20) return 'Khá';
+        if (value < 30) return 'Trung Bình';
+        if (value < 50) return 'Yếu';
+        return 'Rất yếu';
+      };
+      
+      // Đánh giá thuận: >80% Tốt, >60% Khá, >40% TB, >20% Yếu
+      const getStatusNormal = (value: number) => {
+        if (value >= 80) return 'Tốt';
+        if (value >= 60) return 'Khá';
+        if (value >= 40) return 'Trung Bình';
+        if (value >= 20) return 'Yếu';
+        return 'Rất yếu';
       };
       
       const businessHealth = [
-        { metric: 'Tỉ lệ tái tục', value: tiLeTaiTuc, status: getStatus(tiLeTaiTuc, 70, 40) },
-        { metric: 'Tỉ lệ nợ phí', value: tiLeNoPhi, status: getStatus(tiLeNoPhi, 10, 30, true) },
-        { metric: 'Tỉ lệ nghỉ học', value: tiLeNghiHoc, status: getStatus(tiLeNghiHoc, 5, 15, true) },
-        { metric: 'Điểm số hài lòng', value: diemHaiLong, status: getStatus(diemHaiLong, 80, 60) },
-        { metric: 'Tỉ suất lợi nhuận', value: tiSuatLoiNhuan, status: getStatus(tiSuatLoiNhuan, 40, 20) },
+        { metric: 'Tỉ lệ tái tục', value: tiLeTaiTuc, status: getStatusNormal(tiLeTaiTuc) },
+        { metric: 'Tỉ lệ nợ phí', value: tiLeNoPhi, status: getStatusInverse(tiLeNoPhi) },
+        { metric: 'Tỉ lệ nghỉ học', value: tiLeNghiHoc, status: getStatusInverse(tiLeNghiHoc) },
+        { metric: 'Điểm số hài lòng', value: diemHaiLong, status: getStatusNormal(diemHaiLong) },
+        { metric: 'Tỉ suất lợi nhuận', value: tiSuatLoiNhuan, status: getStatusNormal(tiSuatLoiNhuan) },
       ];
       
       setStats({
@@ -366,13 +451,13 @@ export const Dashboard: React.FC = () => {
     
     switch (category) {
       case 'Nợ phí':
-        return allStudents.filter(s => s.hasDebt || s.status === 'Debt');
+        return allStudents.filter(s => s.hasDebt || s.status === 'Nợ phí');
       case 'Học thử':
-        return allStudents.filter(s => s.status === 'Trial' || s.status === 'Học thử');
+        return allStudents.filter(s => s.status === 'Học thử');
       case 'Bảo lưu':
-        return allStudents.filter(s => s.status === 'Reserved' || s.status === 'Bảo lưu');
+        return allStudents.filter(s => s.status === 'Bảo lưu');
       case 'Nghỉ học':
-        return allStudents.filter(s => s.status === 'Dropped' || s.status === 'Nghỉ học');
+        return allStudents.filter(s => s.status === 'Nghỉ học');
       case 'HV mới':
         return allStudents.filter(s => {
           if (!s.createdAt) return false;
@@ -643,7 +728,9 @@ export const Dashboard: React.FC = () => {
                     <td className="py-1.5 text-center">{item.value}%</td>
                     <td className={`py-1.5 text-right font-medium ${
                       item.status === 'Tốt' ? 'text-green-600' : 
-                      item.status === 'Cần cải thiện' ? 'text-red-500' : 'text-orange-500'
+                      item.status === 'Khá' ? 'text-blue-500' :
+                      item.status === 'Trung Bình' ? 'text-orange-500' : 
+                      item.status === 'Yếu' ? 'text-red-500' : 'text-red-700'
                     }`}>{item.status}</td>
                   </tr>
                 ))}
@@ -656,24 +743,39 @@ export const Dashboard: React.FC = () => {
             <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
               <h3 className="font-bold text-white text-xs text-center">VẬT PHẨM CÒN LẠI TRONG KHO</h3>
             </div>
-            <table className="w-full text-xs mt-2">
-              <thead className="text-gray-600 border-b">
+            <div className="flex items-center gap-2 text-xs mt-2 mb-2 p-2 bg-green-50 rounded">
+              <span className="text-gray-500">Hiển thị</span>
+              <select
+                value={stockFilter}
+                onChange={(e) => setStockFilter(e.target.value as any)}
+                className="text-green-600 font-medium bg-transparent border-none cursor-pointer focus:outline-none"
+              >
+                <option value="low">Sắp hết hàng</option>
+                <option value="all">Tất cả</option>
+              </select>
+            </div>
+            <table className="w-full text-xs border border-gray-200">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left py-1">Hạng Mục</th>
-                  <th className="text-right py-1">Số lượng</th>
+                  <th className="text-left py-1.5 px-2 border-b">Tên sản phẩm</th>
+                  <th className="text-right py-1.5 px-2 border-b">Số lượng</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.lowStockProducts.length > 0 ? (
                   stats.lowStockProducts.map((item, idx) => (
                     <tr key={idx} className="border-b border-gray-100">
-                      <td className="py-1.5">{item.name}</td>
-                      <td className="py-1.5 text-right font-bold text-blue-600">{item.quantity}</td>
+                      <td className="py-1.5 px-2">{item.name}</td>
+                      <td className={`py-1.5 px-2 text-right font-bold ${item.quantity < 5 ? 'text-red-600' : 'text-blue-600'}`}>
+                        {item.quantity}
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có sản phẩm</td>
+                    <td colSpan={2} className="py-4 text-center text-gray-400">
+                      Chưa có dữ liệu sản phẩm trong kho
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -689,89 +791,140 @@ export const Dashboard: React.FC = () => {
               <h3 className="font-bold text-white text-xs text-center">THỐNG KÊ</h3>
             </div>
             
-            {/* Filter row */}
+            {/* Filter row - interactive */}
             <div className="grid grid-cols-2 gap-2 text-xs mt-2 mb-3 p-2 bg-green-50 rounded">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-gray-500">Xem theo tháng</span>
+                <select 
+                  value={`${statsMonth}-${statsYear}`}
+                  onChange={(e) => {
+                    const [m, y] = e.target.value.split('-').map(Number);
+                    setStatsMonth(m);
+                    setStatsYear(y);
+                  }}
+                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                >
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() - i);
+                    const val = `${d.getMonth() + 1}-${d.getFullYear()}`;
+                    const label = `${d.getMonth() + 1}/${d.getFullYear()}`;
+                    return <option key={val} value={val}>{label}</option>;
+                  })}
+                </select>
               </div>
               <div></div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-gray-500">Hạng mục thống kê</span>
-                <span className="text-green-600 font-medium">Lương nhân sự</span>
+                <select 
+                  value={statsCategory}
+                  onChange={(e) => setStatsCategory(e.target.value)}
+                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                >
+                  <option value="Lương nhân viên">Lương nhân viên</option>
+                  <option value="Số lượng học sinh">Số lượng học sinh</option>
+                  <option value="Doanh thu">Doanh thu</option>
+                </select>
               </div>
               <div></div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-gray-500">Kiểu xem</span>
-                <span className="text-green-600 font-medium">Từ thấp tới cao</span>
+                <select 
+                  value={statsSortOrder}
+                  onChange={(e) => setStatsSortOrder(e.target.value)}
+                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                >
+                  <option value="asc">Từ thấp tới cao</option>
+                  <option value="desc">Từ cao tới thấp</option>
+                </select>
               </div>
               <div></div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-gray-500">Hiển thị</span>
-                <span className="text-green-600 font-medium">TOP 5</span>
+                <select 
+                  value={statsLimit}
+                  onChange={(e) => setStatsLimit(Number(e.target.value))}
+                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                >
+                  <option value={5}>TOP 5</option>
+                  <option value={10}>TOP 10</option>
+                  <option value={20}>TOP 20</option>
+                </select>
               </div>
             </div>
 
-            {/* Class stats table */}
+            {/* Stats table - từ báo cáo lương */}
             <table className="w-full text-xs border border-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left py-1.5 px-2 border-b">Tên Hạng mục</th>
-                  <th className="text-right py-1.5 px-2 border-b">Số liệu chi tiết</th>
+                  <th className="text-left py-1.5 px-2 border-b">Tên nhân viên</th>
+                  <th className="text-right py-1.5 px-2 border-b">Lương tạm tính</th>
                 </tr>
               </thead>
               <tbody>
-                {stats.classStats.length > 0 ? (
-                  stats.classStats.map((item, idx) => (
-                    <tr key={idx} className="border-b border-gray-100">
-                      <td className="py-1.5 px-2">{item.name}</td>
-                      <td className="py-1.5 px-2 text-right">{item.count}</td>
+                {(() => {
+                  const sortedData = [...salaryReportData]
+                    .sort((a, b) => statsSortOrder === 'asc' 
+                      ? a.estimatedSalary - b.estimatedSalary 
+                      : b.estimatedSalary - a.estimatedSalary)
+                    .slice(0, statsLimit);
+                  
+                  return sortedData.length > 0 ? (
+                    sortedData.map((item, idx) => (
+                      <tr key={idx} className="border-b border-gray-100">
+                        <td className="py-1.5 px-2">{item.staffName}</td>
+                        <td className="py-1.5 px-2 text-right font-medium text-blue-600">{formatCurrency(item.estimatedSalary)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có dữ liệu lương</td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có dữ liệu</td>
-                  </tr>
-                )}
+                  );
+                })()}
               </tbody>
             </table>
+          </div>
 
-            {/* Diễn giải table */}
-            <div className="mt-3 pt-2 border-t">
-              <table className="w-full text-xs">
-                <thead className="text-gray-500">
-                  <tr>
-                    <th className="text-left py-1">Hạng mục</th>
-                    <th className="text-left py-1">Diễn giải</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-gray-100">
-                    <td className="py-1.5">Tỉ lệ đi học</td>
-                    <td className="py-1.5 text-gray-600 italic">Tỉ lệ chuyên cần của toàn trung tâm</td>
-                  </tr>
-                  <tr className="border-b border-gray-100">
-                    <td className="py-1.5">Tỉ lệ bồi bài</td>
-                    <td className="py-1.5 text-gray-600 italic">Tỉ lệ nghỉ được bồi</td>
-                  </tr>
-                  <tr className="border-b border-gray-100">
-                    <td className="py-1.5">Số lượng học sinh</td>
-                    <td className="py-1.5 text-gray-600 italic">Số học sinh đang học + nợ phí đang học</td>
-                  </tr>
-                  <tr className="border-b border-gray-100">
-                    <td className="py-1.5">Doanh thu thực tế</td>
-                    <td className="py-1.5 text-gray-600 italic">Doanh thu thực tế hiện tại</td>
-                  </tr>
-                  <tr className="border-b border-gray-100">
-                    <td className="py-1.5">Lợi nhuận thực tế</td>
-                    <td className="py-1.5 text-gray-600 italic">Doanh thu - chi phí giáo viên + trợ giảng của lớp</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1.5">Lương nhân viên</td>
-                    <td className="py-1.5 text-gray-600 italic">Xếp hạng lương nhận được của nhân viên</td>
-                  </tr>
-                </tbody>
-              </table>
+          {/* DIỄN GIẢI HẠNG MỤC */}
+          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
+            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
+              <h3 className="font-bold text-white text-xs text-center">DIỄN GIẢI HẠNG MỤC</h3>
             </div>
+            <table className="w-full text-xs mt-2">
+              <thead className="text-gray-500 border-b">
+                <tr>
+                  <th className="text-left py-1">Hạng mục</th>
+                  <th className="text-left py-1">Diễn giải</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-gray-100">
+                  <td className="py-1.5">Tỉ lệ đi học</td>
+                  <td className="py-1.5 text-gray-600 italic">Tỉ lệ chuyên cần của toàn trung tâm</td>
+                </tr>
+                <tr className="border-b border-gray-100">
+                  <td className="py-1.5">Tỉ lệ bồi bài</td>
+                  <td className="py-1.5 text-gray-600 italic">Tỉ lệ nghỉ được bồi</td>
+                </tr>
+                <tr className="border-b border-gray-100">
+                  <td className="py-1.5">Số lượng học sinh</td>
+                  <td className="py-1.5 text-gray-600 italic">Số học sinh đang học + nợ phí đang học</td>
+                </tr>
+                <tr className="border-b border-gray-100">
+                  <td className="py-1.5">Doanh thu thực tế</td>
+                  <td className="py-1.5 text-gray-600 italic">Doanh thu thực tế hiện tại</td>
+                </tr>
+                <tr className="border-b border-gray-100">
+                  <td className="py-1.5">Lợi nhuận thực tế</td>
+                  <td className="py-1.5 text-gray-600 italic">Doanh thu - chi phí GV + trợ giảng</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5">Lương nhân viên</td>
+                  <td className="py-1.5 text-gray-600 italic">Xếp hạng lương nhận được của NV</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           {/* SINH NHẬT CỦA NHÂN SỰ */}
@@ -779,9 +932,17 @@ export const Dashboard: React.FC = () => {
             <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
               <h3 className="font-bold text-white text-xs text-center">SINH NHẬT CỦA NHÂN SỰ</h3>
             </div>
-            <div className="flex items-center gap-2 text-xs mt-2 mb-2">
+            <div className="flex items-center gap-2 text-xs mt-2 mb-2 p-2 bg-green-50 rounded">
               <span className="text-gray-500">Hiển thị theo</span>
-              <span className="font-medium text-green-600">Tháng</span>
+              <select
+                value={birthdayFilter}
+                onChange={(e) => setBirthdayFilter(e.target.value as any)}
+                className="text-green-600 font-medium bg-transparent border-none cursor-pointer focus:outline-none"
+              >
+                <option value="today">Hôm nay</option>
+                <option value="week">Tuần này</option>
+                <option value="month">Tháng này</option>
+              </select>
             </div>
             <table className="w-full text-xs border border-gray-200">
               <thead className="bg-gray-50">
@@ -792,19 +953,43 @@ export const Dashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {stats.upcomingBirthdays.length > 0 ? (
-                  stats.upcomingBirthdays.map((item, idx) => (
-                    <tr key={idx} className="border-b border-gray-100">
-                      <td className="py-1.5 px-2">{item.name}</td>
-                      <td className="py-1.5 px-2 text-center">{item.position}</td>
-                      <td className="py-1.5 px-2 text-right">{item.date}</td>
+                {(() => {
+                  const now = new Date();
+                  const today = now.getDate();
+                  const thisMonth = now.getMonth();
+                  const thisYear = now.getFullYear();
+                  
+                  // Filter birthdays based on selection
+                  const filteredBirthdays = stats.upcomingBirthdays.filter(item => {
+                    const [day, month] = item.date.split('/').map(Number);
+                    
+                    if (birthdayFilter === 'today') {
+                      return day === today && month === thisMonth + 1;
+                    } else if (birthdayFilter === 'week') {
+                      const bdayThisYear = new Date(thisYear, month - 1, day);
+                      const diffDays = Math.ceil((bdayThisYear.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                      return diffDays >= 0 && diffDays <= 7;
+                    } else {
+                      return month === thisMonth + 1;
+                    }
+                  });
+                  
+                  return filteredBirthdays.length > 0 ? (
+                    filteredBirthdays.map((item, idx) => (
+                      <tr key={idx} className="border-b border-gray-100">
+                        <td className="py-1.5 px-2">{item.name}</td>
+                        <td className="py-1.5 px-2 text-center">{item.position}</td>
+                        <td className="py-1.5 px-2 text-right">{item.date}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="py-2 text-center text-gray-400">
+                        Không có sinh nhật {birthdayFilter === 'today' ? 'hôm nay' : birthdayFilter === 'week' ? 'tuần này' : 'tháng này'}
+                      </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} className="py-2 text-center text-gray-400">Không có sinh nhật trong tháng</td>
-                  </tr>
-                )}
+                  );
+                })()}
               </tbody>
             </table>
           </div>
@@ -854,8 +1039,8 @@ export const Dashboard: React.FC = () => {
                       {filteredStudents.map((student, idx) => (
                         <tr key={student.id} className="border-b hover:bg-gray-50">
                           <td className="p-2 text-gray-500">{idx + 1}</td>
-                          <td className="p-2 font-medium">{student.name}</td>
-                          <td className="p-2">{student.className || '-'}</td>
+                          <td className="p-2 font-medium">{student.fullName}</td>
+                          <td className="p-2">{student.className || student.currentClassName || '-'}</td>
                           <td className="p-2">
                             <div className="flex items-center gap-2 text-xs text-gray-600">
                               {student.phone && (

@@ -128,24 +128,32 @@ export const confirmWorkSession = async (id: string, confirmedBy?: string): Prom
 };
 
 export const confirmAllWorkSessions = async (ids: string[], confirmedBy?: string): Promise<void> => {
+  if (!ids || ids.length === 0) {
+    throw new Error('Không có công nào để xác nhận');
+  }
+  
   try {
     const batch = writeBatch(db);
     const now = new Date().toISOString();
+    
+    console.log('Confirming sessions:', ids);
     
     ids.forEach(id => {
       const docRef = doc(db, WORK_SESSIONS_COLLECTION, id);
       batch.update(docRef, {
         status: 'Đã xác nhận',
         confirmedAt: now,
-        confirmedBy,
+        confirmedBy: confirmedBy || 'system',
         updatedAt: now,
       });
     });
     
     await batch.commit();
-  } catch (error) {
+    console.log('Batch commit successful');
+  } catch (error: any) {
     console.error('Error confirming all work sessions:', error);
-    throw new Error('Không thể xác nhận hàng loạt');
+    console.error('Error details:', error?.code, error?.message);
+    throw new Error(`Không thể xác nhận hàng loạt: ${error?.message || 'Unknown error'}`);
   }
 };
 

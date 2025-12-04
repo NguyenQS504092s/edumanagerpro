@@ -88,10 +88,10 @@ export class ClassService {
   // Create new class
   static async createClass(classData: Omit<ClassModel, 'id'>): Promise<string> {
     try {
-      const docRef = await addDoc(collection(db, COLLECTION_NAME), {
+      const dataToSave: any = {
         ...classData,
-        startDate: Timestamp.fromDate(new Date(classData.startDate)),
-        endDate: Timestamp.fromDate(new Date(classData.endDate)),
+        startDate: classData.startDate ? Timestamp.fromDate(new Date(classData.startDate)) : null,
+        endDate: classData.endDate ? Timestamp.fromDate(new Date(classData.endDate)) : null,
         history: [{
           id: `HIST_${Date.now()}`,
           date: Timestamp.now(),
@@ -102,8 +102,9 @@ export class ClassService {
         }],
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
-      });
+      };
       
+      const docRef = await addDoc(collection(db, COLLECTION_NAME), dataToSave);
       return docRef.id;
     } catch (error) {
       console.error('Error creating class:', error);
@@ -121,13 +122,13 @@ export class ClassService {
         updatedAt: Timestamp.now()
       };
       
-      // Convert date strings to Timestamps
-      if (updates.startDate) {
-        updateData.startDate = Timestamp.fromDate(new Date(updates.startDate));
+      // Convert date strings to Timestamps (handle empty strings)
+      if (updates.startDate !== undefined) {
+        updateData.startDate = updates.startDate ? Timestamp.fromDate(new Date(updates.startDate)) : null;
       }
       
-      if (updates.endDate) {
-        updateData.endDate = Timestamp.fromDate(new Date(updates.endDate));
+      if (updates.endDate !== undefined) {
+        updateData.endDate = updates.endDate ? Timestamp.fromDate(new Date(updates.endDate)) : null;
       }
       
       await updateDoc(docRef, updateData);

@@ -77,7 +77,11 @@ const menuItems: MenuItem[] = [
     label: 'Tài chính',
     icon: DollarSign,
     subItems: [
+        { id: 'contracts', label: 'Danh sách hợp đồng', path: '/finance/contracts', icon: ChevronRight },
+        { id: 'contracts-create', label: 'Tạo hợp đồng', path: '/finance/contracts/create', icon: ChevronRight },
         { id: 'invoices', label: 'Hóa đơn bán sách', path: '/finance/invoices', icon: ChevronRight },
+        { id: 'debt', label: 'Quản lý công nợ', path: '/finance/debt', icon: ChevronRight },
+        { id: 'revenue', label: 'Báo cáo doanh thu', path: '/finance/revenue', icon: ChevronRight },
     ]
   },
   {

@@ -175,6 +175,9 @@ export class StudentService {
     try {
       const docRef = doc(db, COLLECTION_NAME, id);
       
+      // Get current student to check parentId
+      const currentStudent = await this.getStudentById(id);
+      
       const updateData: any = {
         ...updates,
         updatedAt: Timestamp.now()
@@ -189,6 +192,16 @@ export class StudentService {
           updateData.parentPhone = parent.phone;
         }
         delete updateData.newParentId;
+      }
+      
+      // Sync parent info to parents collection if parentName/parentPhone changed
+      if (currentStudent?.parentId && (updates.parentName || updates.parentPhone)) {
+        const { updateParent } = await import('./parentService');
+        const parentUpdates: any = {};
+        if (updates.parentName) parentUpdates.name = updates.parentName;
+        if (updates.parentPhone) parentUpdates.phone = updates.parentPhone;
+        
+        await updateParent(currentStudent.parentId, parentUpdates);
       }
       
       // Convert date strings to Timestamps

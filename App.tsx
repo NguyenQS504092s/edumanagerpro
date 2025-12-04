@@ -6,6 +6,7 @@ import { Header } from './components/Header';
 import { Dashboard } from './pages/Dashboard';
 import { ClassManager } from './pages/ClassManager';
 import { StudentManager } from './pages/StudentManager';
+import { TrialStudents } from './pages/TrialStudents';
 import { Schedule } from './pages/Schedule';
 import { HolidayManager } from './pages/HolidayManager';
 import { TutoringManager } from './pages/TutoringManager';
@@ -113,12 +114,12 @@ const App: React.FC = () => {
           <Route path="/training/enrollment" element={<EnrollmentHistory />} />
           
           {/* Customer Routes */}
-          <Route path="/customers/students" element={<StudentManager title="Danh sách học viên" />} />
+          <Route path="/customers/students" element={<StudentManager key="all-students" title="Danh sách học viên" />} />
           <Route path="/customers/student-detail/:id" element={<StudentDetail />} />
           <Route path="/customers/parents" element={<ParentManager />} />
-          <Route path="/customers/dropped" element={<StudentManager initialStatusFilter={StudentStatus.DROPPED} title="Danh sách học viên đã nghỉ" />} />
-          <Route path="/customers/reserved" element={<StudentManager initialStatusFilter={StudentStatus.RESERVED} title="Danh sách học viên bảo lưu" />} />
-          <Route path="/customers/trial" element={<StudentManager initialStatusFilter={StudentStatus.TRIAL} title="Danh sách học viên học thử" />} />
+          <Route path="/customers/dropped" element={<StudentManager key="dropped-students" initialStatusFilter={StudentStatus.DROPPED} title="Danh sách học viên đã nghỉ" />} />
+          <Route path="/customers/reserved" element={<StudentManager key="reserved-students" initialStatusFilter={StudentStatus.RESERVED} title="Danh sách học viên bảo lưu" />} />
+          <Route path="/customers/trial" element={<TrialStudents />} />
           <Route path="/customers/feedback" element={<FeedbackManager />} />
           
           {/* Business Routes */}
