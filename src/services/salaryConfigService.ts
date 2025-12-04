@@ -136,10 +136,12 @@ export const createSalaryRange = async (data: Omit<SalaryRangeConfig, 'id'>): Pr
 
 export const getSalaryRanges = async (type?: RangeType): Promise<SalaryRangeConfig[]> => {
   try {
-    let q = query(collection(db, SALARY_RANGES_COLLECTION), orderBy('minStudents', 'asc'));
+    let q;
     
     if (type) {
-      q = query(collection(db, SALARY_RANGES_COLLECTION), where('type', '==', type));
+      q = query(collection(db, SALARY_RANGES_COLLECTION), where('type', '==', type), orderBy('createdAt', 'desc'));
+    } else {
+      q = query(collection(db, SALARY_RANGES_COLLECTION), orderBy('createdAt', 'desc'));
     }
     
     const snapshot = await getDocs(q);
@@ -149,7 +151,22 @@ export const getSalaryRanges = async (type?: RangeType): Promise<SalaryRangeConf
     } as SalaryRangeConfig));
   } catch (error) {
     console.error('Error getting salary ranges:', error);
-    throw new Error('Không thể tải mức lương');
+    // Fallback: get without ordering if index doesn't exist
+    try {
+      const fallbackSnapshot = await getDocs(collection(db, SALARY_RANGES_COLLECTION));
+      const results = fallbackSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      } as SalaryRangeConfig));
+      // Filter by type if specified
+      if (type) {
+        return results.filter(r => r.type === type);
+      }
+      return results;
+    } catch (fallbackError) {
+      console.error('Fallback also failed:', fallbackError);
+      throw new Error('Không thể tải mức lương');
+    }
   }
 };
 

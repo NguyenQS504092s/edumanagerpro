@@ -45,8 +45,28 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
     });
   }, [students, birthdayMonth]);
 
-  const getStatusColor = (status: StudentStatus) => {
-    switch(status) {
+  // Normalize English status to Vietnamese
+  const normalizeStatus = (status: string): string => {
+    const statusMap: { [key: string]: string } = {
+      'Active': 'Đang học',
+      'active': 'Đang học',
+      'Inactive': 'Nghỉ học',
+      'inactive': 'Nghỉ học',
+      'Reserved': 'Bảo lưu',
+      'reserved': 'Bảo lưu',
+      'Trial': 'Học thử',
+      'trial': 'Học thử',
+      'Debt': 'Nợ phí',
+      'debt': 'Nợ phí',
+      'Dropped': 'Nghỉ học',
+      'dropped': 'Nghỉ học',
+    };
+    return statusMap[status] || status;
+  };
+
+  const getStatusColor = (status: string) => {
+    const normalizedStatus = normalizeStatus(status);
+    switch(normalizedStatus) {
       case StudentStatus.ACTIVE: return 'text-green-600 bg-green-50 ring-green-500/10';
       case StudentStatus.DEBT: return 'text-red-600 bg-red-50 ring-red-500/10';
       case StudentStatus.RESERVED: return 'text-yellow-600 bg-yellow-50 ring-yellow-500/10';
@@ -145,9 +165,9 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 ${selectedStudent ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-6`}>
         {/* Student List */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[calc(100vh-220px)]">
+        <div className={`${selectedStudent ? 'lg:col-span-2' : 'lg:col-span-1'} bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[calc(100vh-220px)]`}>
           <div className="overflow-y-auto flex-1">
             <table className="w-full text-left text-sm text-gray-600">
                 <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500 sticky top-0 z-10">
@@ -180,7 +200,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                     <tr 
                     key={student.id} 
                     className={`hover:bg-indigo-50 cursor-pointer transition-colors ${selectedStudent?.id === student.id ? 'bg-indigo-50' : ''}`}
-                    onClick={() => setSelectedStudent(student)}
+                    onClick={() => setSelectedStudent(selectedStudent?.id === student.id ? null : student)}
                     >
                     <td className="px-4 py-3 text-xs text-gray-400">{index + 1}</td>
                     <td className="px-4 py-3">
@@ -200,13 +220,13 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                     </td>
                     <td className="px-4 py-3">
                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold text-white ${
-                            student.status === StudentStatus.ACTIVE ? 'bg-blue-500' : 
-                            student.status === StudentStatus.DEBT ? 'bg-red-500' :
-                            student.status === StudentStatus.RESERVED ? 'bg-orange-500' :
-                            student.status === StudentStatus.DROPPED ? 'bg-gray-500' :
-                            student.status === StudentStatus.TRIAL ? 'bg-purple-500' : 'bg-gray-400'
+                            normalizeStatus(student.status) === StudentStatus.ACTIVE ? 'bg-green-500' : 
+                            normalizeStatus(student.status) === StudentStatus.DEBT ? 'bg-red-500' :
+                            normalizeStatus(student.status) === StudentStatus.RESERVED ? 'bg-orange-500' :
+                            normalizeStatus(student.status) === StudentStatus.DROPPED ? 'bg-gray-500' :
+                            normalizeStatus(student.status) === StudentStatus.TRIAL ? 'bg-purple-500' : 'bg-gray-400'
                         }`}>
-                            {student.status}
+                            {normalizeStatus(student.status)}
                         </span>
                     </td>
                     <td className="px-4 py-3">
@@ -340,14 +360,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                  </div>
               </div>
             </div>
-          ) : (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex items-center justify-center text-gray-400 p-6 text-center">
-              <div>
-                <User size={48} className="mx-auto mb-2 opacity-20" />
-                <p>Chọn một học viên để xem chi tiết</p>
-              </div>
-            </div>
-          )}
+          ) : null}
         </div>
       </div>
 

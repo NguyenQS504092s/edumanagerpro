@@ -11,17 +11,6 @@ const POSITIONS = {
   'Văn phòng': ['Nhân viên', 'Kế toán', 'Lễ tân'],
 };
 
-// Teacher colors for schedule display
-const TEACHER_COLORS = [
-  { name: 'Vàng', value: '#FEF3C7' },
-  { name: 'Hồng', value: '#FCE7F3' },
-  { name: 'Xanh lá', value: '#D1FAE5' },
-  { name: 'Xanh dương', value: '#DBEAFE' },
-  { name: 'Tím', value: '#EDE9FE' },
-  { name: 'Cam', value: '#FFEDD5' },
-  { name: 'Xanh ngọc', value: '#CCFBF1' },
-];
-
 export const StaffManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDepartment, setFilterDepartment] = useState('ALL');
@@ -40,21 +29,55 @@ export const StaffManager: React.FC = () => {
     position: 'Giáo Viên Việt',
     startDate: '',
     contractLink: '',
-    displayColor: '#FEF3C7',
     username: '',
     password: '',
     status: 'Active' as 'Active' | 'Inactive',
   });
 
-  // Filter staff
+  // Normalize position name (handle variations in database)
+  const normalizePosition = (pos: string): string => {
+    if (!pos) return '';
+    const lower = pos.toLowerCase();
+    if (lower.includes('quản lý') || lower.includes('admin')) return 'Quản lý (Admin)';
+    if (lower.includes('giáo viên việt') || lower === 'gv việt') return 'Giáo Viên Việt';
+    if (lower.includes('nước ngoài') || lower.includes('gv ngoại') || lower.includes('foreign')) return 'Giáo Viên Nước Ngoài';
+    if (lower.includes('trợ giảng')) return 'Trợ Giảng';
+    if (lower.includes('kế toán')) return 'Kế toán';
+    if (lower.includes('lễ tân')) return 'Lễ tân';
+    if (lower.includes('nhân viên')) return 'Nhân viên';
+    return pos;
+  };
+
+  // Position order for sorting (by teaching hierarchy)
+  const positionOrder: Record<string, number> = {
+    'Quản lý (Admin)': 1,
+    'Giáo Viên Việt': 2,
+    'Giáo Viên Nước Ngoài': 3,
+    'Trợ Giảng': 4,
+    'Kế toán': 5,
+    'Nhân viên': 6,
+    'Lễ tân': 7,
+  };
+
+  // Filter and sort staff by position
   const filteredStaff = useMemo(() => {
-    return staff.filter(s => {
-      const matchesSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           s.phone?.includes(searchTerm) ||
-                           s.code?.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesDept = filterDepartment === 'ALL' || s.department === filterDepartment;
-      return matchesSearch && matchesDept;
-    });
+    return staff
+      .filter(s => {
+        const matchesSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                             s.phone?.includes(searchTerm) ||
+                             s.code?.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesDept = filterDepartment === 'ALL' || s.department === filterDepartment;
+        return matchesSearch && matchesDept;
+      })
+      .sort((a, b) => {
+        // Sort by position (normalized)
+        const posA = positionOrder[normalizePosition(a.position || '')] || 99;
+        const posB = positionOrder[normalizePosition(b.position || '')] || 99;
+        if (posA !== posB) return posA - posB;
+        
+        // Then sort by name
+        return (a.name || '').localeCompare(b.name || '');
+      });
   }, [staff, searchTerm, filterDepartment]);
 
   // Open create modal
@@ -68,7 +91,6 @@ export const StaffManager: React.FC = () => {
       position: 'Giáo Viên Việt',
       startDate: new Date().toISOString().split('T')[0],
       contractLink: '',
-      displayColor: '#FEF3C7',
       username: '',
       password: '',
       status: 'Active',
@@ -87,7 +109,6 @@ export const StaffManager: React.FC = () => {
       position: staffMember.position || 'Giáo Viên Việt',
       startDate: staffMember.startDate || '',
       contractLink: '',
-      displayColor: '#FEF3C7',
       username: '',
       password: '',
       status: staffMember.status || 'Active',
@@ -244,7 +265,7 @@ export const StaffManager: React.FC = () => {
                     {s.department}
                   </span>
                 </td>
-                <td className="px-6 py-4">{s.position}</td>
+                <td className="px-6 py-4">{normalizePosition(s.position || '')}</td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
                     <button 
@@ -393,25 +414,6 @@ export const StaffManager: React.FC = () => {
                   />
                 </div>
               </div>
-
-              {/* Display Color (only for Vietnamese teachers) */}
-              {formData.position === 'Giáo Viên Việt' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Màu hiển thị (trên TKB)</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {TEACHER_COLORS.map(color => (
-                      <button
-                        key={color.value}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, displayColor: color.value })}
-                        className={`w-8 h-8 rounded-full border-2 ${formData.displayColor === color.value ? 'border-indigo-600 ring-2 ring-indigo-300' : 'border-gray-300'}`}
-                        style={{ backgroundColor: color.value }}
-                        title={color.name}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Login Credentials */}
               <div className="border-t border-gray-200 pt-4 mt-4">

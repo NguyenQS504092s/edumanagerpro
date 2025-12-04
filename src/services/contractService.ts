@@ -18,7 +18,7 @@ import {
   QueryConstraint,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Contract, ContractStatus, ContractType } from '../../types';
+import { Contract, ContractStatus, ContractType, PaymentMethod } from '../../types';
 
 const CONTRACTS_COLLECTION = 'contracts';
 
@@ -26,23 +26,40 @@ const CONTRACTS_COLLECTION = 'contracts';
  * Generate contract code (Brisky01-999)
  */
 export const generateContractCode = async (): Promise<string> => {
-  const contractsRef = collection(db, CONTRACTS_COLLECTION);
-  const q = query(contractsRef, orderBy('createdAt', 'desc'));
-  const snapshot = await getDocs(q);
-  
-  if (snapshot.empty) {
-    return 'Brisky001';
+  try {
+    const contractsRef = collection(db, CONTRACTS_COLLECTION);
+    const snapshot = await getDocs(contractsRef);
+    
+    if (snapshot.empty) {
+      return 'Brisky001';
+    }
+    
+    // Find highest number from existing contracts
+    let maxNumber = 0;
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const code = data.code || '';
+      // Extract number from code (support both Brisky and BRISKY formats)
+      const match = code.match(/\d+/);
+      if (match) {
+        const num = parseInt(match[0]) || 0;
+        if (num > maxNumber) maxNumber = num;
+      }
+    });
+    
+    const nextNumber = maxNumber + 1;
+    
+    if (nextNumber > 999) {
+      throw new Error('Đã đạt giới hạn mã hợp đồng (999)');
+    }
+    
+    return `Brisky${nextNumber.toString().padStart(3, '0')}`;
+  } catch (error) {
+    console.error('Error generating contract code:', error);
+    // Fallback to timestamp-based code
+    const timestamp = Date.now().toString().slice(-6);
+    return `Brisky${timestamp}`;
   }
-  
-  const lastContract = snapshot.docs[0].data() as Contract;
-  const lastNumber = parseInt(lastContract.code.replace('Brisky', '')) || 0;
-  const nextNumber = lastNumber + 1;
-  
-  if (nextNumber > 999) {
-    throw new Error('Đã đạt giới hạn mã hợp đồng (999)');
-  }
-  
-  return `Brisky${nextNumber.toString().padStart(3, '0')}`;
 };
 
 /**
@@ -55,33 +72,33 @@ export const createContract = async (contractData: Partial<Contract>): Promise<s
     const contract: Omit<Contract, 'id'> = {
       code,
       type: contractData.type || ContractType.STUDENT,
-      studentId: contractData.studentId,
-      studentName: contractData.studentName,
-      studentDOB: contractData.studentDOB,
-      parentName: contractData.parentName,
-      parentPhone: contractData.parentPhone,
+      studentId: contractData.studentId || '',
+      studentName: contractData.studentName || '',
+      studentDOB: contractData.studentDOB || '',
+      parentName: contractData.parentName || '',
+      parentPhone: contractData.parentPhone || '',
       items: contractData.items || [],
       subtotal: contractData.subtotal || 0,
       totalDiscount: contractData.totalDiscount || 0,
       totalAmount: contractData.totalAmount || 0,
       totalAmountInWords: contractData.totalAmountInWords || '',
-      paymentMethod: contractData.paymentMethod!,
+      paymentMethod: contractData.paymentMethod || PaymentMethod.CASH,
       paidAmount: contractData.paidAmount || 0,
       remainingAmount: contractData.remainingAmount || 0,
       contractDate: contractData.contractDate || new Date().toISOString(),
-      paymentDate: contractData.paymentDate,
+      paymentDate: contractData.paymentDate || null,
       status: contractData.status || ContractStatus.DRAFT,
-      notes: contractData.notes,
+      notes: contractData.notes || '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      createdBy: contractData.createdBy!,
+      createdBy: contractData.createdBy || 'unknown',
     };
     
     const docRef = await addDoc(collection(db, CONTRACTS_COLLECTION), contract);
     return docRef.id;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating contract:', error);
-    throw new Error('Không thể tạo hợp đồng');
+    throw new Error(error.message || 'Không thể tạo hợp đồng');
   }
 };
 

@@ -1,30 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Printer, ChevronLeft, ChevronRight, ChevronDown, Plus, X } from 'lucide-react';
+import { Printer, ChevronLeft, ChevronRight, ChevronDown, Plus, X, MapPin } from 'lucide-react';
 import { useClasses } from '../src/hooks/useClasses';
 import { ClassModel } from '../types';
-
-// Color palette for teachers
-const TEACHER_COLORS: Record<string, string> = {
-  'default': 'bg-gray-100',
-  'Maria': 'bg-yellow-200',
-  'Habib': 'bg-pink-200',
-  'Thu Hà': 'bg-green-200',
-  'Thuý Nga': 'bg-cyan-200',
-  'Diệu Linh': 'bg-purple-200',
-  'Minh Huyền': 'bg-orange-200',
-  'Ngọc Ánh': 'bg-lime-200',
-  'Uyên Trang': 'bg-rose-200',
-  'Thu Trang': 'bg-teal-200',
-  'Thuý': 'bg-amber-200',
-  'Tiên': 'bg-emerald-200',
-  'Linh': 'bg-sky-200',
-  'Mai': 'bg-indigo-200',
-  'Điệp': 'bg-fuchsia-200',
-};
-
-const getTeacherColor = (teacher: string): string => {
-  return TEACHER_COLORS[teacher] || TEACHER_COLORS['default'];
-};
 
 export const Schedule: React.FC = () => {
   const [selectedBranch, setSelectedBranch] = useState('Cơ sở 1');
@@ -38,7 +15,12 @@ export const Schedule: React.FC = () => {
   const { classes } = useClasses({});
 
   const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6'];
-  const branches = ['Cơ sở 1', 'Cơ sở 2', 'Cơ sở 3'];
+  const branches = [
+    { id: 'Cơ sở 1', name: 'Cơ sở 1', color: 'bg-emerald-500', textColor: 'text-emerald-700' },
+    { id: 'Cơ sở 2', name: 'Cơ sở 2', color: 'bg-blue-500', textColor: 'text-blue-700' },
+    { id: 'Cơ sở 3', name: 'Cơ sở 3', color: 'bg-amber-500', textColor: 'text-amber-700' },
+  ];
+  const selectedBranchData = branches.find(b => b.id === selectedBranch) || branches[0];
 
   // Format week display
   const weekDisplay = useMemo(() => {
@@ -61,18 +43,41 @@ export const Schedule: React.FC = () => {
   };
 
   // Parse days from schedule string (e.g., "18:00-19:00 Thứ 2, 4" -> [2, 4])
+  // Supports: "15:00-16:30 Thứ 3, Thứ 5", "08:00-09:30 Thứ 2, 4, 6", "Chủ nhật"
   const parseDaysFromSchedule = (schedule: string): number[] => {
     if (!schedule) return [];
     
-    // Find the day part after time (e.g., "Thứ 2, 4" or "Thứ 2, 5")
-    const dayMatch = schedule.match(/Th[ứử]\s*(\d)(?:\s*,\s*(\d))?/i);
-    if (!dayMatch) return [];
-    
     const days: number[] = [];
-    if (dayMatch[1]) days.push(parseInt(dayMatch[1]));
-    if (dayMatch[2]) days.push(parseInt(dayMatch[2]));
     
-    return days;
+    // Handle "Chủ nhật" or "CN"
+    if (/ch[uủ]\s*nh[aậ]t|CN/i.test(schedule)) {
+      days.push(7);
+    }
+    
+    // Find all "Thứ X" patterns
+    const thuMatches = schedule.matchAll(/Th[ứử]\s*(\d)/gi);
+    for (const match of thuMatches) {
+      const dayNum = parseInt(match[1]);
+      if (dayNum >= 2 && dayNum <= 7 && !days.includes(dayNum)) {
+        days.push(dayNum);
+      }
+    }
+    
+    // Also find standalone numbers after comma (e.g., "Thứ 2, 4, 6")
+    const afterThu = schedule.match(/Th[ứử]\s*\d[\s,]*([,\s\d]+)/i);
+    if (afterThu) {
+      const extraDays = afterThu[1].match(/\d/g);
+      if (extraDays) {
+        for (const d of extraDays) {
+          const dayNum = parseInt(d);
+          if (dayNum >= 2 && dayNum <= 7 && !days.includes(dayNum)) {
+            days.push(dayNum);
+          }
+        }
+      }
+    }
+    
+    return days.sort((a, b) => a - b);
   };
 
   // Map day name to number
@@ -121,39 +126,41 @@ export const Schedule: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200 no-print">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 p-4 rounded-xl shadow-lg no-print">
         <div className="flex items-center gap-4">
-          {/* Branch Selector */}
-          <div className="relative">
+          {/* Branch Selector - Redesigned with color */}
+          <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${selectedBranchData.color} ring-2 ring-white/50`}></div>
+            <MapPin className="text-white/80" size={18} />
+            <span className="text-white/90 text-sm font-medium">Cơ sở:</span>
             <select
               value={selectedBranch}
               onChange={(e) => setSelectedBranch(e.target.value)}
-              className="appearance-none bg-indigo-600 text-white px-4 py-2 pr-10 rounded-lg font-bold text-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="bg-white text-gray-800 border-0 rounded-md px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer"
             >
               {branches.map(b => (
-                <option key={b} value={b}>{b}</option>
+                <option key={b.id} value={b.id}>● {b.name}</option>
               ))}
             </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-white pointer-events-none" size={18} />
           </div>
 
           {/* Week Navigator */}
-          <div className="flex items-center gap-2">
-            <button onClick={prevWeek} className="p-2 hover:bg-gray-100 rounded-lg">
-              <ChevronLeft size={20} className="text-gray-600" />
+          <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-lg px-2 py-1">
+            <button onClick={prevWeek} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
+              <ChevronLeft size={20} className="text-white" />
             </button>
-            <span className="text-sm font-medium text-gray-700 min-w-[180px] text-center">
+            <span className="text-sm font-medium text-white min-w-[180px] text-center">
               {weekDisplay}
             </span>
-            <button onClick={nextWeek} className="p-2 hover:bg-gray-100 rounded-lg">
-              <ChevronRight size={20} className="text-gray-600" />
+            <button onClick={nextWeek} className="p-2 hover:bg-white/20 rounded-lg transition-colors">
+              <ChevronRight size={20} className="text-white" />
             </button>
           </div>
         </div>
 
         <button 
           onClick={handlePrint}
-          className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-900 text-sm font-medium"
+          className="flex items-center gap-2 bg-white text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-50 text-sm font-bold shadow-md transition-colors"
         >
           <Printer size={16} />
           In TKB
@@ -162,8 +169,13 @@ export const Schedule: React.FC = () => {
 
       {/* Schedule Grid */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        {/* Branch Title */}
-        <div className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white text-center py-3 text-xl font-bold">
+        {/* Branch Title with dynamic color */}
+        <div className={`${
+          selectedBranch === 'Cơ sở 1' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' :
+          selectedBranch === 'Cơ sở 2' ? 'bg-gradient-to-r from-blue-500 to-blue-600' :
+          'bg-gradient-to-r from-amber-500 to-amber-600'
+        } text-white text-center py-3 text-xl font-bold flex items-center justify-center gap-3`}>
+          <div className="w-4 h-4 rounded-full bg-white/30"></div>
           {selectedBranch} (Ô 40 - LK4)
         </div>
 
@@ -193,12 +205,11 @@ export const Schedule: React.FC = () => {
                         {dayClasses.length > 0 ? (
                           dayClasses.map((cls) => {
                             const info = parseClassDisplay(cls);
-                            const bgColor = getTeacherColor(info.teacher);
                             
                             return (
                               <div 
                                 key={cls.id}
-                                className={`${bgColor} p-2 rounded text-xs border border-gray-300 cursor-pointer hover:shadow-md transition-shadow`}
+                                className="bg-blue-50 p-2 rounded text-xs border border-blue-200 cursor-pointer hover:shadow-md hover:bg-blue-100 transition-all"
                               >
                                 <p className="font-bold text-gray-800">
                                   {info.time} {info.year && `(${info.year})`} {info.className} ({info.room})
@@ -229,18 +240,6 @@ export const Schedule: React.FC = () => {
               </tr>
             </tbody>
           </table>
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 no-print">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">Chú thích màu giáo viên:</h3>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(TEACHER_COLORS).filter(([k]) => k !== 'default').map(([teacher, color]) => (
-            <div key={teacher} className={`${color} px-3 py-1 rounded text-xs font-medium text-gray-700 border border-gray-200`}>
-              {teacher}
-            </div>
-          ))}
         </div>
       </div>
 

@@ -137,11 +137,12 @@ export const Sidebar: React.FC = () => {
       `}>
         <div className="h-full flex flex-col">
           {/* Logo */}
-          <div className="h-16 flex items-center justify-center border-b border-gray-200 px-6">
-            <h1 className="text-xl font-bold text-indigo-600 flex items-center gap-2">
-              <span className="p-1 bg-indigo-600 rounded text-white"><BookOpen size={18} /></span>
-              EduManager
-            </h1>
+          <div className="h-16 flex items-center justify-center border-b border-gray-200 px-4">
+            <img 
+              src="/logo.jpg" 
+              alt="Logo" 
+              className="h-12 object-contain"
+            />
           </div>
 
           {/* Menu Items */}

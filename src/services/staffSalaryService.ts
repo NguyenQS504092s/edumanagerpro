@@ -40,16 +40,59 @@ export interface StaffAttendanceLog {
 
 const SALARY_COLLECTION = 'staffSalaries';
 const ATTENDANCE_COLLECTION = 'staffAttendance';
+const STAFF_COLLECTION = 'staff';
 
-// Get staff salaries by month/year
+// Get staff salaries by month/year - JOIN với staff collection
 export const getStaffSalaries = async (month: number, year: number): Promise<StaffSalaryRecord[]> => {
-  const q = query(
+  // 1. Lấy danh sách nhân viên văn phòng từ staff collection (source of truth)
+  const staffSnapshot = await getDocs(collection(db, STAFF_COLLECTION));
+  const officeStaff = staffSnapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .filter((s: any) => 
+      s.department === 'Văn phòng' || 
+      s.department === 'Điều hành' ||
+      s.position === 'Kế toán' ||
+      s.position === 'Lễ tân' ||
+      s.position === 'Tư vấn viên' ||
+      s.position === 'Quản lý'
+    );
+
+  // 2. Lấy dữ liệu lương đã có trong tháng này
+  const salaryQuery = query(
     collection(db, SALARY_COLLECTION),
     where('month', '==', month),
     where('year', '==', year)
   );
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StaffSalaryRecord));
+  const salarySnapshot = await getDocs(salaryQuery);
+  const existingSalaries = salarySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+  // 3. Merge: Với mỗi nhân viên, tìm salary record hoặc tạo default
+  const result: StaffSalaryRecord[] = officeStaff.map((staff: any) => {
+    const existingSalary = existingSalaries.find(
+      (s: any) => s.staffId === staff.id || s.staffName === staff.name
+    );
+
+    if (existingSalary) {
+      return existingSalary as StaffSalaryRecord;
+    }
+
+    // Default salary record nếu chưa có
+    return {
+      staffId: staff.id,
+      staffName: staff.name || staff.staffName || 'N/A',
+      position: staff.position || 'Nhân viên',
+      month,
+      year,
+      baseSalary: staff.salary || 0,
+      workDays: 0,
+      commission: 0,
+      allowance: 0,
+      deduction: 0,
+      totalSalary: 0,
+    };
+  });
+
+  return result;
 };
 
 // Get single staff salary

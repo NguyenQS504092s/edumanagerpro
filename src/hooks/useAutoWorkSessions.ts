@@ -29,25 +29,52 @@ export interface WorkSession {
 }
 
 // Parse schedule string to get days and time
+// Supports formats: "15:00-16:30 Thứ 3, Thứ 5", "08:00-09:30 Thứ 2, 4, 6", "17h30-19h00 Thứ 2, 4"
 const parseSchedule = (schedule: string): { days: number[]; timeStart: string; timeEnd: string } => {
   if (!schedule) return { days: [], timeStart: '', timeEnd: '' };
   
-  const timeMatch = schedule.match(/(\d{1,2}[h:]?\d{2})\s*-\s*(\d{1,2}[h:]?\d{2})/);
+  // Parse time: supports "15:00-16:30" or "17h30-19h00"
+  const timeMatch = schedule.match(/(\d{1,2})[h:](\d{2})\s*-\s*(\d{1,2})[h:](\d{2})/);
   let timeStart = '';
   let timeEnd = '';
   if (timeMatch) {
-    timeStart = timeMatch[1].replace('h', ':');
-    timeEnd = timeMatch[2].replace('h', ':');
+    timeStart = `${timeMatch[1].padStart(2, '0')}:${timeMatch[2]}`;
+    timeEnd = `${timeMatch[3].padStart(2, '0')}:${timeMatch[4]}`;
   }
   
-  const dayMatch = schedule.match(/Th[ứử]\s*(\d)(?:\s*,\s*(\d))?/i);
+  // Parse days: find all numbers after "Thứ" or standalone numbers in day context
   const days: number[] = [];
-  if (dayMatch) {
-    if (dayMatch[1]) days.push(parseInt(dayMatch[1]));
-    if (dayMatch[2]) days.push(parseInt(dayMatch[2]));
+  
+  // Handle "Chủ nhật" or "CN"
+  if (/ch[uủ]\s*nh[aậ]t|CN/i.test(schedule)) {
+    days.push(7); // Sunday = 7
   }
   
-  return { days, timeStart, timeEnd };
+  // Find all "Thứ X" patterns
+  const thuMatches = schedule.matchAll(/Th[ứử]\s*(\d)/gi);
+  for (const match of thuMatches) {
+    const dayNum = parseInt(match[1]);
+    if (dayNum >= 2 && dayNum <= 7 && !days.includes(dayNum)) {
+      days.push(dayNum);
+    }
+  }
+  
+  // Also find standalone numbers after comma that might be days (e.g., "Thứ 2, 4, 6")
+  // Look for pattern like ", 4" or ", 6" that aren't part of time
+  const afterThu = schedule.match(/Th[ứử]\s*\d[\s,]*([,\s\d]+)/i);
+  if (afterThu) {
+    const extraDays = afterThu[1].match(/\d/g);
+    if (extraDays) {
+      for (const d of extraDays) {
+        const dayNum = parseInt(d);
+        if (dayNum >= 2 && dayNum <= 7 && !days.includes(dayNum)) {
+          days.push(dayNum);
+        }
+      }
+    }
+  }
+  
+  return { days: days.sort((a, b) => a - b), timeStart, timeEnd };
 };
 
 // Get dates for a specific day of week within a date range
@@ -101,32 +128,88 @@ export const useAutoWorkSessions = (weekStartDate: Date) => {
         // Fetch classes
         const classesSnapshot = await getDocs(collection(db, 'classes'));
         const classesData = classesSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as ClassModel))
-          .filter(cls => cls.status === 'Đang học');
+          .map(doc => {
+            try {
+              return { id: doc.id, ...doc.data() } as ClassModel;
+            } catch {
+              return null;
+            }
+          })
+          .filter((cls): cls is ClassModel => cls !== null && cls.status === 'Đang học');
         
-        console.log('Fetched classes:', classesData.length, classesData.map(c => ({ name: c.name, schedule: c.schedule, teacher: c.teacher })));
         setClasses(classesData);
         
         // Fetch holidays
-        const holidaysSnapshot = await getDocs(collection(db, 'holidays'));
-        const holidaysData: string[] = [];
-        holidaysSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          const holidayDate = data.date?.toDate?.()?.toISOString().split('T')[0] || data.date;
-          if (holidayDate >= startDateStr && holidayDate <= endDateStr) {
-            holidaysData.push(holidayDate);
-          }
-        });
-        setHolidays(holidaysData);
+        try {
+          const holidaysSnapshot = await getDocs(collection(db, 'holidays'));
+          const holidaysData: string[] = [];
+          holidaysSnapshot.docs.forEach(doc => {
+            try {
+              const data = doc.data();
+              // Only process applied holidays
+              if (data.status !== 'Đã áp dụng') return;
+              
+              let hStart = '';
+              let hEnd = '';
+              
+              // Get start date
+              if (data.startDate) {
+                hStart = typeof data.startDate === 'string' ? data.startDate : 
+                         data.startDate?.toDate?.()?.toISOString().split('T')[0] || '';
+              }
+              // Get end date (or same as start if not provided)
+              if (data.endDate) {
+                hEnd = typeof data.endDate === 'string' ? data.endDate :
+                       data.endDate?.toDate?.()?.toISOString().split('T')[0] || '';
+              } else {
+                hEnd = hStart;
+              }
+              
+              if (!hStart) return;
+              
+              // Generate all dates between startDate and endDate
+              const start = new Date(hStart);
+              const end = new Date(hEnd);
+              const current = new Date(start);
+              
+              while (current <= end) {
+                const dateStr = current.toISOString().split('T')[0];
+                // Only add if within our week range
+                if (dateStr >= startDateStr && dateStr <= endDateStr && !holidaysData.includes(dateStr)) {
+                  holidaysData.push(dateStr);
+                }
+                current.setDate(current.getDate() + 1);
+              }
+            } catch {
+              // Skip invalid holiday
+            }
+          });
+          setHolidays(holidaysData);
+        } catch (err) {
+          console.warn('Could not fetch holidays:', err);
+          setHolidays([]);
+        }
         
         // Fetch confirmed work sessions for this week
-        const sessionsSnapshot = await getDocs(collection(db, 'workSessions'));
-        const sessionsData = sessionsSnapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() } as WorkSession))
-          .filter(s => s.date >= startDateStr && s.date <= endDateStr);
-        
-        setConfirmedSessions(sessionsData.filter(s => s.status === 'Đã xác nhận'));
-        setManualSessions(sessionsData.filter(s => !s.isFromTKB));
+        try {
+          const sessionsSnapshot = await getDocs(collection(db, 'workSessions'));
+          const sessionsData = sessionsSnapshot.docs
+            .map(doc => {
+              try {
+                return { id: doc.id, ...doc.data() } as WorkSession;
+              } catch {
+                return null;
+              }
+            })
+            .filter((s): s is WorkSession => s !== null && s.date >= startDateStr && s.date <= endDateStr);
+          
+          setConfirmedSessions(sessionsData.filter(s => s.status === 'Đã xác nhận'));
+          setManualSessions(sessionsData.filter(s => !s.isFromTKB));
+        } catch (err) {
+          console.warn('Could not fetch work sessions:', err);
+          setConfirmedSessions([]);
+          setManualSessions([]);
+        }
         
       } catch (err: any) {
         console.error('Error fetching data:', err);
@@ -219,18 +302,53 @@ export const useAutoWorkSessions = (weekStartDate: Date) => {
     return sessions;
   }, [classes, holidays, confirmedSessions, weekStartDate, weekEndDate]);
 
-  // Combined sessions (auto + manual pending + confirmed)
+  // Get list of teachers who have schedules in TKB
+  const teachersInTKB = useMemo(() => {
+    const teachers = new Set<string>();
+    for (const cls of classes) {
+      if (cls.teacher) teachers.add(cls.teacher);
+      if (cls.foreignTeacher) teachers.add(cls.foreignTeacher);
+      if (cls.assistant) teachers.add(cls.assistant);
+    }
+    return teachers;
+  }, [classes]);
+
+  // Combined sessions - ONLY show teachers who are in TKB
   const allSessions = useMemo(() => {
+    // Filter confirmed sessions to only include those for teachers in TKB
+    const filteredConfirmed = confirmedSessions.filter(s => 
+      teachersInTKB.has(s.staffName)
+    );
+    
+    // Filter manual sessions to only include those for teachers in TKB
+    const filteredManual = manualSessions.filter(s => 
+      s.status === 'Chờ xác nhận' && teachersInTKB.has(s.staffName)
+    );
+    
+    // Merge: auto-generated + filtered confirmed + filtered manual
+    // Remove duplicates (if already confirmed, don't show pending)
+    const confirmedKeys = new Set(
+      filteredConfirmed.map(s => `${s.staffName}-${s.date}-${s.className}`)
+    );
+    
+    const uniqueAuto = autoGeneratedSessions.filter(s => 
+      !confirmedKeys.has(`${s.staffName}-${s.date}-${s.className}`)
+    );
+    
     return [
-      ...autoGeneratedSessions,
-      ...manualSessions.filter(s => s.status === 'Chờ xác nhận'),
-      ...confirmedSessions,
+      ...uniqueAuto,
+      ...filteredManual,
+      ...filteredConfirmed,
     ].sort((a, b) => {
-      // Sort by date, then by time
-      if (a.date !== b.date) return a.date.localeCompare(b.date);
-      return a.timeStart.localeCompare(b.timeStart);
+      // Sort by date, then by time (with null checks)
+      const dateA = a.date || '';
+      const dateB = b.date || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const timeA = a.timeStart || '';
+      const timeB = b.timeStart || '';
+      return timeA.localeCompare(timeB);
     });
-  }, [autoGeneratedSessions, manualSessions, confirmedSessions]);
+  }, [autoGeneratedSessions, manualSessions, confirmedSessions, teachersInTKB]);
 
   // Confirm a single session (save to Firebase)
   const confirmSession = async (session: WorkSession) => {
@@ -280,6 +398,20 @@ export const useAutoWorkSessions = (weekStartDate: Date) => {
     }
   };
 
+  // Unconfirm session (revert to pending by deleting from Firebase)
+  const unconfirmSession = async (session: WorkSession) => {
+    if (!session.id) {
+      throw new Error('Không có ID để hủy xác nhận');
+    }
+    try {
+      await deleteDoc(doc(db, 'workSessions', session.id));
+      setConfirmedSessions(prev => prev.filter(s => s.id !== session.id));
+    } catch (err: any) {
+      console.error('Error unconfirming session:', err);
+      throw new Error('Không thể hủy xác nhận công');
+    }
+  };
+
   // Delete session
   const deleteSession = async (id: string) => {
     try {
@@ -308,6 +440,7 @@ export const useAutoWorkSessions = (weekStartDate: Date) => {
     error,
     stats,
     confirmSession,
+    unconfirmSession,
     confirmMultiple,
     addManualSession,
     deleteSession,

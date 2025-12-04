@@ -1,7 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Search, Plus, Edit, Trash, ChevronDown, RotateCcw, X, BookOpen, Users, Clock, Calendar } from 'lucide-react';
 import { ClassStatus, ClassModel } from '../types';
 import { useClasses } from '../src/hooks/useClasses';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
 
 export const ClassManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -19,6 +21,82 @@ export const ClassManager: React.FC = () => {
     searchTerm: searchTerm || undefined
   });
 
+  // State for student counts per class
+  const [classStudentCounts, setClassStudentCounts] = useState<Record<string, {
+    total: number;
+    trial: number;
+    active: number;
+    debt: number;
+    reserved: number;
+  }>>({});
+
+  // Normalize student status
+  const normalizeStudentStatus = (status: string): string => {
+    const lower = status?.toLowerCase() || '';
+    if (lower === 'active' || lower.includes('đang học')) return 'Đang học';
+    if (lower === 'inactive' || lower.includes('nghỉ')) return 'Nghỉ học';
+    if (lower === 'reserved' || lower.includes('bảo lưu')) return 'Bảo lưu';
+    if (lower === 'trial' || lower.includes('học thử')) return 'Học thử';
+    if (lower === 'debt' || lower.includes('nợ')) return 'Nợ phí';
+    return status;
+  };
+
+  // Fetch students and calculate counts for each class
+  useEffect(() => {
+    const fetchStudentCounts = async () => {
+      try {
+        const studentsSnap = await getDocs(collection(db, 'students'));
+        const students = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        const counts: Record<string, { total: number; trial: number; active: number; debt: number; reserved: number }> = {};
+        
+        // Initialize counts for all classes
+        classes.forEach(cls => {
+          counts[cls.id] = { total: 0, trial: 0, active: 0, debt: 0, reserved: 0 };
+        });
+        
+        // Count students per class
+        students.forEach((student: any) => {
+          const classId = student.classId;
+          const className = student.class || student.className;
+          const status = normalizeStudentStatus(student.status || '');
+          
+          // Find matching class by ID or name
+          let matchedClassId = classId;
+          if (!matchedClassId && className) {
+            const matchedClass = classes.find(c => 
+              c.name === className || 
+              c.id === className ||
+              c.name?.toLowerCase() === className?.toLowerCase()
+            );
+            if (matchedClass) matchedClassId = matchedClass.id;
+          }
+          
+          if (matchedClassId && counts[matchedClassId]) {
+            counts[matchedClassId].total++;
+            if (status === 'Học thử') counts[matchedClassId].trial++;
+            else if (status === 'Đang học') counts[matchedClassId].active++;
+            else if (status === 'Nợ phí' || student.hasDebt) counts[matchedClassId].debt++;
+            else if (status === 'Bảo lưu') counts[matchedClassId].reserved++;
+          }
+        });
+        
+        setClassStudentCounts(counts);
+      } catch (err) {
+        console.error('Error fetching student counts:', err);
+      }
+    };
+    
+    if (classes.length > 0) {
+      fetchStudentCounts();
+    }
+  }, [classes]);
+
+  // Get counts for a specific class
+  const getClassCounts = (classId: string) => {
+    return classStudentCounts[classId] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0 };
+  };
+
   // Filter by teacher on client side
   const filteredClasses = useMemo(() => {
     if (!teacherFilter) return classes;
@@ -30,19 +108,41 @@ export const ClassManager: React.FC = () => {
     return Array.from(new Set(classes.map(c => c.teacher).filter(Boolean)));
   }, [classes]);
 
-  // Calculate stats
+  // Calculate stats from real student counts
   const pageStats = useMemo(() => {
     return {
-      total: filteredClasses.reduce((sum, c) => sum + (c.studentsCount || 0), 0),
-      trial: filteredClasses.reduce((sum, c) => sum + (c.trialStudents || 0), 0),
-      active: filteredClasses.reduce((sum, c) => sum + (c.activeStudents || 0), 0),
-      owing: filteredClasses.reduce((sum, c) => sum + (c.debtStudents || 0), 0),
-      reserved: filteredClasses.reduce((sum, c) => sum + (c.reservedStudents || 0), 0),
+      total: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).total), 0),
+      trial: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).trial), 0),
+      active: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).active), 0),
+      owing: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).debt), 0),
+      reserved: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).reserved), 0),
     };
-  }, [filteredClasses]);
+  }, [filteredClasses, classStudentCounts]);
 
-  const getStatusBadge = (status: ClassStatus) => {
-    switch (status) {
+  // Normalize English status to Vietnamese
+  const normalizeClassStatus = (status: string): string => {
+    const statusMap: { [key: string]: string } = {
+      'Active': 'Đang học',
+      'active': 'Đang học',
+      'Studying': 'Đang học',
+      'studying': 'Đang học',
+      'Inactive': 'Tạm dừng',
+      'inactive': 'Tạm dừng',
+      'Paused': 'Tạm dừng',
+      'paused': 'Tạm dừng',
+      'Finished': 'Kết thúc',
+      'finished': 'Kết thúc',
+      'Completed': 'Kết thúc',
+      'completed': 'Kết thúc',
+      'Pending': 'Chờ mở',
+      'pending': 'Chờ mở',
+    };
+    return statusMap[status] || status;
+  };
+
+  const getStatusBadge = (status: string) => {
+    const normalizedStatus = normalizeClassStatus(status);
+    switch (normalizedStatus) {
       case ClassStatus.STUDYING:
         return 'bg-green-500 text-white';
       case ClassStatus.FINISHED:
@@ -239,18 +339,18 @@ export const ClassManager: React.FC = () => {
                       {viewMode === 'curriculum' && (
                         <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
                           <Users size={12} />
-                          <span>{cls.studentsCount || 0} học viên</span>
+                          <span>{getClassCounts(cls.id).total} học viên</span>
                         </div>
                       )}
                     </td>
 
                     {viewMode === 'stats' ? (
                       <>
-                        <td className="px-4 py-4 text-center">{cls.studentsCount || 0}</td>
-                        <td className="px-4 py-4 text-center">{cls.trialStudents || 0}</td>
-                        <td className="px-4 py-4 text-center">{cls.activeStudents || 0}</td>
-                        <td className="px-4 py-4 text-center">{cls.debtStudents || 0}</td>
-                        <td className="px-4 py-4 text-center">{cls.reservedStudents || 0}</td>
+                        <td className="px-4 py-4 text-center font-medium">{getClassCounts(cls.id).total}</td>
+                        <td className="px-4 py-4 text-center text-purple-600">{getClassCounts(cls.id).trial}</td>
+                        <td className="px-4 py-4 text-center text-green-600">{getClassCounts(cls.id).active}</td>
+                        <td className="px-4 py-4 text-center text-red-600">{getClassCounts(cls.id).debt}</td>
+                        <td className="px-4 py-4 text-center text-orange-600">{getClassCounts(cls.id).reserved}</td>
                       </>
                     ) : (
                       <td className="px-4 py-4 text-gray-700">
@@ -343,7 +443,7 @@ export const ClassManager: React.FC = () => {
 
                     <td className="px-4 py-4 text-center">
                       <span className={`inline-flex px-3 py-1 rounded text-xs font-bold ${getStatusBadge(cls.status)}`}>
-                        {cls.status}
+                        {normalizeClassStatus(cls.status)}
                       </span>
                     </td>
                     <td className="px-4 py-4">
@@ -463,6 +563,9 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
     curriculum: classData?.curriculum || '',
     progress: classData?.progress || '0/24',
     schedule: classData?.schedule || '',
+    scheduleStartTime: '',
+    scheduleEndTime: '',
+    scheduleDays: [] as string[],
     room: classData?.room || '',
     startDate: classData?.startDate || new Date().toISOString().split('T')[0],
     endDate: classData?.endDate || '',
@@ -474,9 +577,204 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
     reservedStudents: classData?.reservedStudents || 0,
   });
 
+  // Dropdown options
+  const [staffList, setStaffList] = useState<{ id: string; name: string; position: string }[]>([]);
+  const [roomList, setRoomList] = useState<{ id: string; name: string }[]>([]);
+
+  // Predefined options
+  const ageGroupOptions = [
+    '2015-2016', '2016-2017', '2017-2018', '2018-2019', '2019-2020', 
+    '2020-2021', '2021-2022', '2022-2023', '2023-2024', '2024-2025'
+  ];
+
+  const scheduleOptions = [
+    '08:00-09:30 Thứ 2, 4, 6',
+    '08:00-09:30 Thứ 3, 5, 7',
+    '09:30-11:00 Thứ 2, 4, 6',
+    '09:30-11:00 Thứ 3, 5, 7',
+    '14:00-15:30 Thứ 2, 4, 6',
+    '14:00-15:30 Thứ 3, 5, 7',
+    '15:00-16:30 Thứ 2, 4',
+    '15:00-16:30 Thứ 3, 5',
+    '15:30-17:00 Thứ 2, 4, 6',
+    '15:30-17:00 Thứ 3, 5, 7',
+    '17:00-18:30 Thứ 2, 4',
+    '17:00-18:30 Thứ 3, 5',
+    '17:30-19:00 Thứ 2, 4, 6',
+    '17:30-19:00 Thứ 3, 5, 7',
+    '18:30-20:00 Thứ 2, 4',
+    '18:30-20:00 Thứ 3, 5',
+    '19:00-20:30 Thứ 2, 4, 6',
+    '19:00-20:30 Thứ 3, 5, 7',
+    '08:00-09:30 Thứ 7',
+    '09:30-11:00 Thứ 7',
+    '14:00-15:30 Chủ nhật',
+    '15:30-17:00 Chủ nhật',
+  ];
+
+  useEffect(() => {
+    const fetchDropdownData = async () => {
+      // Fetch staff
+      const staffSnap = await getDocs(collection(db, 'staff'));
+      const staff = staffSnap.docs.map(d => ({
+        id: d.id,
+        name: d.data().name || '',
+        position: d.data().position || '',
+      }));
+      setStaffList(staff);
+
+      // Fetch rooms
+      const roomsSnap = await getDocs(collection(db, 'rooms'));
+      const rooms = roomsSnap.docs.map(d => ({
+        id: d.id,
+        name: d.data().name || d.data().roomName || d.id,
+      }));
+      setRoomList(rooms);
+    };
+    fetchDropdownData();
+  }, []);
+
+  // Filter staff by position
+  const vietnameseTeachers = staffList.filter(s => 
+    s.position?.toLowerCase().includes('giáo viên việt') || 
+    s.position?.toLowerCase().includes('gv việt')
+  );
+  const foreignTeachers = staffList.filter(s => 
+    s.position?.toLowerCase().includes('nước ngoài') || 
+    s.position?.toLowerCase().includes('gv ngoại') ||
+    s.position?.toLowerCase().includes('foreign')
+  );
+  const assistants = staffList.filter(s => 
+    s.position?.toLowerCase().includes('trợ giảng')
+  );
+
+  // Days options
+  const daysOptions = [
+    { value: '2', label: 'Thứ 2' },
+    { value: '3', label: 'Thứ 3' },
+    { value: '4', label: 'Thứ 4' },
+    { value: '5', label: 'Thứ 5' },
+    { value: '6', label: 'Thứ 6' },
+    { value: '7', label: 'Thứ 7' },
+    { value: 'CN', label: 'Chủ nhật' },
+  ];
+
+  // Time options
+  const timeOptions = [
+    '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00',
+    '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00',
+    '17:30', '18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00'
+  ];
+
+  // Parse existing schedule when editing
+  useEffect(() => {
+    if (classData?.schedule) {
+      // Parse schedule like "15:00-16:30 Thứ 3, 5" or "17:30-19:00 Thứ 2, 4, 6"
+      const match = classData.schedule.match(/(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\s*(.*)/);
+      if (match) {
+        const startTime = match[1];
+        const endTime = match[2];
+        const daysStr = match[3];
+        
+        // Parse days
+        const days: string[] = [];
+        if (daysStr.includes('Chủ nhật') || daysStr.includes('CN')) days.push('CN');
+        for (let i = 2; i <= 7; i++) {
+          if (daysStr.includes(`Thứ ${i}`) || daysStr.includes(`, ${i}`) || daysStr.match(new RegExp(`\\b${i}\\b`))) {
+            days.push(i.toString());
+          }
+        }
+        
+        setFormData(prev => ({
+          ...prev,
+          scheduleStartTime: startTime,
+          scheduleEndTime: endTime,
+          scheduleDays: days,
+        }));
+      }
+    }
+  }, [classData]);
+
+  // Auto-calculate student counts from Firebase
+  useEffect(() => {
+    const fetchStudentCounts = async () => {
+      if (!classData?.id && !classData?.name) return;
+      
+      try {
+        const studentsSnap = await getDocs(collection(db, 'students'));
+        const allStudents = studentsSnap.docs.map(d => d.data());
+        
+        // Filter students by class (match by classId or className)
+        const classStudents = allStudents.filter((s: any) => 
+          s.classId === classData?.id || 
+          s.className === classData?.name ||
+          s.class === classData?.name
+        );
+        
+        // Normalize status helper
+        const normalizeStatus = (status: string): string => {
+          const map: { [key: string]: string } = {
+            'Active': 'Đang học', 'active': 'Đang học',
+            'Trial': 'Học thử', 'trial': 'Học thử',
+            'Reserved': 'Bảo lưu', 'reserved': 'Bảo lưu',
+            'Debt': 'Nợ phí', 'debt': 'Nợ phí',
+            'Dropped': 'Nghỉ học', 'dropped': 'Nghỉ học',
+          };
+          return map[status] || status;
+        };
+        
+        // Count by status
+        const counts = {
+          total: classStudents.length,
+          trial: classStudents.filter((s: any) => normalizeStatus(s.status) === 'Học thử').length,
+          active: classStudents.filter((s: any) => normalizeStatus(s.status) === 'Đang học').length,
+          debt: classStudents.filter((s: any) => normalizeStatus(s.status) === 'Nợ phí' || s.hasDebt).length,
+          reserved: classStudents.filter((s: any) => normalizeStatus(s.status) === 'Bảo lưu').length,
+        };
+        
+        setFormData(prev => ({
+          ...prev,
+          studentsCount: counts.total,
+          trialStudents: counts.trial,
+          activeStudents: counts.active,
+          debtStudents: counts.debt,
+          reservedStudents: counts.reserved,
+        }));
+      } catch (err) {
+        console.error('Error fetching student counts:', err);
+      }
+    };
+    
+    if (classData) {
+      fetchStudentCounts();
+    }
+  }, [classData]);
+
+  // Toggle day selection
+  const toggleDay = (day: string) => {
+    setFormData(prev => ({
+      ...prev,
+      scheduleDays: prev.scheduleDays.includes(day)
+        ? prev.scheduleDays.filter(d => d !== day)
+        : [...prev.scheduleDays, day].sort((a, b) => {
+            if (a === 'CN') return 1;
+            if (b === 'CN') return -1;
+            return parseInt(a) - parseInt(b);
+          }),
+    }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(formData);
+    
+    // Combine schedule parts into single string
+    let schedule = formData.schedule;
+    if (formData.scheduleStartTime && formData.scheduleEndTime && formData.scheduleDays.length > 0) {
+      const daysStr = formData.scheduleDays.map(d => d === 'CN' ? 'Chủ nhật' : `Thứ ${d}`).join(', ');
+      schedule = `${formData.scheduleStartTime}-${formData.scheduleEndTime} ${daysStr}`;
+    }
+    
+    onSubmit({ ...formData, schedule });
   };
 
   return (
@@ -507,69 +805,137 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Giáo viên *</label>
-              <input
-                type="text"
+              <select
                 required
                 value={formData.teacher}
                 onChange={(e) => setFormData({ ...formData, teacher: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="Nguyễn Văn A"
-              />
+              >
+                <option value="">-- Chọn giáo viên --</option>
+                {vietnameseTeachers.length > 0 ? vietnameseTeachers.map(t => (
+                  <option key={t.id} value={t.name}>{t.name}</option>
+                )) : staffList.map(t => (
+                  <option key={t.id} value={t.name}>{t.name} ({t.position})</option>
+                ))}
+              </select>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Trợ giảng</label>
-              <input
-                type="text"
+              <select
                 value={formData.assistant}
                 onChange={(e) => setFormData({ ...formData, assistant: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="Trần Thị B"
-              />
+              >
+                <option value="">-- Chọn trợ giảng --</option>
+                {assistants.length > 0 ? assistants.map(t => (
+                  <option key={t.id} value={t.name}>{t.name}</option>
+                )) : staffList.map(t => (
+                  <option key={t.id} value={t.name}>{t.name} ({t.position})</option>
+                ))}
+              </select>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">GV Nước ngoài</label>
-              <input
-                type="text"
+              <select
                 value={formData.foreignTeacher}
                 onChange={(e) => setFormData({ ...formData, foreignTeacher: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="Mr. John Smith"
-              />
+              >
+                <option value="">-- Chọn GV nước ngoài --</option>
+                {foreignTeachers.length > 0 ? foreignTeachers.map(t => (
+                  <option key={t.id} value={t.name}>{t.name}</option>
+                )) : staffList.map(t => (
+                  <option key={t.id} value={t.name}>{t.name} ({t.position})</option>
+                ))}
+              </select>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Độ tuổi</label>
-              <input
-                type="text"
+              <select
                 value={formData.ageGroup}
                 onChange={(e) => setFormData({ ...formData, ageGroup: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="2017-2018"
-              />
+              >
+                <option value="">-- Chọn độ tuổi --</option>
+                {ageGroupOptions.map(age => (
+                  <option key={age} value={age}>{age}</option>
+                ))}
+              </select>
             </div>
 
-            <div>
+            <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Lịch học</label>
-              <input
-                type="text"
-                value={formData.schedule}
-                onChange={(e) => setFormData({ ...formData, schedule: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="17:30 - 19:00 Thứ 2"
-              />
+              <div className="grid grid-cols-2 gap-3 mb-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Giờ bắt đầu</label>
+                  <select
+                    value={formData.scheduleStartTime}
+                    onChange={(e) => setFormData({ ...formData, scheduleStartTime: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 text-sm"
+                  >
+                    <option value="">-- Chọn --</option>
+                    {timeOptions.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Giờ kết thúc</label>
+                  <select
+                    value={formData.scheduleEndTime}
+                    onChange={(e) => setFormData({ ...formData, scheduleEndTime: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 text-sm"
+                  >
+                    <option value="">-- Chọn --</option>
+                    {timeOptions.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Ngày học</label>
+                <div className="flex flex-wrap gap-2">
+                  {daysOptions.map(day => (
+                    <button
+                      key={day.value}
+                      type="button"
+                      onClick={() => toggleDay(day.value)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        formData.scheduleDays.includes(day.value)
+                          ? 'bg-green-500 text-white border-green-500'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-green-400'
+                      }`}
+                    >
+                      {day.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {formData.scheduleStartTime && formData.scheduleEndTime && formData.scheduleDays.length > 0 && (
+                <p className="mt-2 text-xs text-green-600 font-medium">
+                  Lịch: {formData.scheduleStartTime}-{formData.scheduleEndTime} {formData.scheduleDays.map(d => d === 'CN' ? 'Chủ nhật' : `Thứ ${d}`).join(', ')}
+                </p>
+              )}
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phòng học</label>
-              <input
-                type="text"
+              <select
                 value={formData.room}
                 onChange={(e) => setFormData({ ...formData, room: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="P.101"
-              />
+              >
+                <option value="">-- Chọn phòng --</option>
+                {roomList.length > 0 ? roomList.map(r => (
+                  <option key={r.id} value={r.name}>{r.name}</option>
+                )) : ['P.101', 'P.102', 'P.103', 'P.201', 'P.202', 'P.203'].map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -617,56 +983,44 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
               </select>
             </div>
 
-            <div className="col-span-2 border-t pt-4 mt-2">
-              <p className="text-sm font-medium text-gray-700 mb-3">Số lượng học viên</p>
-              <div className="grid grid-cols-5 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Tổng</label>
-                  <input
-                    type="number"
-                    value={formData.studentsCount}
-                    onChange={(e) => setFormData({ ...formData, studentsCount: parseInt(e.target.value) || 0 })}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Học thử</label>
-                  <input
-                    type="number"
-                    value={formData.trialStudents}
-                    onChange={(e) => setFormData({ ...formData, trialStudents: parseInt(e.target.value) || 0 })}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Đang học</label>
-                  <input
-                    type="number"
-                    value={formData.activeStudents}
-                    onChange={(e) => setFormData({ ...formData, activeStudents: parseInt(e.target.value) || 0 })}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Nợ phí</label>
-                  <input
-                    type="number"
-                    value={formData.debtStudents}
-                    onChange={(e) => setFormData({ ...formData, debtStudents: parseInt(e.target.value) || 0 })}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Bảo lưu</label>
-                  <input
-                    type="number"
-                    value={formData.reservedStudents}
-                    onChange={(e) => setFormData({ ...formData, reservedStudents: parseInt(e.target.value) || 0 })}
-                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                  />
+            {/* Chỉ hiển thị số lượng học viên khi đang sửa lớp (đã có classData) */}
+            {classData && (
+              <div className="col-span-2 border-t pt-4 mt-2">
+                <p className="text-sm font-medium text-gray-700 mb-2">Số lượng học viên <span className="text-xs text-gray-400 font-normal">(tự động tính từ danh sách học viên)</span></p>
+                <div className="grid grid-cols-5 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Tổng</label>
+                    <div className="w-full px-2 py-1.5 bg-gray-100 border border-gray-200 rounded text-sm text-center font-medium">
+                      {formData.studentsCount}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Học thử</label>
+                    <div className="w-full px-2 py-1.5 bg-purple-50 border border-purple-200 rounded text-sm text-center font-medium text-purple-700">
+                      {formData.trialStudents}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Đang học</label>
+                    <div className="w-full px-2 py-1.5 bg-green-50 border border-green-200 rounded text-sm text-center font-medium text-green-700">
+                      {formData.activeStudents}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Nợ phí</label>
+                    <div className="w-full px-2 py-1.5 bg-red-50 border border-red-200 rounded text-sm text-center font-medium text-red-700">
+                      {formData.debtStudents}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Bảo lưu</label>
+                    <div className="w-full px-2 py-1.5 bg-orange-50 border border-orange-200 rounded text-sm text-center font-medium text-orange-700">
+                      {formData.reservedStudents}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
