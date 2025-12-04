@@ -3,7 +3,7 @@
  * Cấu hình lương GV/TG với Firebase integration
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, X, DollarSign, Settings } from 'lucide-react';
 import { useSalaryConfig } from '../src/hooks/useSalaryConfig';
 import { 
@@ -14,6 +14,8 @@ import {
   RangeType 
 } from '../src/services/salaryConfigService';
 import { formatCurrency } from '../src/utils/currencyUtils';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
 
 export const SalaryConfig: React.FC = () => {
   const { 
@@ -315,10 +317,21 @@ export const SalaryConfig: React.FC = () => {
 // ============================================
 // SALARY RULE MODAL
 // ============================================
+interface StaffOption {
+  id: string;
+  name: string;
+  position: string;
+}
+
 interface SalaryRuleModalProps {
   rule?: SalaryRule | null;
   onClose: () => void;
   onSubmit: (data: Partial<SalaryRule>) => Promise<void>;
+}
+
+interface ClassOption {
+  id: string;
+  name: string;
 }
 
 const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubmit }) => {
@@ -334,6 +347,116 @@ const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubm
     effectiveDate: rule?.effectiveDate || new Date().toISOString().split('T')[0],
   });
   const [loading, setLoading] = useState(false);
+  const [staffList, setStaffList] = useState<StaffOption[]>([]);
+  const [loadingStaff, setLoadingStaff] = useState(true);
+  const [staffClasses, setStaffClasses] = useState<ClassOption[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+
+  // Normalize position for display
+  const normalizePosition = (pos: string): string => {
+    const lower = pos?.toLowerCase() || '';
+    if (lower.includes('quản lý') || lower === 'admin') return 'Quản lý';
+    if (lower.includes('nước ngoài') || lower.includes('ngoại') || lower === 'foreign') return 'Giáo Viên Nước Ngoài';
+    if (lower.includes('việt') || lower === 'gv việt') return 'Giáo Viên Việt';
+    if (lower.includes('trợ') || lower === 'tg') return 'Trợ Giảng';
+    if (lower.includes('kế toán')) return 'Kế toán';
+    if (lower.includes('lễ tân')) return 'Lễ tân';
+    if (lower.includes('nhân viên')) return 'Nhân viên';
+    return pos;
+  };
+
+  // Fetch staff list from Firebase
+  useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        const snapshot = await getDocs(collection(db, 'staff'));
+        const staffData: StaffOption[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          const normalizedPos = normalizePosition(data.position || '');
+          // Only include teaching staff for salary config
+          if (['Giáo Viên Việt', 'Giáo Viên Nước Ngoài', 'Trợ Giảng'].includes(normalizedPos)) {
+            staffData.push({
+              id: doc.id,
+              name: data.name || '',
+              position: normalizedPos,
+            });
+          }
+        });
+        // Sort by name
+        staffData.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+        setStaffList(staffData);
+      } catch (err) {
+        console.error('Error fetching staff:', err);
+      } finally {
+        setLoadingStaff(false);
+      }
+    };
+    fetchStaff();
+  }, []);
+
+  // Fetch classes for selected staff
+  useEffect(() => {
+    const fetchStaffClasses = async () => {
+      if (!formData.staffId && !formData.staffName) {
+        setStaffClasses([]);
+        return;
+      }
+      
+      setLoadingClasses(true);
+      try {
+        const snapshot = await getDocs(collection(db, 'classes'));
+        const classData: ClassOption[] = [];
+        const staffName = formData.staffName.toLowerCase().trim();
+        
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          const isTeacher = data.teacherId === formData.staffId || 
+                           (data.teacher && data.teacher.toLowerCase().includes(staffName));
+          const isAssistant = data.assistant && data.assistant.toLowerCase().includes(staffName);
+          const isForeignTeacher = data.foreignTeacher && data.foreignTeacher.toLowerCase().includes(staffName);
+          
+          if (isTeacher || isAssistant || isForeignTeacher) {
+            classData.push({
+              id: doc.id,
+              name: data.name || '',
+            });
+          }
+        });
+        
+        // Sort by name
+        classData.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+        setStaffClasses(classData);
+      } catch (err) {
+        console.error('Error fetching classes:', err);
+      } finally {
+        setLoadingClasses(false);
+      }
+    };
+    
+    fetchStaffClasses();
+  }, [formData.staffId, formData.staffName]);
+
+  const handleStaffSelect = (staffId: string) => {
+    const selected = staffList.find(s => s.id === staffId);
+    if (selected) {
+      setFormData({
+        ...formData,
+        staffId: selected.id,
+        staffName: selected.name,
+        position: selected.position,
+        className: '', // Reset class when staff changes
+      });
+    } else {
+      setFormData({
+        ...formData,
+        staffId: '',
+        staffName: '',
+        position: 'Giáo Viên Việt',
+        className: '',
+      });
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -363,38 +486,51 @@ const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubm
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Tên nhân sự <span className="text-red-500">*</span>
               </label>
-              <input
-                type="text"
-                required
-                value={formData.staffName}
-                onChange={(e) => setFormData({ ...formData, staffName: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                placeholder="Nguyễn Thị A"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Vị trí</label>
               <select
-                value={formData.position}
-                onChange={(e) => setFormData({ ...formData, position: e.target.value })}
+                required
+                value={formData.staffId}
+                onChange={(e) => handleStaffSelect(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                disabled={loadingStaff}
               >
-                <option value="Giáo Viên Việt">Giáo Viên Việt</option>
-                <option value="Giáo Viên Nước Ngoài">Giáo Viên Nước Ngoài</option>
-                <option value="Trợ Giảng">Trợ Giảng</option>
+                <option value="">{loadingStaff ? 'Đang tải...' : '-- Chọn nhân sự --'}</option>
+                {staffList.map((staff) => (
+                  <option key={staff.id} value={staff.id}>
+                    {staff.name} ({staff.position})
+                  </option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Lớp phụ trách</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vị trí</label>
               <input
                 type="text"
+                readOnly
+                value={formData.position}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Lớp phụ trách</label>
+              <select
                 value={formData.className}
                 onChange={(e) => setFormData({ ...formData, className: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                placeholder="Kindy 1A"
-              />
+                disabled={!formData.staffId || loadingClasses}
+              >
+                <option value="">
+                  {!formData.staffId ? '-- Chọn nhân sự trước --' : 
+                   loadingClasses ? 'Đang tải...' : 
+                   staffClasses.length === 0 ? 'Không có lớp phụ trách' : '-- Chọn lớp --'}
+                </option>
+                {staffClasses.map((cls) => (
+                  <option key={cls.id} value={cls.name}>
+                    {cls.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -492,7 +628,19 @@ const SalaryRangeModal: React.FC<SalaryRangeModalProps> = ({ range, type, onClos
     method: range?.method || 'Cố định',
     amount: range?.amount || 0,
   });
+  const [amountDisplay, setAmountDisplay] = useState(
+    range?.amount ? range.amount.toLocaleString('vi-VN') : ''
+  );
   const [loading, setLoading] = useState(false);
+
+  const handleAmountChange = (value: string) => {
+    // Remove all non-digit characters
+    const numericValue = value.replace(/[^\d]/g, '');
+    const amount = parseInt(numericValue) || 0;
+    setFormData({ ...formData, amount });
+    // Format with commas for display
+    setAmountDisplay(amount > 0 ? amount.toLocaleString('vi-VN') : '');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -550,11 +698,12 @@ const SalaryRangeModal: React.FC<SalaryRangeModalProps> = ({ range, type, onClos
               Số tiền (đ) <span className="text-red-500">*</span>
             </label>
             <input
-              type="number"
+              type="text"
               required
-              value={formData.amount}
-              onChange={(e) => setFormData({ ...formData, amount: parseInt(e.target.value) || 0 })}
+              value={amountDisplay}
+              onChange={(e) => handleAmountChange(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="1.000.000"
             />
           </div>
 

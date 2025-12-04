@@ -32,6 +32,7 @@ export const WorkConfirmation: React.FC = () => {
     loading,
     error,
     confirmSession,
+    unconfirmSession,
     confirmMultiple,
     addManualSession,
   } = useAutoWorkSessions(currentWeekStart);
@@ -81,14 +82,18 @@ export const WorkConfirmation: React.FC = () => {
     }
   };
 
-  // Toggle confirm
+  // Toggle confirm/unconfirm
   const handleToggleConfirm = async (session: WorkSession) => {
-    if (session.status === 'Chờ xác nhận') {
-      try {
+    try {
+      if (session.status === 'Chờ xác nhận') {
         await confirmSession(session);
-      } catch (err: any) {
-        alert(`Lỗi: ${err.message}`);
+      } else if (session.status === 'Đã xác nhận') {
+        if (confirm('Bạn có chắc muốn hủy xác nhận công này?')) {
+          await unconfirmSession(session);
+        }
       }
+    } catch (err: any) {
+      alert(`Lỗi: ${err.message}`);
     }
   };
 
@@ -268,10 +273,9 @@ export const WorkConfirmation: React.FC = () => {
                       <td className="px-4 py-4 text-center">
                         <button
                           onClick={() => handleToggleConfirm(session)}
-                          disabled={session.status === 'Đã xác nhận'}
-                          className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${
+                          className={`px-4 py-1.5 rounded text-xs font-bold transition-colors cursor-pointer ${
                             session.status === 'Đã xác nhận'
-                              ? 'bg-green-500 text-white cursor-default'
+                              ? 'bg-green-500 text-white hover:bg-green-600'
                               : 'bg-white text-orange-500 border-2 border-orange-400 hover:bg-orange-50'
                           }`}
                         >

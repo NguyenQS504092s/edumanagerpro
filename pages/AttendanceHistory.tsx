@@ -112,24 +112,32 @@ export const AttendanceHistory: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {attendanceRecords.length > 0 ? attendanceRecords.map((record) => (
+            {attendanceRecords.length > 0 ? attendanceRecords.map((record) => {
+              // Handle various field name formats from Firebase
+              const className = record.className || (record as any).class || (record as any).classname || '-';
+              const totalStudents = record.totalStudents || (record as any).total || 0;
+              const present = record.present || (record as any).presentCount || 0;
+              const absent = record.absent || (record as any).absentCount || 0;
+              const status = record.status || (record as any).attendanceStatus || 'Chưa điểm danh';
+              
+              return (
               <tr key={record.id} className="hover:bg-gray-50 transition-colors">
-                <td className="px-6 py-4 font-medium text-gray-900">{record.className}</td>
-                <td className="px-6 py-4">{record.date}</td>
-                <td className="px-6 py-4">{record.totalStudents}</td>
-                <td className="px-6 py-4 text-green-600 font-medium">{record.present}</td>
-                <td className="px-6 py-4 text-red-600 font-medium">{record.absent}</td>
+                <td className="px-6 py-4 font-medium text-gray-900">{className}</td>
+                <td className="px-6 py-4">{record.date || '-'}</td>
+                <td className="px-6 py-4">{totalStudents}</td>
+                <td className="px-6 py-4 text-green-600 font-medium">{present}</td>
+                <td className="px-6 py-4 text-red-600 font-medium">{absent}</td>
                 <td className="px-6 py-4">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium
-                    ${record.status === 'Đã điểm danh' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}
+                    ${status === 'Đã điểm danh' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}
                   `}>
-                    {record.status}
+                    {status}
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right">
-                  {record.status === 'Chưa điểm danh' ? (
+                  {status === 'Chưa điểm danh' ? (
                       <button 
-                        onClick={() => { setSelectedClass(record.className); setShowAttendanceModal(true); }}
+                        onClick={() => { setSelectedClass(className); setShowAttendanceModal(true); }}
                         className="text-indigo-600 hover:text-indigo-700 font-medium text-xs border border-indigo-200 bg-indigo-50 px-3 py-1.5 rounded hover:bg-indigo-100 transition-colors"
                       >
                           Điểm danh ngay
@@ -145,7 +153,8 @@ export const AttendanceHistory: React.FC = () => {
                   )}
                 </td>
               </tr>
-            )) : (
+            );
+            }) : (
               <tr>
                 <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
                   Chưa có dữ liệu điểm danh

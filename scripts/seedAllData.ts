@@ -307,23 +307,33 @@ const generateWorkSessions = (staffIds: string[], staffNames: string[], classIds
   return sessions;
 };
 
-// 15. Attendance Records
-const generateAttendance = (classIds: string[], studentIds: string[]) => {
+// 15. Attendance Records - Class-level summaries
+const generateAttendance = (classIds: string[], classNames: string[]) => {
   const currentMonth = getCurrentMonth();
   const records: any[] = [];
   
   for (let day = 1; day <= 10; day++) {
     const date = getDateInMonth(day);
     classIds.forEach((classId, classIdx) => {
-      const classStudents = studentIds.slice(classIdx * 7, (classIdx + 1) * 7);
-      classStudents.forEach((studentId, studentIdx) => {
-        records.push({
-          classId,
-          studentId,
-          date,
-          month: currentMonth,
-          status: studentIdx % 10 === 0 ? 'Vắng' : studentIdx % 8 === 0 ? 'Muộn' : 'Có mặt',
-        });
+      const totalStudents = 8 + (classIdx % 5); // 8-12 students per class
+      const absent = classIdx % 3; // 0-2 absent
+      const reserved = day % 5 === 0 ? 1 : 0; // some reserved students
+      const present = totalStudents - absent - reserved;
+      
+      records.push({
+        classId,
+        className: classNames[classIdx] || `Lớp ${classIdx + 1}`,
+        date,
+        sessionNumber: day,
+        totalStudents,
+        present,
+        absent,
+        reserved,
+        tutored: 0,
+        status: 'Đã điểm danh',
+        createdBy: 'Admin',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       });
     });
   }
@@ -576,7 +586,7 @@ export const seedAllData = async () => {
     
     // 15. Attendance
     console.log('15. Seeding attendance records...');
-    const attendanceData = generateAttendance(classIds, studentIds);
+    const attendanceData = generateAttendance(classIds, classNames);
     for (const record of attendanceData) {
       await addDoc(collection(db, 'attendance'), record);
     }

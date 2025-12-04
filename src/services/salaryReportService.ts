@@ -61,15 +61,28 @@ export const getSalaryReport = async (month?: number, year?: number): Promise<Sa
       const rule = rules.find(r => r.staffName === staffName);
       const baseRate = rule?.ratePerSession || 200000;
       
-      const workDetails: WorkSessionDetail[] = staffSessions.map(s => ({
-        id: s.id!,
-        date: s.date,
-        time: `${s.timeStart} - ${s.timeEnd}`,
-        className: s.className || '-',
-        type: s.type,
-        salary: baseRate,
-        studentCount: s.studentCount,
-      }));
+      const workDetails: WorkSessionDetail[] = staffSessions.map(s => {
+        // Build time string with null checks
+        let timeStr = '-';
+        if (s.timeStart && s.timeEnd) {
+          timeStr = `${s.timeStart} - ${s.timeEnd}`;
+        } else if (s.timeStart) {
+          timeStr = s.timeStart;
+        } else if ((s as any).time) {
+          // Fallback to 'time' field if exists
+          timeStr = (s as any).time;
+        }
+        
+        return {
+          id: s.id!,
+          date: s.date || '-',
+          time: timeStr,
+          className: s.className || '-',
+          type: s.type || 'Dạy chính',
+          salary: baseRate,
+          studentCount: s.studentCount,
+        };
+      });
       
       const totalSalary = workDetails.reduce((sum, d) => sum + d.salary, 0);
       

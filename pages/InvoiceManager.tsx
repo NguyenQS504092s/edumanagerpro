@@ -49,11 +49,13 @@ export const InvoiceManager: React.FC = () => {
   };
 
   // Filter invoices
-  let filteredInvoices = invoices.filter(i =>
-    i.invoiceCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    i.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (i.studentName && i.studentName.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  let filteredInvoices = invoices.filter(i => {
+    const search = searchTerm.toLowerCase();
+    const invoiceCode = (i.invoiceCode || '').toLowerCase();
+    const customerName = (i.customerName || '').toLowerCase();
+    const studentName = (i.studentName || '').toLowerCase();
+    return invoiceCode.includes(search) || customerName.includes(search) || studentName.includes(search);
+  });
   
   if (statusFilter) {
     filteredInvoices = filteredInvoices.filter(i => i.status === statusFilter);

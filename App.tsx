@@ -3,6 +3,7 @@ import React from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Dashboard } from './pages/Dashboard';
 import { ClassManager } from './pages/ClassManager';
 import { StudentManager } from './pages/StudentManager';
@@ -54,7 +55,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="Hệ thống quản lý trung tâm" />
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
       </div>
     </div>
@@ -126,8 +129,8 @@ const App: React.FC = () => {
           <Route path="/business/leads" element={<CustomerDatabase />} />
           <Route path="/business/campaigns" element={<CampaignManager />} />
           
-          {/* HR Routes - Redirecting to Settings for now or can use Placeholder */}
-          <Route path="/hr/staff" element={<Navigate to="/settings/staff" replace />} />
+          {/* HR Routes */}
+          <Route path="/hr/staff" element={<StaffManager />} />
           <Route path="/hr/salary" element={<SalaryConfig />} />
           <Route path="/hr/work-confirmation" element={<WorkConfirmation />} />
           <Route path="/hr/salary-teacher" element={<SalaryReportTeacher />} />

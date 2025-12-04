@@ -15,7 +15,8 @@ import {
   AlertCircle,
   X,
   Phone,
-  Mail
+  Mail,
+  MapPin
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -76,6 +77,7 @@ interface DashboardStats {
   businessHealth: { metric: string; value: number; status: string }[];
   lowStockProducts: { name: string; quantity: number }[];
   upcomingBirthdays: { name: string; position: string; date: string }[];
+  studentBirthdays: { name: string; position: string; date: string }[];
   classStats: { name: string; count: number }[];
 }
 
@@ -94,6 +96,7 @@ export const Dashboard: React.FC = () => {
     businessHealth: [],
     lowStockProducts: [],
     upcomingBirthdays: [],
+    studentBirthdays: [],
     classStats: [],
   });
   const [loading, setLoading] = useState(true);
@@ -111,9 +114,20 @@ export const Dashboard: React.FC = () => {
   
   // State cho bảng sinh nhật
   const [birthdayFilter, setBirthdayFilter] = useState<'month' | 'week' | 'today'>('month');
+  const [birthdayType, setBirthdayType] = useState<'staff' | 'student'>('staff');
   
   // State cho bảng vật phẩm kho
   const [stockFilter, setStockFilter] = useState<'low' | 'all'>('low');
+  
+  // State cho chi nhánh/cơ sở
+  const [selectedBranch, setSelectedBranch] = useState('all');
+  const branches = [
+    { id: 'all', name: 'Tất cả cơ sở', color: 'bg-gray-500', textColor: 'text-gray-700' },
+    { id: 'CS1', name: 'Cơ sở 1', color: 'bg-emerald-500', textColor: 'text-emerald-700' },
+    { id: 'CS2', name: 'Cơ sở 2', color: 'bg-blue-500', textColor: 'text-blue-700' },
+    { id: 'CS3', name: 'Cơ sở 3', color: 'bg-amber-500', textColor: 'text-amber-700' },
+  ];
+  const selectedBranchData = branches.find(b => b.id === selectedBranch) || branches[0];
   
   // State cho modal danh sách học viên
   const [allStudents, setAllStudents] = useState<StudentData[]>([]);
@@ -304,6 +318,29 @@ export const Dashboard: React.FC = () => {
       
       console.log('Staff list:', allStaff.length, 'Birthdays this month:', upcomingBirthdays.length);
       
+      // Student birthdays - similar logic
+      const studentBirthdays = students
+        .filter((s: any) => {
+          const bdayStr = s['sinh nhật'] || s['ngày sinh'] || s.birthDate || s.dob || s.dateOfBirth;
+          if (!bdayStr) return false;
+          const bday = bdayStr.toDate ? bdayStr.toDate() : new Date(bdayStr);
+          if (isNaN(bday.getTime())) return false;
+          return bday.getMonth() === thisMonth;
+        })
+        .map((s: any) => {
+          const bdayStr = s['sinh nhật'] || s['ngày sinh'] || s.birthDate || s.dob || s.dateOfBirth;
+          const bday = bdayStr.toDate ? bdayStr.toDate() : new Date(bdayStr);
+          return {
+            name: s.name || s.fullName,
+            position: 'Học viên',
+            date: `${String(bday.getDate()).padStart(2, '0')}/${String(bday.getMonth() + 1).padStart(2, '0')}/${bday.getFullYear()}`,
+            dayOfMonth: bday.getDate(),
+          };
+        })
+        .sort((a: any, b: any) => a.dayOfMonth - b.dayOfMonth);
+      
+      console.log('Student birthdays this month:', studentBirthdays.length);
+      
       // Class stats from real data
       const classStats = classes.slice(0, 5).map((c: any) => ({
         name: c.name,
@@ -405,6 +442,7 @@ export const Dashboard: React.FC = () => {
         businessHealth,
         lowStockProducts,
         upcomingBirthdays,
+        studentBirthdays,
         classStats,
       });
       
@@ -431,6 +469,7 @@ export const Dashboard: React.FC = () => {
         businessHealth: [],
         lowStockProducts: [],
         upcomingBirthdays: [],
+        studentBirthdays: [],
         classStats: [],
       });
       setRevenuePieData([]);
@@ -439,9 +478,10 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const debtPieData = [
-    { name: 'Nợ phí', value: stats.debtStats.noPhi },
-    { name: 'Nợ học phí', value: stats.debtStats.noHocPhi },
+  // Pie chart: Doanh số vs Nợ phí
+  const revenueDebtPieData = [
+    { name: 'Đã thanh toán', value: stats.totalRevenue, color: '#3B82F6' },
+    { name: 'Nợ phí', value: stats.totalDebt, color: '#F59E0B' },
   ];
 
   // Lọc học viên theo category
@@ -492,43 +532,56 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-4 bg-gray-100 min-h-screen -m-6 p-4">
-      {/* Header Stats */}
-      <div className="bg-yellow-400 rounded-lg p-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="bg-white px-2 py-1 rounded">
-            <img 
-              src="/logo.jpg" 
-              alt="Brisky Logo" 
-              className="h-8 object-contain"
-            />
+      {/* Header Stats - Redesigned */}
+      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 rounded-xl p-4 shadow-lg">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+          {/* Left: Branch selector with color indicator */}
+          <div className="flex items-center gap-3">
+            <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${selectedBranchData.color} ring-2 ring-white/50`}></div>
+              <MapPin className="text-white/80" size={18} />
+              <span className="text-white/90 text-sm font-medium">Cơ sở:</span>
+              <select
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="bg-white text-gray-800 border-0 rounded-md px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer"
+              >
+                {branches.map(branch => (
+                  <option key={branch.id} value={branch.id}>● {branch.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
-          <button
-            onClick={handleSeedData}
-            disabled={seeding}
-            className="bg-white px-3 py-1 rounded text-xs font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
-          >
-            {seeding ? '⏳ Đang xử lý...' : '🌱 Seed All Data'}
-          </button>
-          <button
-            onClick={handleClearData}
-            disabled={seeding}
-            className="bg-white px-3 py-1 rounded text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-          >
-            🗑️ Clear All
-          </button>
-        </div>
-        <div className="flex gap-6">
-          <div className="bg-white px-4 py-2 rounded shadow-sm">
-            <div className="text-xs text-gray-500">Tổng số học viên</div>
-            <div className="text-xl font-bold text-gray-800">{stats.totalStudents}</div>
-          </div>
-          <div className="bg-white px-4 py-2 rounded shadow-sm">
-            <div className="text-xs text-gray-500">Tổng số lớp</div>
-            <div className="text-xl font-bold text-gray-800">{stats.totalClasses}</div>
-          </div>
-          <div className="bg-white px-4 py-2 rounded shadow-sm">
-            <div className="text-xs text-gray-500">Trung bình / lớp</div>
-            <div className="text-xl font-bold text-gray-800">{stats.avgPerClass}</div>
+          
+          {/* Right: Stats Cards */}
+          <div className="flex flex-wrap gap-3">
+            <div className="bg-white rounded-xl px-5 py-3 shadow-md flex items-center gap-3 min-w-[140px]">
+              <div className="bg-indigo-100 p-2 rounded-lg">
+                <Users className="text-indigo-600" size={20} />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 font-medium">Học viên</div>
+                <div className="text-2xl font-bold text-gray-800">{stats.totalStudents}</div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl px-5 py-3 shadow-md flex items-center gap-3 min-w-[140px]">
+              <div className="bg-purple-100 p-2 rounded-lg">
+                <BookOpen className="text-purple-600" size={20} />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 font-medium">Lớp học</div>
+                <div className="text-2xl font-bold text-gray-800">{stats.totalClasses}</div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl px-5 py-3 shadow-md flex items-center gap-3 min-w-[140px]">
+              <div className="bg-emerald-100 p-2 rounded-lg">
+                <TrendingUp className="text-emerald-600" size={20} />
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 font-medium">TB/Lớp</div>
+                <div className="text-2xl font-bold text-gray-800">{stats.avgPerClass}</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -649,33 +702,38 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Debt Pie Chart */}
+          {/* Revenue vs Debt Pie Chart */}
           <div className="bg-white rounded-lg p-4 shadow-sm">
             <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold text-gray-700 text-sm">Doanh số nợ phí</h3>
+              <h3 className="font-bold text-gray-700 text-sm">Doanh số / Nợ Phí</h3>
               <div className="text-right">
-                <div className="text-lg font-bold text-red-600">{formatCurrency(stats.totalDebt)}</div>
-                <span className="text-xs text-blue-600 cursor-pointer">Xem theo tháng</span>
+                <div className="text-lg font-bold text-indigo-600">{formatCurrency(stats.totalRevenue + stats.totalDebt)}</div>
+                <span className="text-xs text-gray-500">Tổng doanh số</span>
               </div>
             </div>
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={debtPieData}
+                    data={revenueDebtPieData}
                     cx="50%"
                     cy="50%"
                     outerRadius={60}
                     dataKey="value"
-                    label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
+                    label={({ percent }) => percent > 0 ? `${(percent * 100).toFixed(0)}%` : ''}
                   >
-                    <Cell fill="#3b82f6" />
-                    <Cell fill="#eab308" />
+                    {revenueDebtPieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
                   </Pie>
                   <Tooltip formatter={(value: number) => formatCurrency(value)} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
+            </div>
+            <div className="flex justify-between text-xs mt-2 pt-2 border-t border-gray-100">
+              <span className="text-blue-600">Đã thu: {formatCurrency(stats.totalRevenue)}</span>
+              <span className="text-amber-600">Nợ phí: {formatCurrency(stats.totalDebt)}</span>
             </div>
           </div>
         </div>
@@ -927,10 +985,32 @@ export const Dashboard: React.FC = () => {
             </table>
           </div>
 
-          {/* SINH NHẬT CỦA NHÂN SỰ */}
+          {/* SINH NHẬT */}
           <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
             <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs text-center">SINH NHẬT CỦA NHÂN SỰ</h3>
+              <h3 className="font-bold text-white text-xs text-center mb-2">SINH NHẬT</h3>
+              <div className="flex justify-center gap-1">
+                <button
+                  onClick={() => setBirthdayType('staff')}
+                  className={`px-3 py-1 text-xs font-bold rounded transition-all ${
+                    birthdayType === 'staff' 
+                      ? 'bg-white text-green-600' 
+                      : 'bg-green-600 text-white hover:bg-green-400'
+                  }`}
+                >
+                  Nhân sự
+                </button>
+                <button
+                  onClick={() => setBirthdayType('student')}
+                  className={`px-3 py-1 text-xs font-bold rounded transition-all ${
+                    birthdayType === 'student' 
+                      ? 'bg-white text-green-600' 
+                      : 'bg-green-600 text-white hover:bg-green-400'
+                  }`}
+                >
+                  Học sinh
+                </button>
+              </div>
             </div>
             <div className="flex items-center gap-2 text-xs mt-2 mb-2 p-2 bg-green-50 rounded">
               <span className="text-gray-500">Hiển thị theo</span>
@@ -947,7 +1027,7 @@ export const Dashboard: React.FC = () => {
             <table className="w-full text-xs border border-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left py-1.5 px-2 border-b">Tên nhân sự</th>
+                  <th className="text-left py-1.5 px-2 border-b">{birthdayType === 'staff' ? 'Tên nhân sự' : 'Tên học viên'}</th>
                   <th className="text-center py-1.5 px-2 border-b">Vị trí</th>
                   <th className="text-right py-1.5 px-2 border-b">Ngày SN</th>
                 </tr>
@@ -959,8 +1039,11 @@ export const Dashboard: React.FC = () => {
                   const thisMonth = now.getMonth();
                   const thisYear = now.getFullYear();
                   
+                  // Choose data source based on type
+                  const birthdayData = birthdayType === 'staff' ? stats.upcomingBirthdays : stats.studentBirthdays;
+                  
                   // Filter birthdays based on selection
-                  const filteredBirthdays = stats.upcomingBirthdays.filter(item => {
+                  const filteredBirthdays = birthdayData.filter(item => {
                     const [day, month] = item.date.split('/').map(Number);
                     
                     if (birthdayFilter === 'today') {

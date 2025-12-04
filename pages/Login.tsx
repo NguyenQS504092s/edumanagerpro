@@ -33,11 +33,13 @@ export const Login: React.FC = () => {
       <div className="max-w-md w-full">
         {/* Logo & Title */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4 shadow-lg">
-            <BookOpen size={32} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">EduManager Pro</h1>
-          <p className="text-gray-600">Hệ thống quản lý trung tâm giáo dục</p>
+          <img 
+            src="/logo.jpg" 
+            alt="Brisky Logo" 
+            className="w-32 h-32 mx-auto mb-4 object-contain"
+          />
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Brisky English</h1>
+          <p className="text-gray-600">Hệ thống quản lý trung tâm Anh ngữ</p>
         </div>
 
         {/* Login Form */}
@@ -138,7 +140,7 @@ export const Login: React.FC = () => {
 
         {/* Footer */}
         <p className="text-center text-sm text-gray-500 mt-6">
-          © 2024 EduManager Pro. All rights reserved.
+          © 2024 Brisky English. Hệ thống quản lý trung tâm.
         </p>
       </div>
     </div>

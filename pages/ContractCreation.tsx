@@ -3,11 +3,11 @@
  * Form tạo hợp đồng với tính toán tự động
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   FileText, Plus, X, Calculator, DollarSign, 
-  User, Calendar, Save, FileCheck 
+  User, Calendar, Save, FileCheck, Printer 
 } from 'lucide-react';
 import { 
   Contract, ContractType, ContractItem, PaymentMethod,
@@ -22,6 +22,212 @@ import {
   calculateDiscount 
 } from '../src/utils/currencyUtils';
 
+// Contract Preview Component
+interface ContractPreviewProps {
+  contract: Partial<Contract>;
+  onClose: () => void;
+  onPrint: () => void;
+}
+
+const ContractPreview: React.FC<ContractPreviewProps> = ({ contract, onClose, onPrint }) => {
+  const printRef = useRef<HTMLDivElement>(null);
+
+  const handlePrint = () => {
+    const printContent = printRef.current;
+    if (!printContent) return;
+    
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Hợp đồng - ${contract.code || 'Mới'}</title>
+          <style>
+            body { font-family: 'Times New Roman', serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .header h1 { font-size: 24px; margin: 0; text-transform: uppercase; }
+            .header p { margin: 5px 0; color: #666; }
+            .contract-title { text-align: center; margin: 30px 0; }
+            .contract-title h2 { font-size: 20px; text-transform: uppercase; margin: 0; }
+            .contract-title p { margin: 5px 0; }
+            .section { margin: 20px 0; }
+            .section-title { font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+            .info-row { display: flex; margin: 8px 0; }
+            .info-label { width: 150px; font-weight: bold; }
+            .info-value { flex: 1; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+            th { background: #f0f0f0; }
+            .total-row { font-weight: bold; background: #f9f9f9; }
+            .signatures { display: flex; justify-content: space-between; margin-top: 50px; }
+            .signature-box { text-align: center; width: 200px; }
+            .signature-line { border-top: 1px solid #333; margin-top: 60px; padding-top: 5px; }
+            .amount-words { font-style: italic; background: #f5f5f5; padding: 10px; margin: 10px 0; }
+            @media print { body { padding: 20px; } }
+          </style>
+        </head>
+        <body>
+          ${printContent.innerHTML}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between bg-green-50">
+          <h3 className="text-xl font-bold text-green-800 flex items-center gap-2">
+            <FileCheck size={24} />
+            Hợp đồng đã được tạo thành công!
+          </h3>
+          <div className="flex gap-2">
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+            >
+              <Printer size={18} />
+              In hợp đồng
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-2">
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          <div ref={printRef}>
+            {/* Company Header */}
+            <div className="header text-center mb-8">
+              <h1 className="text-2xl font-bold text-indigo-800">TRUNG TÂM ANH NGỮ BRISKY</h1>
+              <p className="text-gray-600">Địa chỉ: Tây Mỗ, Nam Từ Liêm, Hà Nội</p>
+              <p className="text-gray-600">Hotline: 0912.345.678 | Email: contact@brisky.edu.vn</p>
+            </div>
+
+            {/* Contract Title */}
+            <div className="contract-title text-center my-8">
+              <h2 className="text-xl font-bold uppercase">HỢP ĐỒNG ĐĂNG KÝ KHÓA HỌC</h2>
+              <p className="text-gray-600 mt-2">Số: <strong>{contract.code || 'BRISKY-XXX'}</strong></p>
+              <p className="text-gray-600">Ngày: {new Date(contract.contractDate || '').toLocaleDateString('vi-VN')}</p>
+            </div>
+
+            {/* Party A - Center */}
+            <div className="section mb-6">
+              <div className="section-title font-bold border-b border-gray-300 pb-2 mb-3">BÊN A: TRUNG TÂM ANH NGỮ BRISKY</div>
+              <div className="space-y-1 text-sm">
+                <p><strong>Đại diện:</strong> Nguyễn Văn A - Giám đốc</p>
+                <p><strong>Địa chỉ:</strong> Tây Mỗ, Nam Từ Liêm, Hà Nội</p>
+                <p><strong>Điện thoại:</strong> 0912.345.678</p>
+              </div>
+            </div>
+
+            {/* Party B - Customer */}
+            <div className="section mb-6">
+              <div className="section-title font-bold border-b border-gray-300 pb-2 mb-3">BÊN B: PHỤ HUYNH / HỌC VIÊN</div>
+              <div className="space-y-1 text-sm">
+                <p><strong>Học viên:</strong> {contract.studentName || '---'}</p>
+                <p><strong>Ngày sinh:</strong> {contract.studentDOB ? new Date(contract.studentDOB).toLocaleDateString('vi-VN') : '---'}</p>
+                <p><strong>Phụ huynh:</strong> {contract.parentName || '---'}</p>
+                <p><strong>Điện thoại:</strong> {contract.parentPhone || '---'}</p>
+              </div>
+            </div>
+
+            {/* Contract Items */}
+            <div className="section mb-6">
+              <div className="section-title font-bold border-b border-gray-300 pb-2 mb-3">NỘI DUNG HỢP ĐỒNG</div>
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="border border-gray-300 px-3 py-2 text-left">STT</th>
+                    <th className="border border-gray-300 px-3 py-2 text-left">Nội dung</th>
+                    <th className="border border-gray-300 px-3 py-2 text-right">Đơn giá</th>
+                    <th className="border border-gray-300 px-3 py-2 text-center">SL</th>
+                    <th className="border border-gray-300 px-3 py-2 text-right">Thành tiền</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contract.items?.map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="border border-gray-300 px-3 py-2">{idx + 1}</td>
+                      <td className="border border-gray-300 px-3 py-2">{item.name}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right">{formatCurrency(item.unitPrice)}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-center">{item.quantity}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right">{formatCurrency(item.finalPrice)}</td>
+                    </tr>
+                  ))}
+                  <tr className="total-row bg-gray-50 font-bold">
+                    <td colSpan={4} className="border border-gray-300 px-3 py-2 text-right">TỔNG CỘNG:</td>
+                    <td className="border border-gray-300 px-3 py-2 text-right text-indigo-700">{formatCurrency(contract.totalAmount || 0)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="amount-words bg-indigo-50 p-3 rounded mt-3 text-sm">
+                <strong>Bằng chữ:</strong> <em>{contract.totalAmountInWords}</em>
+              </div>
+            </div>
+
+            {/* Payment Info */}
+            <div className="section mb-6">
+              <div className="section-title font-bold border-b border-gray-300 pb-2 mb-3">THÔNG TIN THANH TOÁN</div>
+              <div className="space-y-1 text-sm">
+                <p><strong>Hình thức:</strong> {contract.paymentMethod}</p>
+                <p><strong>Trạng thái:</strong> <span className={contract.status === ContractStatus.PAID ? 'text-green-600 font-bold' : 'text-orange-600'}>{contract.status}</span></p>
+                <p><strong>Đã thanh toán:</strong> {formatCurrency(contract.paidAmount || 0)}</p>
+                <p><strong>Còn lại:</strong> {formatCurrency(contract.remainingAmount || 0)}</p>
+              </div>
+            </div>
+
+            {/* Terms */}
+            <div className="section mb-6">
+              <div className="section-title font-bold border-b border-gray-300 pb-2 mb-3">ĐIỀU KHOẢN HỢP ĐỒNG</div>
+              <ol className="list-decimal list-inside text-sm space-y-2">
+                <li>Bên B cam kết thanh toán đầy đủ học phí theo thỏa thuận.</li>
+                <li>Bên A cam kết cung cấp dịch vụ giảng dạy theo chương trình đã đăng ký.</li>
+                <li>Học phí đã đóng không được hoàn trả, trừ trường hợp bất khả kháng.</li>
+                <li>Bên B có quyền bảo lưu khóa học trong thời gian tối đa 3 tháng.</li>
+                <li>Hợp đồng có hiệu lực kể từ ngày ký.</li>
+              </ol>
+            </div>
+
+            {/* Signatures */}
+            <div className="signatures flex justify-between mt-12">
+              <div className="signature-box text-center">
+                <p className="font-bold">ĐẠI DIỆN BÊN A</p>
+                <p className="text-sm text-gray-500">(Ký, ghi rõ họ tên)</p>
+                <div className="signature-line border-t border-gray-400 mt-16 pt-2"></div>
+              </div>
+              <div className="signature-box text-center">
+                <p className="font-bold">ĐẠI DIỆN BÊN B</p>
+                <p className="text-sm text-gray-500">(Ký, ghi rõ họ tên)</p>
+                <div className="signature-line border-t border-gray-400 mt-16 pt-2"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+          >
+            Đóng
+          </button>
+          <button
+            onClick={handlePrint}
+            className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2"
+          >
+            <Printer size={18} />
+            In hợp đồng
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const ContractCreation: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -35,6 +241,8 @@ export const ContractCreation: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.FULL);
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showContractPreview, setShowContractPreview] = useState(false);
+  const [createdContract, setCreatedContract] = useState<Partial<Contract> | null>(null);
 
   // Mock courses data (should come from Firebase in production)
   const MOCK_COURSES: Course[] = [
@@ -182,15 +390,27 @@ export const ContractCreation: React.FC = () => {
         contractDate: new Date().toISOString(),
         status,
         notes,
-        createdBy: user.uid,
+        createdBy: user.uid || user.email || 'unknown',
       };
 
       const contractId = await createContract(contractData);
-      alert(`Tạo hợp đồng thành công! Mã hợp đồng sẽ được tạo tự động.`);
-      navigate('/finance/contracts');
-    } catch (error) {
+      
+      if (status === ContractStatus.PAID) {
+        // Show preview only for paid contracts
+        setCreatedContract({
+          ...contractData,
+          id: contractId,
+          code: contractId ? `Brisky${String(Date.now()).slice(-3)}` : 'Brisky001',
+        });
+        setShowContractPreview(true);
+      } else {
+        // Draft: just show success and redirect
+        alert('Đã lưu hợp đồng nháp thành công!');
+        navigate('/finance/contracts');
+      }
+    } catch (error: any) {
       console.error('Error creating contract:', error);
-      alert('Không thể tạo hợp đồng. Vui lòng thử lại.');
+      alert(`Không thể tạo hợp đồng: ${error.message || 'Vui lòng thử lại.'}`);
     } finally {
       setLoading(false);
     }
@@ -503,6 +723,18 @@ export const ContractCreation: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Contract Preview Modal */}
+      {showContractPreview && createdContract && (
+        <ContractPreview
+          contract={createdContract}
+          onClose={() => {
+            setShowContractPreview(false);
+            navigate('/finance/contracts');
+          }}
+          onPrint={() => {}}
+        />
+      )}
     </div>
   );
 };
