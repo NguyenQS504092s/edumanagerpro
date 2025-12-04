@@ -1,376 +1,357 @@
 /**
  * Work Confirmation Page
- * Xác nhận công giáo viên & trợ giảng với Firebase integration
+ * Xác nhận công giáo viên & trợ giảng
+ * - Tự động hiển thị công từ TKB
+ * - Loại trừ ngày nghỉ
  */
 
-import React, { useState } from 'react';
-import { Search, CheckCircle, Clock, Plus, User, Trash2 } from 'lucide-react';
-import { useWorkSessions } from '../src/hooks/useWorkSessions';
-import { WorkType, WorkStatus } from '../src/services/workSessionService';
+import React, { useState, useMemo } from 'react';
+import { Search, CheckCircle, Clock, Plus, User } from 'lucide-react';
+import { useAutoWorkSessions, WorkSession } from '../src/hooks/useAutoWorkSessions';
 
 export const WorkConfirmation: React.FC = () => {
-  const [statusFilter, setStatusFilter] = useState<WorkStatus | ''>('');
-  const [searchTerm, setSearchTerm] = useState('');
-  
-  const { 
-    sessions, 
-    loading, 
-    error, 
-    createSession, 
-    toggleStatus, 
-    confirmAll,
-    deleteSession 
-  } = useWorkSessions();
+  // Week navigation - current week
+  const [currentWeekStart] = useState(() => {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(today);
+    monday.setDate(diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  });
 
-  // Manual Form States
+  // Filters - default to "Tuần này" to show all sessions
+  const [timeFilter, setTimeFilter] = useState('Tuần này');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [positionFilter, setPositionFilter] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const {
+    sessions,
+    loading,
+    error,
+    confirmSession,
+    confirmMultiple,
+    addManualSession,
+  } = useAutoWorkSessions(currentWeekStart);
+
+  // Manual form state
   const [manualForm, setManualForm] = useState({
     staffName: '',
-    position: 'Giáo viên Việt',
-    date: new Date().toISOString().split('T')[0],
+    position: 'Giáo viên',
+    date: '',
     timeStart: '',
-    timeEnd: '',
-    className: '',
-    type: 'Dạy chính' as WorkType,
+    type: 'Dạy chính' as WorkSession['type'],
   });
-  const [submitting, setSubmitting] = useState(false);
 
-  const handleConfirmAll = async () => {
-    const pendingIds = filteredSessions
-      .filter(s => s.status === 'Chờ xác nhận' && s.id)
-      .map(s => s.id!);
+  // Filter sessions
+  const filteredSessions = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
     
-    if (pendingIds.length === 0) {
+    return sessions.filter(s => {
+      // Time filter
+      if (timeFilter === 'Hôm nay' && s.date !== today) return false;
+      
+      // Status filter
+      if (statusFilter && s.status !== statusFilter) return false;
+      
+      // Position filter
+      if (positionFilter && !s.position.includes(positionFilter)) return false;
+      
+      // Search filter
+      if (searchTerm && !s.staffName.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+      
+      return true;
+    });
+  }, [sessions, timeFilter, statusFilter, positionFilter, searchTerm]);
+
+  // Confirm all pending
+  const handleConfirmAll = async () => {
+    const pending = filteredSessions.filter(s => s.status === 'Chờ xác nhận');
+    if (pending.length === 0) {
       alert('Không có công nào cần xác nhận');
       return;
     }
     
     try {
-      await confirmAll(pendingIds);
-    } catch (err) {
-      alert('Lỗi khi xác nhận hàng loạt');
+      await confirmMultiple(pending);
+    } catch (err: any) {
+      alert(`Lỗi: ${err.message}`);
     }
   };
 
-  const handleToggleStatus = async (id: string) => {
-    try {
-      await toggleStatus(id);
-    } catch (err) {
-      alert('Lỗi khi cập nhật trạng thái');
+  // Toggle confirm
+  const handleToggleConfirm = async (session: WorkSession) => {
+    if (session.status === 'Chờ xác nhận') {
+      try {
+        await confirmSession(session);
+      } catch (err: any) {
+        alert(`Lỗi: ${err.message}`);
+      }
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Xóa công này?')) return;
-    try {
-      await deleteSession(id);
-    } catch (err) {
-      alert('Lỗi khi xóa');
-    }
-  };
-
+  // Add manual
   const handleManualAdd = async () => {
     if (!manualForm.staffName || !manualForm.date || !manualForm.timeStart) {
       alert('Vui lòng điền đầy đủ thông tin');
       return;
     }
 
-    setSubmitting(true);
     try {
-      await createSession({
+      await addManualSession({
         staffName: manualForm.staffName,
-        position: manualForm.position,
+        position: manualForm.position === 'Giáo viên' ? 'Giáo viên Việt' : 'Trợ giảng',
         date: manualForm.date,
         timeStart: manualForm.timeStart,
-        timeEnd: manualForm.timeEnd,
-        className: manualForm.className,
+        timeEnd: '',
+        className: '',
         type: manualForm.type,
         status: 'Chờ xác nhận',
       });
       
       setManualForm({
         staffName: '',
-        position: 'Giáo viên Việt',
-        date: new Date().toISOString().split('T')[0],
+        position: 'Giáo viên',
+        date: '',
         timeStart: '',
-        timeEnd: '',
-        className: '',
         type: 'Dạy chính',
       });
       alert('Đã thêm công thành công!');
-    } catch (err) {
-      alert('Lỗi khi thêm công');
-    } finally {
-      setSubmitting(false);
+    } catch (err: any) {
+      alert(`Lỗi: ${err.message}`);
     }
   };
 
-  // Filter sessions
-  let filteredSessions = sessions.filter(s => 
-    s.staffName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-  
-  if (statusFilter) {
-    filteredSessions = filteredSessions.filter(s => s.status === statusFilter);
-  }
-
-  // Stats
-  const pendingCount = sessions.filter(s => s.status === 'Chờ xác nhận').length;
-  const confirmedCount = sessions.filter(s => s.status === 'Đã xác nhận').length;
+  // Format time display
+  const formatTimeDisplay = (date: string, timeStart: string, timeEnd: string) => {
+    const d = new Date(date);
+    const day = d.getDate().toString().padStart(2, '0');
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    return `${day}/${month} ${timeStart} - ${timeEnd || '...'}`;
+  };
 
   return (
     <div className="space-y-6">
-      {/* Top Header Section */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-white bg-green-500 px-4 py-1.5 inline-block rounded-sm shadow-sm">
-            Xác nhận công giáo viên & trợ giảng
-          </h2>
-          <div className="flex gap-3">
-            <span className="text-sm bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full font-medium">
-              Chờ: {pendingCount}
-            </span>
-            <span className="text-sm bg-green-100 text-green-700 px-3 py-1 rounded-full font-medium">
-              Đã xác nhận: {confirmedCount}
-            </span>
-          </div>
-        </div>
-         
+      {/* Header */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h2 className="text-lg font-bold text-white bg-green-500 px-4 py-2 inline-block rounded mb-6">
+          Xác nhận công giáo viên & trợ giảng
+        </h2>
+
+        {/* Filters */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1">Hiển thị thời gian</label>
-            <select className="w-full border border-gray-300 rounded px-2 py-2 text-sm bg-gray-50 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500">
-              <option>Hôm nay</option>
-              <option>Tuần này</option>
-              <option>Tháng này</option>
+            <label className="block text-sm text-gray-600 mb-1">Hiển thị thời gian</label>
+            <select
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            >
+              <option value="Hôm nay">Hôm nay</option>
+              <option value="Tuần này">Tuần này</option>
+              <option value="Tháng này">Tháng này</option>
             </select>
           </div>
+          
           <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1">Trạng thái</label>
-            <select 
+            <label className="block text-sm text-gray-600 mb-1">Trạng thái</label>
+            <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as WorkStatus | '')}
-              className="w-full border border-gray-300 rounded px-2 py-2 text-sm bg-gray-50 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
             >
               <option value="">Tất cả</option>
               <option value="Chờ xác nhận">Chờ xác nhận</option>
               <option value="Đã xác nhận">Đã xác nhận</option>
             </select>
           </div>
+          
           <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1">Vị trí</label>
-            <select className="w-full border border-gray-300 rounded px-2 py-2 text-sm bg-gray-50 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500">
+            <label className="block text-sm text-gray-600 mb-1">Vị trí</label>
+            <select
+              value={positionFilter}
+              onChange={(e) => setPositionFilter(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            >
               <option value="">Tất cả</option>
-              <option>Giáo viên Việt</option>
-              <option>Giáo viên Nước ngoài</option>
-              <option>Trợ giảng</option>
+              <option value="Giáo viên Việt">Giáo viên Việt</option>
+              <option value="Giáo viên Nước ngoài">Giáo viên Nước ngoài</option>
+              <option value="Trợ giảng">Trợ giảng</option>
             </select>
           </div>
+          
           <div>
-            <label className="block text-xs font-bold text-gray-500 mb-1">Tên nhân sự</label>
+            <label className="block text-sm text-gray-600 mb-1">Tên nhân sự</label>
             <div className="relative">
-              <input 
-                type="text" 
-                placeholder="Tìm kiếm..." 
-                className="w-full border border-gray-300 rounded px-2 py-2 pl-8 text-sm focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Lựa chọn tên..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
               />
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex flex-col xl:flex-row gap-6 items-start">
-        {/* LEFT: Main Table */}
-        <div className="flex-1 w-full xl:w-2/3 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 text-xs italic text-gray-500 flex justify-between items-center">
-            <span>Hệ thống sẽ tự động hiển thị dựa theo thời khóa biểu và lịch nghỉ</span>
+      {/* Main Content */}
+      <div className="flex flex-col xl:flex-row gap-6">
+        {/* Left: Table */}
+        <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-4 py-3 text-sm text-gray-500 italic border-b border-gray-100">
+            Hệ thống sẽ tự động hiển thị dựa theo thời khóa biểu và lịch nghỉ
           </div>
           
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-gray-600 border-collapse">
-              <thead className="bg-green-500 text-white text-xs uppercase font-bold">
-                <tr>
-                  <th className="px-4 py-3 border-r border-green-400 w-12 text-center">STT</th>
-                  <th className="px-4 py-3 border-r border-green-400">Tên nhân viên</th>
-                  <th className="px-4 py-3 border-r border-green-400">Thời gian</th>
-                  <th className="px-4 py-3 border-r border-green-400 text-center">Lớp</th>
-                  <th className="px-4 py-3 border-r border-green-400 text-center">Kiểu tính công</th>
-                  <th className="px-4 py-3 text-center w-40">
-                    <button 
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-green-500 text-white">
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase w-12">STT</th>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase">Tên nhân viên</th>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase">Thời gian</th>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase">Lớp</th>
+                  <th className="px-4 py-3 text-center text-xs font-bold uppercase">Kiểu tính công</th>
+                  <th className="px-4 py-3 text-center">
+                    <button
                       onClick={handleConfirmAll}
-                      className="bg-white text-green-600 px-2 py-0.5 rounded shadow-sm text-[10px] hover:bg-gray-100 uppercase font-bold w-full"
+                      className="text-xs font-bold text-white uppercase px-3 py-1.5 border border-white rounded hover:bg-green-600"
                     >
                       Xác nhận hàng loạt
                     </button>
                   </th>
-                  <th className="px-4 py-3 w-12"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-gray-500">
-                      <div className="flex items-center justify-center gap-2">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-600"></div>
-                        Đang tải...
-                      </div>
+                    <td colSpan={6} className="text-center py-12 text-gray-500">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500 mx-auto mb-2"></div>
+                      Đang tải...
                     </td>
                   </tr>
                 ) : error ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-red-500">Lỗi: {error}</td>
+                    <td colSpan={6} className="text-center py-12 text-red-500">{error}</td>
                   </tr>
                 ) : filteredSessions.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-gray-400">
-                      <Clock size={48} className="mx-auto mb-2 opacity-20" />
-                      Chưa có công nào
+                    <td colSpan={6} className="text-center py-12 text-gray-400">
+                      Không có dữ liệu
                     </td>
                   </tr>
-                ) : filteredSessions.map((session, idx) => (
-                  <tr key={session.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 border-r border-gray-100 text-center">{idx + 1}</td>
-                    <td className="px-4 py-3 border-r border-gray-100">
-                      <div className="font-medium text-gray-900">{session.staffName}</div>
-                      <div className="text-xs text-gray-500">{session.position}</div>
-                    </td>
-                    <td className="px-4 py-3 border-r border-gray-100">
-                      <div className="flex items-center gap-2">
-                        <Clock size={14} className="text-gray-400" />
-                        <span>{session.date} {session.timeStart} - {session.timeEnd}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 border-r border-gray-100 text-center">{session.className || '-'}</td>
-                    <td className="px-4 py-3 border-r border-gray-100 text-center">
-                      <span className={`px-2 py-0.5 rounded text-xs ${
-                        session.type === 'Dạy chính' ? 'bg-blue-100 text-blue-700' :
-                        session.type === 'Trợ giảng' ? 'bg-purple-100 text-purple-700' :
-                        session.type === 'Nhận xét' ? 'bg-orange-100 text-orange-700' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>
-                        {session.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <button 
-                        onClick={() => session.id && handleToggleStatus(session.id)}
-                        className={`px-3 py-1 rounded text-xs font-bold border transition-all w-full
-                          ${session.status === 'Đã xác nhận' 
-                            ? 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200' 
-                            : 'bg-yellow-50 text-yellow-600 border-yellow-200 hover:bg-yellow-100'
-                          }
-                        `}
-                      >
-                        {session.status}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => session.id && handleDelete(session.id)}
-                        className="text-gray-400 hover:text-red-600"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                ) : (
+                  filteredSessions.map((session, idx) => (
+                    <tr key={session.id || `${session.staffName}-${session.date}-${idx}`} className="hover:bg-gray-50">
+                      <td className="px-4 py-4 text-gray-500">{idx + 1}</td>
+                      <td className="px-4 py-4 font-medium text-gray-900">{session.staffName}</td>
+                      <td className="px-4 py-4 text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <Clock size={14} className="text-gray-400" />
+                          {formatTimeDisplay(session.date, session.timeStart, session.timeEnd)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 text-gray-700">{session.className || '-'}</td>
+                      <td className="px-4 py-4 text-center">
+                        <span className={`px-3 py-1 rounded text-xs font-medium border ${
+                          session.type === 'Dạy chính' ? 'bg-gray-50 text-gray-700 border-gray-200' :
+                          session.type === 'Trợ giảng' ? 'bg-gray-50 text-gray-700 border-gray-200' :
+                          session.type === 'Nhận xét' ? 'bg-gray-50 text-gray-700 border-gray-200' :
+                          'bg-gray-50 text-gray-700 border-gray-200'
+                        }`}>
+                          {session.type}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 text-center">
+                        <button
+                          onClick={() => handleToggleConfirm(session)}
+                          disabled={session.status === 'Đã xác nhận'}
+                          className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${
+                            session.status === 'Đã xác nhận'
+                              ? 'bg-green-500 text-white cursor-default'
+                              : 'bg-white text-orange-500 border-2 border-orange-400 hover:bg-orange-50'
+                          }`}
+                        >
+                          {session.status}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
-          <div className="p-4 bg-yellow-50 text-xs text-yellow-800 italic border-t border-yellow-100 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-yellow-600"></div>
+          
+          <div className="px-4 py-3 border-t border-gray-100 text-sm text-yellow-700 italic flex items-center gap-2 bg-yellow-50">
+            <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
             Sau khi xác nhận, số công sẽ tự động chuyển sang báo cáo lương.
           </div>
         </div>
 
-        {/* RIGHT: Manual Add Form */}
-        <div className="w-full xl:w-1/3 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden sticky top-6">
-          <div className="bg-green-500 px-4 py-3">
-            <h3 className="text-white font-bold text-sm uppercase flex items-center gap-2">
-              <Plus size={16} className="bg-white text-green-500 rounded-full p-0.5" />
-              Giao diện thêm công thủ công
-            </h3>
+        {/* Right: Manual Add Form */}
+        <div className="w-full xl:w-96 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-fit">
+          <div className="bg-green-500 px-4 py-3 flex items-center gap-2">
+            <Plus size={18} className="text-white" />
+            <h3 className="text-white font-bold uppercase text-sm">Giao diện thêm công thủ công</h3>
           </div>
           
           <div className="p-5 space-y-4">
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-500 uppercase">Tên nhân viên</label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tên nhân viên</label>
               <div className="relative">
-                <input 
-                  type="text" 
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+                <input
+                  type="text"
                   placeholder="Nhập tên nhân viên..."
                   value={manualForm.staffName}
-                  onChange={e => setManualForm({...manualForm, staffName: e.target.value})}
+                  onChange={(e) => setManualForm({ ...manualForm, staffName: e.target.value })}
+                  className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 />
-                <User size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <User size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
               </div>
             </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-500 uppercase">Vị trí</label>
-              <select 
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Vị trí</label>
+              <select
                 value={manualForm.position}
-                onChange={e => setManualForm({...manualForm, position: e.target.value})}
+                onChange={(e) => setManualForm({ ...manualForm, position: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
               >
-                <option>Giáo viên Việt</option>
-                <option>Giáo viên Nước ngoài</option>
-                <option>Trợ giảng</option>
+                <option value="Giáo viên">Giáo viên</option>
+                <option value="Trợ giảng">Trợ giảng</option>
               </select>
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-500 uppercase">Ngày</label>
-                <input 
-                  type="date" 
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ngày</label>
+                <input
+                  type="date"
                   value={manualForm.date}
-                  onChange={e => setManualForm({...manualForm, date: e.target.value})}
+                  onChange={(e) => setManualForm({ ...manualForm, date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-500 uppercase">Lớp</label>
-                <input 
-                  type="text" 
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
-                  placeholder="VD: Kindy 1A"
-                  value={manualForm.className}
-                  onChange={e => setManualForm({...manualForm, className: e.target.value})}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-500 uppercase">Giờ bắt đầu</label>
-                <input 
-                  type="time" 
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Giờ bắt đầu</label>
+                <input
+                  type="time"
                   value={manualForm.timeStart}
-                  onChange={e => setManualForm({...manualForm, timeStart: e.target.value})}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-gray-500 uppercase">Giờ kết thúc</label>
-                <input 
-                  type="time" 
-                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
-                  value={manualForm.timeEnd}
-                  onChange={e => setManualForm({...manualForm, timeEnd: e.target.value})}
+                  onChange={(e) => setManualForm({ ...manualForm, timeStart: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 />
               </div>
             </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-gray-500 uppercase">Kiểu tính công</label>
-              <select 
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Kiểu tính công</label>
+              <select
                 value={manualForm.type}
-                onChange={e => setManualForm({...manualForm, type: e.target.value as WorkType})}
+                onChange={(e) => setManualForm({ ...manualForm, type: e.target.value as any })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
               >
                 <option value="Dạy chính">Dạy chính</option>
                 <option value="Trợ giảng">Trợ giảng</option>
@@ -379,17 +360,14 @@ export const WorkConfirmation: React.FC = () => {
                 <option value="Bồi bài">Bồi bài</option>
               </select>
             </div>
-
-            <div className="pt-2">
-              <button 
-                onClick={handleManualAdd}
-                disabled={submitting}
-                className="w-full bg-green-500 text-white font-bold py-2.5 rounded hover:bg-green-600 transition-colors shadow-sm flex justify-center items-center gap-2 disabled:opacity-50"
-              >
-                <CheckCircle size={18} />
-                {submitting ? 'Đang xử lý...' : 'Xác nhận thêm'}
-              </button>
-            </div>
+            
+            <button
+              onClick={handleManualAdd}
+              className="w-full bg-green-500 text-white font-bold py-3 rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center gap-2"
+            >
+              <CheckCircle size={18} />
+              Xác nhận thêm
+            </button>
           </div>
         </div>
       </div>

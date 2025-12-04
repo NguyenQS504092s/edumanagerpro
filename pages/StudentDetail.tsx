@@ -1,22 +1,88 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, User, Phone, Mail, MapPin, Calendar, BookOpen, DollarSign, Clock, MessageSquare, FileText } from 'lucide-react';
-import { MOCK_STUDENTS, MOCK_FEEDBACKS } from '../mockData';
+import { ChevronLeft, User, Phone, Mail, MapPin, Calendar, BookOpen, DollarSign, Clock, MessageSquare, FileText, X } from 'lucide-react';
+import { MOCK_FEEDBACKS } from '../mockData';
+import { useClasses } from '../src/hooks/useClasses';
+import { useStudents } from '../src/hooks/useStudents';
 
 export const StudentDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'finance' | 'feedback'>('info');
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const { classes } = useClasses({});
+  const { students, loading } = useStudents({});
 
-  // In a real app, fetch data based on ID
-  const student = MOCK_STUDENTS.find(s => s.id === id) || MOCK_STUDENTS[0];
+  // Find student by ID from Firebase data
+  const student = students.find(s => s.id === id);
+  
+  // Edit form state
+  const [editForm, setEditForm] = useState({
+    fullName: '',
+    gender: 'Nam',
+    dob: '',
+    address: '',
+    parentName: '',
+    phone: '',
+    email: '',
+    parentName2: '',
+    phone2: '',
+  });
+
+  // Update form when student data loads
+  useEffect(() => {
+    if (student) {
+      setEditForm({
+        fullName: student.fullName || '',
+        gender: student.gender || 'Nam',
+        dob: student.dob || '',
+        address: '',
+        parentName: student.parentName || '',
+        phone: student.phone || '',
+        email: '',
+        parentName2: '',
+        phone2: '',
+      });
+    }
+  }, [student]);
+
+  // Enroll form state
+  const [enrollForm, setEnrollForm] = useState({
+    classId: '',
+    startDate: new Date().toISOString().split('T')[0],
+    sessions: 48,
+    notes: '',
+  });
   
   // Filter feedbacks for this student (mock logic)
   const callFeedbacks = MOCK_FEEDBACKS.filter(f => f.type === 'Call');
   const formFeedbacks = MOCK_FEEDBACKS.filter(f => f.type === 'Form');
 
-  if (!student) return <div>Không tìm thấy học viên</div>;
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <span className="ml-3 text-gray-600">Đang tải...</span>
+      </div>
+    );
+  }
+
+  if (!student) {
+    return (
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 text-center">
+        <p className="text-gray-500 mb-4">Không tìm thấy học viên</p>
+        <button 
+          onClick={() => navigate(-1)}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+        >
+          Quay lại
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -41,10 +107,16 @@ export const StudentDetail: React.FC = () => {
                     <p className="text-gray-500 font-medium">{student.code} • <span className={`text-${student.status === 'Đang học' ? 'green' : 'gray'}-600`}>{student.status}</span></p>
                  </div>
                  <div className="flex gap-2">
-                    <button className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg font-medium hover:bg-indigo-100 transition-colors">
+                    <button 
+                      onClick={() => setShowEditModal(true)}
+                      className="px-4 py-2 bg-indigo-50 text-indigo-700 rounded-lg font-medium hover:bg-indigo-100 transition-colors border border-indigo-200"
+                    >
                        Sửa hồ sơ
                     </button>
-                    <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm">
+                    <button 
+                      onClick={() => setShowEnrollModal(true)}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+                    >
                        Đăng ký lớp mới
                     </button>
                  </div>
@@ -141,15 +213,27 @@ export const StudentDetail: React.FC = () => {
                   </h3>
                    <div className="space-y-3 text-sm">
                      <div className="grid grid-cols-3 py-2 border-b border-gray-50">
-                        <span className="text-gray-500">Họ tên PH</span>
+                        <span className="text-gray-500">Họ tên PH1</span>
                         <span className="col-span-2 font-medium">{student.parentName}</span>
                      </div>
                      <div className="grid grid-cols-3 py-2 border-b border-gray-50">
-                        <span className="text-gray-500">Số điện thoại</span>
+                        <span className="text-gray-500">Số điện thoại 1</span>
                         <span className="col-span-2 font-medium text-blue-600 cursor-pointer">{student.phone}</span>
                      </div>
                      <div className="grid grid-cols-3 py-2 border-b border-gray-50">
+                        <span className="text-gray-500">Họ tên PH2</span>
+                        <span className="col-span-2 font-medium text-gray-400 italic">Chưa cập nhật</span>
+                     </div>
+                     <div className="grid grid-cols-3 py-2 border-b border-gray-50">
+                        <span className="text-gray-500">Số điện thoại 2</span>
+                        <span className="col-span-2 font-medium text-gray-400 italic">Chưa cập nhật</span>
+                     </div>
+                     <div className="grid grid-cols-3 py-2 border-b border-gray-50">
                         <span className="text-gray-500">Email</span>
+                        <span className="col-span-2 font-medium text-gray-400 italic">Chưa cập nhật</span>
+                     </div>
+                     <div className="grid grid-cols-3 py-2 border-b border-gray-50">
+                        <span className="text-gray-500">Địa chỉ</span>
                         <span className="col-span-2 font-medium text-gray-400 italic">Chưa cập nhật</span>
                      </div>
                   </div>
@@ -213,7 +297,12 @@ export const StudentDetail: React.FC = () => {
                       <h3 className="bg-green-500 text-white px-3 py-1 text-sm font-bold uppercase inline-block">
                          Phản hồi từ Khách hàng liên hệ qua điện thoại
                       </h3>
-                      <button className="text-xs text-blue-600 hover:underline">Xem báo cáo</button>
+                      <button 
+                        onClick={() => setShowReportModal(true)}
+                        className="text-xs text-blue-600 hover:underline font-medium"
+                      >
+                        Xem báo cáo
+                      </button>
                   </div>
                   <div className="overflow-x-auto border border-gray-200">
                       <table className="w-full text-sm text-left border-collapse">
@@ -298,6 +387,361 @@ export const StudentDetail: React.FC = () => {
             </div>
          )}
       </div>
+
+      {/* Edit Profile Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-indigo-50 to-purple-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Sửa hồ sơ học viên</h3>
+                <p className="text-sm text-indigo-600">{student.fullName}</p>
+              </div>
+              <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto max-h-[60vh]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Personal Info */}
+                <div>
+                  <h4 className="font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                    <User size={16} className="text-indigo-600" /> Thông tin cá nhân
+                  </h4>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Họ và tên *</label>
+                      <input
+                        type="text"
+                        value={editForm.fullName}
+                        onChange={(e) => setEditForm({...editForm, fullName: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Giới tính</label>
+                      <select
+                        value={editForm.gender}
+                        onChange={(e) => setEditForm({...editForm, gender: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="Nam">Nam</option>
+                        <option value="Nữ">Nữ</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ngày sinh</label>
+                      <input
+                        type="date"
+                        value={editForm.dob}
+                        onChange={(e) => setEditForm({...editForm, dob: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Parent Info */}
+                <div>
+                  <h4 className="font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                    <User size={16} className="text-indigo-600" /> Thông tin phụ huynh
+                  </h4>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Họ tên PH1 *</label>
+                        <input
+                          type="text"
+                          value={editForm.parentName}
+                          onChange={(e) => setEditForm({...editForm, parentName: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">SĐT 1 *</label>
+                        <input
+                          type="tel"
+                          value={editForm.phone}
+                          onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Họ tên PH2</label>
+                        <input
+                          type="text"
+                          value={editForm.parentName2}
+                          onChange={(e) => setEditForm({...editForm, parentName2: e.target.value})}
+                          placeholder="Nhập tên PH2"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">SĐT 2</label>
+                        <input
+                          type="tel"
+                          value={editForm.phone2}
+                          onChange={(e) => setEditForm({...editForm, phone2: e.target.value})}
+                          placeholder="Nhập SĐT 2"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input
+                        type="email"
+                        value={editForm.email}
+                        onChange={(e) => setEditForm({...editForm, email: e.target.value})}
+                        placeholder="Nhập email"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Địa chỉ</label>
+                      <input
+                        type="text"
+                        value={editForm.address}
+                        onChange={(e) => setEditForm({...editForm, address: e.target.value})}
+                        placeholder="Nhập địa chỉ"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => { alert('Đã lưu thay đổi!'); setShowEditModal(false); }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                Lưu thay đổi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enroll Class Modal */}
+      {showEnrollModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-hidden">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-green-50 to-teal-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Đăng ký lớp mới</h3>
+                <p className="text-sm text-teal-600">Học viên: {student.fullName}</p>
+              </div>
+              <button onClick={() => setShowEnrollModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chọn lớp học *</label>
+                <select
+                  value={enrollForm.classId}
+                  onChange={(e) => setEnrollForm({...enrollForm, classId: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Chọn lớp --</option>
+                  {classes.filter(c => c.status === 'Đang học').map(cls => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name} - {cls.teacher} ({cls.schedule})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ngày bắt đầu</label>
+                <input
+                  type="date"
+                  value={enrollForm.startDate}
+                  onChange={(e) => setEnrollForm({...enrollForm, startDate: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Số buổi đăng ký</label>
+                <input
+                  type="number"
+                  value={enrollForm.sessions}
+                  onChange={(e) => setEnrollForm({...enrollForm, sessions: parseInt(e.target.value)})}
+                  min={1}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+                <textarea
+                  value={enrollForm.notes}
+                  onChange={(e) => setEnrollForm({...enrollForm, notes: e.target.value})}
+                  rows={3}
+                  placeholder="Ghi chú thêm..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {enrollForm.classId && (
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <p className="text-sm text-blue-700">
+                    <strong>Lớp đã chọn:</strong> {classes.find(c => c.id === enrollForm.classId)?.name}
+                  </p>
+                  <p className="text-sm text-blue-600">
+                    Giáo viên: {classes.find(c => c.id === enrollForm.classId)?.teacher}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+              <button
+                onClick={() => setShowEnrollModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => { 
+                  if (!enrollForm.classId) {
+                    alert('Vui lòng chọn lớp học!');
+                    return;
+                  }
+                  alert('Đã đăng ký lớp thành công!'); 
+                  setShowEnrollModal(false); 
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                Xác nhận đăng ký
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Feedback Report Modal */}
+      {showReportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-green-50 to-teal-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Báo cáo phản hồi khách hàng</h3>
+                <p className="text-sm text-teal-600">Học viên: {student.fullName}</p>
+              </div>
+              <button onClick={() => setShowReportModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto max-h-[60vh]">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="bg-blue-50 p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-blue-700">{callFeedbacks.length + formFeedbacks.length}</p>
+                  <p className="text-xs text-blue-600">Tổng phản hồi</p>
+                </div>
+                <div className="bg-green-50 p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-green-700">{callFeedbacks.length}</p>
+                  <p className="text-xs text-green-600">Qua điện thoại</p>
+                </div>
+                <div className="bg-purple-50 p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-purple-700">{formFeedbacks.length}</p>
+                  <p className="text-xs text-purple-600">Qua Form</p>
+                </div>
+                <div className="bg-orange-50 p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-orange-700">4.5</p>
+                  <p className="text-xs text-orange-600">Điểm TB</p>
+                </div>
+              </div>
+
+              {/* Score Breakdown */}
+              <div className="mb-6">
+                <h4 className="font-semibold text-gray-700 mb-3">Điểm đánh giá chi tiết</h4>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-40">Giáo viên</span>
+                    <div className="flex-1 bg-gray-200 rounded-full h-3">
+                      <div className="bg-green-500 h-3 rounded-full" style={{width: '90%'}}></div>
+                    </div>
+                    <span className="text-sm font-bold text-gray-700 w-12">4.5/5</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-40">Chương trình học</span>
+                    <div className="flex-1 bg-gray-200 rounded-full h-3">
+                      <div className="bg-blue-500 h-3 rounded-full" style={{width: '85%'}}></div>
+                    </div>
+                    <span className="text-sm font-bold text-gray-700 w-12">4.3/5</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-40">Chăm sóc khách hàng</span>
+                    <div className="flex-1 bg-gray-200 rounded-full h-3">
+                      <div className="bg-purple-500 h-3 rounded-full" style={{width: '92%'}}></div>
+                    </div>
+                    <span className="text-sm font-bold text-gray-700 w-12">4.6/5</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-40">Cơ sở vật chất</span>
+                    <div className="flex-1 bg-gray-200 rounded-full h-3">
+                      <div className="bg-orange-500 h-3 rounded-full" style={{width: '88%'}}></div>
+                    </div>
+                    <span className="text-sm font-bold text-gray-700 w-12">4.4/5</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Feedbacks */}
+              <div>
+                <h4 className="font-semibold text-gray-700 mb-3">Phản hồi gần đây</h4>
+                <div className="space-y-3">
+                  {[...callFeedbacks, ...formFeedbacks].slice(0, 3).map((fb, idx) => (
+                    <div key={idx} className="bg-gray-50 p-4 rounded-lg">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="font-medium text-gray-800">{fb.studentName}</span>
+                        <span className={`text-xs px-2 py-1 rounded ${fb.type === 'Call' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}>
+                          {fb.type === 'Call' ? 'Điện thoại' : 'Form'}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-600">{fb.content}</p>
+                      {fb.averageScore && (
+                        <p className="text-sm mt-2"><span className="text-gray-500">Điểm TB:</span> <span className="font-bold text-orange-600">{fb.averageScore}</span></p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+              <button
+                onClick={() => setShowReportModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={() => { alert('Đang xuất báo cáo...'); }}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Xuất PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

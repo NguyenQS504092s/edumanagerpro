@@ -61,11 +61,21 @@ export interface ClassModel {
   ageGroup: string;
   progress: string; // e.g., "12/24 Buổi"
   teacher: string;
+  teacherId?: string;
   assistant: string;
   foreignTeacher?: string;
   studentsCount: number;
+  trialStudents?: number;
+  activeStudents?: number;
+  debtStudents?: number;
+  reservedStudents?: number;
+  schedule?: string; // Lịch học, e.g., "Thứ 2, 4 (18h-19h30)"
+  room?: string;
+  branch?: string; // Cơ sở
   startDate: string;
   endDate: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Staff {

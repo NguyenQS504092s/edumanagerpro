@@ -1,19 +1,30 @@
 
-import React, { useState } from 'react';
-import { Search, Filter, Calendar, FileDown, ArrowUpRight, ArrowDownRight, MoreHorizontal } from 'lucide-react';
-import { MOCK_ENROLLMENTS } from '../mockData';
+import React, { useState, useMemo } from 'react';
+import { Search, Filter, Calendar, FileDown, ArrowUpRight, ArrowDownRight, MoreHorizontal, ChevronDown } from 'lucide-react';
 import { EnrollmentRecord } from '../types';
+import { useEnrollments } from '../src/hooks/useEnrollments';
+import * as XLSX from 'xlsx';
 
 export const EnrollmentHistory: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
+  const [monthFilter, setMonthFilter] = useState<number | ''>(new Date().getMonth() + 1);
+  const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
 
-  const filteredData = MOCK_ENROLLMENTS.filter(item => {
-    const matchesSearch = item.studentName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          item.contractCode?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = typeFilter === 'ALL' || item.type === typeFilter;
-    return matchesSearch && matchesType;
+  // Fetch from Firebase
+  const { enrollments, loading, error } = useEnrollments({
+    type: typeFilter !== 'ALL' ? typeFilter : undefined,
+    month: monthFilter ? monthFilter : undefined,
+    year: yearFilter,
   });
+
+  const filteredData = useMemo(() => {
+    return enrollments.filter(item => {
+      const matchesSearch = item.studentName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                            item.contractCode?.toLowerCase().includes(searchTerm.toLowerCase());
+      return matchesSearch;
+    });
+  }, [enrollments, searchTerm]);
 
   const getTypeBadge = (type: EnrollmentRecord['type']) => {
     switch(type) {
@@ -26,6 +37,37 @@ export const EnrollmentHistory: React.FC = () => {
 
   const totalRevenue = filteredData.reduce((sum, item) => sum + item.finalAmount, 0);
   const totalSessions = filteredData.reduce((sum, item) => sum + item.sessions, 0);
+
+  const exportToExcel = () => {
+    const data = filteredData.map((item, index) => ({
+      'STT': index + 1,
+      'Học viên': item.studentName,
+      'Số buổi': item.sessions,
+      'Loại ghi danh': item.type,
+      'Mã HĐ': item.contractCode || '-',
+      'Số tiền': item.finalAmount.toLocaleString('vi-VN') + 'đ',
+      'Ngày': item.createdDate,
+      'Nhân viên': item.staff,
+      'Ghi chú': item.notes || '',
+    }));
+    
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Ghi danh');
+    const fileName = monthFilter 
+      ? `LichSuGhiDanh_T${monthFilter}_${yearFilter}.xlsx`
+      : `LichSuGhiDanh_${yearFilter}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <span className="ml-3 text-gray-600">Đang tải...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -70,13 +112,33 @@ export const EnrollmentHistory: React.FC = () => {
                 <option value="Hợp đồng tái phí">Hợp đồng tái phí</option>
                 <option value="Ghi danh thủ công">Ghi danh thủ công</option>
              </select>
-             <div className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600 text-sm cursor-pointer hover:bg-white hover:border-indigo-300 transition-colors">
-                <Calendar size={16} />
-                <span>Tháng này</span>
+             <div className="flex items-center gap-2">
+                <select
+                  value={monthFilter}
+                  onChange={(e) => setMonthFilter(e.target.value ? parseInt(e.target.value) : '')}
+                  className="pl-3 pr-8 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm text-gray-700"
+                >
+                  <option value="">Tất cả tháng</option>
+                  {Array.from({length: 12}, (_, i) => i + 1).map(m => (
+                    <option key={m} value={m}>Tháng {m}</option>
+                  ))}
+                </select>
+                <select
+                  value={yearFilter}
+                  onChange={(e) => setYearFilter(parseInt(e.target.value))}
+                  className="pl-3 pr-8 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm text-gray-700"
+                >
+                  {Array.from({length: 5}, (_, i) => new Date().getFullYear() - i).map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
              </div>
           </div>
           
-          <button className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium">
+          <button 
+            onClick={exportToExcel}
+            className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+          >
              <FileDown size={18} /> Xuất Excel
           </button>
       </div>

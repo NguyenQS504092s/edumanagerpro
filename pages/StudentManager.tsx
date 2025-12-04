@@ -190,9 +190,9 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                         </div>
                     </td>
                     <td className="px-4 py-3 text-xs">
-                        <p className="font-bold text-green-700">{student.parentName}</p>
+                        <p className="font-bold text-green-700">{student.parentName || '---'}</p>
                         <p className="text-gray-500 flex items-center gap-1">
-                          <Phone size={10} /> {student.phone}
+                          <Phone size={10} /> {student.parentPhone || student.phone || '---'}
                         </p>
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-600">
@@ -650,14 +650,14 @@ interface EditStudentModalProps {
 
 const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
-    fullName: student.fullName,
-    dob: new Date(student.dob).toISOString().split('T')[0],
-    gender: student.gender,
-    phone: student.phone,
-    parentName: student.parentName,
-    parentPhone: student.parentPhone,
-    status: student.status,
-    currentClassName: student.currentClassName || ''
+    fullName: student.fullName || '',
+    dob: student.dob ? new Date(student.dob).toISOString().split('T')[0] : '',
+    gender: student.gender || 'Nam',
+    phone: student.phone || '',
+    parentName: student.parentName || '',
+    parentPhone: student.parentPhone || '',
+    status: student.status || StudentStatus.ACTIVE,
+    class: student.class || ''
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -780,8 +780,8 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
               </label>
               <input
                 type="text"
-                value={formData.currentClassName}
-                onChange={(e) => setFormData({ ...formData, currentClassName: e.target.value })}
+                value={formData.class}
+                onChange={(e) => setFormData({ ...formData, class: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
             </div>

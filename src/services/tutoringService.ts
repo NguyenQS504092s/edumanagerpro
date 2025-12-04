@@ -165,14 +165,19 @@ export const scheduleTutoring = async (
  */
 export const completeTutoring = async (id: string, note?: string): Promise<void> => {
   try {
-    await updateTutoring(id, {
+    console.log('completeTutoring called with id:', id);
+    const docRef = doc(db, TUTORING_COLLECTION, id);
+    await updateDoc(docRef, {
       status: 'Đã bồi',
       completedAt: new Date().toISOString(),
-      note: note,
+      ...(note && { note }),
+      updatedAt: new Date().toISOString(),
     });
-  } catch (error) {
+    console.log('completeTutoring success');
+  } catch (error: any) {
     console.error('Error completing tutoring:', error);
-    throw new Error('Không thể hoàn thành bồi bài');
+    console.error('Error code:', error?.code);
+    throw new Error(`Không thể hoàn thành bồi bài: ${error?.message || 'Unknown'}`);
   }
 };
 
