@@ -35,6 +35,7 @@ import { TrainingReport } from './pages/TrainingReport';
 import { InvoiceManager } from './pages/InvoiceManager';
 import { CenterSettings } from './pages/CenterSettings';
 import { CurriculumManager } from './pages/CurriculumManager';
+import { HomeworkManager } from './pages/HomeworkManager';
 import { Login } from './pages/Login';
 import { StudentStatus } from './types';
 import { useAuth } from './src/hooks/useAuth';
@@ -50,11 +51,11 @@ const Placeholder: React.FC<{ title: string }> = ({ title }) => (
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-screen bg-gray-50 overflow-hidden print:block print:h-auto print:overflow-visible">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden print:block print:overflow-visible">
         <Header title="Hệ thống quản lý trung tâm" />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6 print:p-0 print:overflow-visible">
           <ErrorBoundary>
             {children}
           </ErrorBoundary>
@@ -113,6 +114,7 @@ const App: React.FC = () => {
           <Route path="/training/holidays" element={<HolidayManager />} />
           <Route path="/training/attendance" element={<Attendance />} />
           <Route path="/training/tutoring" element={<TutoringManager />} />
+          <Route path="/training/homework" element={<HomeworkManager />} />
           <Route path="/training/attendance-history" element={<AttendanceHistory />} />
           <Route path="/training/enrollment" element={<EnrollmentHistory />} />
           

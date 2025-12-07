@@ -18,7 +18,8 @@ import {
   QueryConstraint,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Contract, ContractStatus, ContractType, PaymentMethod } from '../../types';
+import { Contract, ContractStatus, ContractType, PaymentMethod, EnrollmentRecord } from '../../types';
+import * as enrollmentService from './enrollmentService';
 
 const CONTRACTS_COLLECTION = 'contracts';
 
@@ -95,6 +96,42 @@ export const createContract = async (contractData: Partial<Contract>): Promise<s
     };
     
     const docRef = await addDoc(collection(db, CONTRACTS_COLLECTION), contract);
+    
+    // Auto-create enrollment record for tracking
+    try {
+      const totalSessions = contract.items.reduce((sum, item) => {
+        if (item.type === 'course') {
+          return sum + (item.quantity || 0);
+        }
+        return sum;
+      }, 0);
+      
+      // Determine enrollment type based on existing contracts
+      const existingContracts = await getContracts({ studentId: contract.studentId });
+      const enrollmentType: EnrollmentRecord['type'] = 
+        existingContracts.length > 1 ? 'Hợp đồng tái phí' : 'Hợp đồng mới';
+      
+      const enrollmentData: Omit<EnrollmentRecord, 'id'> = {
+        studentName: contract.studentName,
+        studentId: contract.studentId,
+        sessions: totalSessions,
+        type: enrollmentType,
+        contractCode: contract.code,
+        contractId: docRef.id,
+        originalAmount: contract.subtotal,
+        finalAmount: contract.totalAmount,
+        createdDate: new Date().toLocaleDateString('vi-VN'),
+        createdBy: contract.createdBy,
+        staff: contract.createdBy,
+        note: contract.notes || '',
+      };
+      
+      await enrollmentService.createEnrollment(enrollmentData);
+    } catch (enrollError) {
+      console.warn('Failed to create enrollment record:', enrollError);
+      // Don't fail contract creation if enrollment fails
+    }
+    
     return docRef.id;
   } catch (error: any) {
     console.error('Error creating contract:', error);
@@ -179,12 +216,24 @@ export const updateContract = async (id: string, data: Partial<Contract>): Promi
 };
 
 /**
- * Delete contract
+ * Delete contract (with cascade delete enrollment)
  */
 export const deleteContract = async (id: string): Promise<void> => {
   try {
+    // Get contract first to get the code
+    const contract = await getContract(id);
+    
     const docRef = doc(db, CONTRACTS_COLLECTION, id);
     await deleteDoc(docRef);
+    
+    // Cascade delete enrollment record
+    if (contract?.code) {
+      try {
+        await enrollmentService.deleteEnrollmentByContractCode(contract.code);
+      } catch (enrollError) {
+        console.warn('Failed to delete enrollment record:', enrollError);
+      }
+    }
   } catch (error) {
     console.error('Error deleting contract:', error);
     throw new Error('Không thể xóa hợp đồng');

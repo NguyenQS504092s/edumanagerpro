@@ -1,21 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Home, Plus, Edit, Trash2, X } from 'lucide-react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { db } from '../src/config/firebase';
-
-interface Room {
-  id: string;
-  name: string;
-  type: string;
-  branch: string;
-  status: string;
-  notes?: string;
-}
+import { useRooms } from '../src/hooks/useRooms';
+import { Room } from '../types';
 
 export const RoomManager: React.FC = () => {
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { rooms: rawRooms, loading, createRoom, updateRoom, deleteRoom } = useRooms();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [formData, setFormData] = useState({
@@ -26,25 +16,10 @@ export const RoomManager: React.FC = () => {
     notes: '',
   });
 
-  // Fetch rooms from Firebase
-  const fetchRooms = async () => {
-    try {
-      const snapshot = await getDocs(collection(db, 'rooms'));
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Room[];
-      setRooms(data.sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (err) {
-      console.error('Error fetching rooms:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchRooms();
-  }, []);
+  // Sort rooms by name
+  const rooms = useMemo(() => {
+    return [...rawRooms].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [rawRooms]);
 
   // Open create modal
   const handleOpenCreate = () => {
@@ -80,9 +55,8 @@ export const RoomManager: React.FC = () => {
     }
 
     try {
-      if (editingRoom) {
-        // Update
-        await updateDoc(doc(db, 'rooms', editingRoom.id), {
+      if (editingRoom?.id) {
+        await updateRoom(editingRoom.id, {
           name: formData.name,
           type: formData.type,
           branch: formData.branch,
@@ -92,8 +66,7 @@ export const RoomManager: React.FC = () => {
         });
         alert('Đã cập nhật phòng học!');
       } else {
-        // Create
-        await addDoc(collection(db, 'rooms'), {
+        await createRoom({
           name: formData.name,
           type: formData.type,
           branch: formData.branch,
@@ -104,7 +77,6 @@ export const RoomManager: React.FC = () => {
         alert('Đã thêm phòng học mới!');
       }
       setIsModalOpen(false);
-      fetchRooms();
     } catch (err) {
       console.error('Error saving room:', err);
       alert('Có lỗi xảy ra!');
@@ -116,8 +88,7 @@ export const RoomManager: React.FC = () => {
     if (!confirm(`Bạn có chắc muốn xóa phòng "${name}"?`)) return;
     
     try {
-      await deleteDoc(doc(db, 'rooms', id));
-      setRooms(rooms.filter(r => r.id !== id));
+      await deleteRoom(id);
     } catch (err) {
       console.error('Error deleting room:', err);
     }

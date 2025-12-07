@@ -9,6 +9,7 @@ import { FeedbackRecord, FeedbackType, FeedbackStatus } from '../services/feedba
 interface UseFeedbackProps {
   type?: FeedbackType;
   status?: FeedbackStatus;
+  studentId?: string;
 }
 
 interface UseFeedbackReturn {
@@ -36,6 +37,7 @@ export const useFeedback = (props?: UseFeedbackProps): UseFeedbackReturn => {
       const data = await feedbackService.getFeedbacks({
         type: props?.type,
         status: props?.status,
+        studentId: props?.studentId,
       });
       setFeedbacks(data);
     } catch (err) {
@@ -47,7 +49,7 @@ export const useFeedback = (props?: UseFeedbackProps): UseFeedbackReturn => {
 
   useEffect(() => {
     fetchFeedbacks();
-  }, [props?.type, props?.status]);
+  }, [props?.type, props?.status, props?.studentId]);
 
   const callFeedbacks = feedbacks.filter(f => f.type === 'Call');
   const formFeedbacks = feedbacks.filter(f => f.type === 'Form');

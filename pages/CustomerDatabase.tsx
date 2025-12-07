@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Users, Plus, Search, Phone, Mail, Calendar, Tag, X, Trash2, UserCheck, Filter } from 'lucide-react';
+import { Users, Plus, Search, Phone, Mail, Calendar, Tag, X, Trash2, UserCheck, Filter, Edit2 } from 'lucide-react';
 import { useLeads } from '../src/hooks/useLeads';
 import { Lead, LeadStatus, LeadSource } from '../src/services/leadService';
 
@@ -22,12 +22,14 @@ const SOURCE_OPTIONS: LeadSource[] = ['Facebook', 'Zalo', 'Website', 'Giới thi
 const STATUS_OPTIONS: LeadStatus[] = ['Mới', 'Đang liên hệ', 'Quan tâm', 'Hẹn test', 'Đã test', 'Đăng ký', 'Từ chối'];
 
 export const CustomerDatabase: React.FC = () => {
-  const { leads, stats, loading, error, createLead, updateStatus, deleteLead } = useLeads();
+  const { leads, stats, loading, error, createLead, updateLead, updateStatus, deleteLead } = useLeads();
   
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<LeadStatus | ''>('');
   const [sourceFilter, setSourceFilter] = useState<LeadSource | ''>('');
   const [showModal, setShowModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
 
   const handleDelete = async (id: string) => {
@@ -159,7 +161,7 @@ export const CustomerDatabase: React.FC = () => {
                 <th className="px-4 py-3">Người phụ trách</th>
                 <th className="px-4 py-3 text-center">Trạng thái</th>
                 <th className="px-4 py-3">Ghi chú</th>
-                <th className="px-4 py-3 text-center w-20">Xóa</th>
+                <th className="px-4 py-3 text-center w-24">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -228,12 +230,25 @@ export const CustomerDatabase: React.FC = () => {
                     {lead.note || '-'}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => lead.id && handleDelete(lead.id)}
-                      className="text-gray-400 hover:text-red-600"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={() => {
+                          setEditingLead(lead);
+                          setShowEditModal(true);
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                        title="Sửa"
+                      >
+                        <Edit2 size={15} />
+                      </button>
+                      <button
+                        onClick={() => lead.id && handleDelete(lead.id)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Xóa"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -249,6 +264,24 @@ export const CustomerDatabase: React.FC = () => {
           onSubmit={async (data) => {
             await createLead(data);
             setShowModal(false);
+          }}
+        />
+      )}
+
+      {/* Edit Modal */}
+      {showEditModal && editingLead && (
+        <LeadModal
+          lead={editingLead}
+          onClose={() => {
+            setShowEditModal(false);
+            setEditingLead(null);
+          }}
+          onSubmit={async (data) => {
+            if (editingLead.id) {
+              await updateLead(editingLead.id, data);
+            }
+            setShowEditModal(false);
+            setEditingLead(null);
           }}
         />
       )}

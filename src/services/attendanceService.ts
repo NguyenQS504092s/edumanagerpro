@@ -18,7 +18,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { AttendanceRecord, StudentAttendance, AttendanceStatus } from '../../types';
+import { AttendanceRecord, StudentAttendance, AttendanceStatus, StudentStatus } from '../../types';
 
 const ATTENDANCE_COLLECTION = 'attendance';
 const STUDENT_ATTENDANCE_COLLECTION = 'studentAttendance';
@@ -135,7 +135,8 @@ export const checkExistingAttendance = async (
  */
 export const saveStudentAttendance = async (
   attendanceId: string,
-  students: Omit<StudentAttendance, 'id' | 'attendanceId'>[]
+  students: Omit<StudentAttendance, 'id' | 'attendanceId'>[],
+  classId?: string
 ): Promise<void> => {
   try {
     const batch = writeBatch(db);
@@ -154,6 +155,7 @@ export const saveStudentAttendance = async (
       batch.set(docRef, {
         ...student,
         attendanceId,
+        classId: classId || null,
         createdAt: new Date().toISOString(),
       });
     });
@@ -263,6 +265,71 @@ export const createTutoringFromAbsent = async (data: {
 };
 
 /**
+ * Count student's attended sessions for a specific class
+ */
+export const countStudentAttendedSessions = async (
+  studentId: string,
+  classId: string
+): Promise<number> => {
+  try {
+    const q = query(
+      collection(db, STUDENT_ATTENDANCE_COLLECTION),
+      where('studentId', '==', studentId),
+      where('classId', '==', classId),
+      where('status', '==', AttendanceStatus.PRESENT)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.size;
+  } catch (error) {
+    console.error('Error counting attended sessions:', error);
+    return 0;
+  }
+};
+
+/**
+ * Check and update student debt status
+ * If attendedSessions > registeredSessions => status = "Nợ phí"
+ */
+export const checkAndUpdateStudentDebtStatus = async (
+  studentId: string,
+  classId: string
+): Promise<void> => {
+  try {
+    // Get student data
+    const studentRef = doc(db, 'students', studentId);
+    const studentSnap = await getDoc(studentRef);
+    
+    if (!studentSnap.exists()) return;
+    
+    const studentData = studentSnap.data();
+    const registeredSessions = studentData.registeredSessions || 0;
+    const currentStatus = studentData.status;
+    
+    // Skip if student is not "Đang học" or already "Nợ phí"
+    if (currentStatus !== StudentStatus.ACTIVE) return;
+    
+    // Count attended sessions
+    const attendedSessions = await countStudentAttendedSessions(studentId, classId);
+    
+    // Update attendedSessions field
+    await updateDoc(studentRef, { attendedSessions });
+    
+    // Check if student has exceeded registered sessions
+    if (registeredSessions > 0 && attendedSessions > registeredSessions) {
+      // Update status to "Nợ phí"
+      await updateDoc(studentRef, { 
+        status: StudentStatus.DEBT,
+        debtStartDate: new Date().toISOString(),
+        debtSessions: attendedSessions - registeredSessions
+      });
+      console.log(`[checkDebtStatus] Student ${studentId} status changed to "Nợ phí" (attended: ${attendedSessions}, registered: ${registeredSessions})`);
+    }
+  } catch (error) {
+    console.error('Error checking student debt status:', error);
+  }
+};
+
+/**
  * Full attendance save with auto tutoring creation
  */
 export const saveFullAttendance = async (
@@ -310,8 +377,8 @@ export const saveFullAttendance = async (
       });
     }
     
-    // Save student attendance
-    await saveStudentAttendance(attendanceId, students);
+    // Save student attendance with classId for debt tracking
+    await saveStudentAttendance(attendanceId, students, attendanceData.classId);
     
     // Auto create tutoring for absent students
     const absentStudents = students.filter(s => s.status === AttendanceStatus.ABSENT);
@@ -324,6 +391,12 @@ export const saveFullAttendance = async (
         absentDate: attendanceData.date,
         type: 'Nghỉ học',
       });
+    }
+    
+    // Check and update debt status for present students
+    const presentStudents = students.filter(s => s.status === AttendanceStatus.PRESENT);
+    for (const student of presentStudents) {
+      await checkAndUpdateStudentDebtStatus(student.studentId, attendanceData.classId);
     }
     
     return attendanceId;

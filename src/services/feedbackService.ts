@@ -30,6 +30,7 @@ export interface FeedbackRecord {
   classId?: string;
   className: string;
   teacher?: string;
+  teacherScore?: number;
   curriculumScore?: number;
   careScore?: number;
   facilitiesScore?: number;
@@ -46,10 +47,13 @@ export interface FeedbackRecord {
 
 export const createFeedback = async (data: Omit<FeedbackRecord, 'id'>): Promise<string> => {
   try {
-    // Calculate average score for Form type
+    // Calculate average score for Form type (4 criteria: teacher, curriculum, care, facilities)
     let feedbackData = { ...data };
-    if (data.type === 'Form' && data.curriculumScore && data.careScore && data.facilitiesScore) {
-      feedbackData.averageScore = (data.curriculumScore + data.careScore + data.facilitiesScore) / 3;
+    if (data.type === 'Form') {
+      const scores = [data.teacherScore, data.curriculumScore, data.careScore, data.facilitiesScore].filter(s => s !== undefined && s !== null) as number[];
+      if (scores.length > 0) {
+        feedbackData.averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+      }
     }
     
     const docData = {
@@ -101,14 +105,12 @@ export const getFeedbacks = async (filters?: {
 
 export const updateFeedback = async (id: string, data: Partial<FeedbackRecord>): Promise<void> => {
   try {
-    // Recalculate average if scores changed
+    // Recalculate average if scores changed (4 criteria)
     let updateData = { ...data };
-    if (data.curriculumScore !== undefined || data.careScore !== undefined || data.facilitiesScore !== undefined) {
-      const curr = data.curriculumScore || 0;
-      const care = data.careScore || 0;
-      const fac = data.facilitiesScore || 0;
-      if (curr && care && fac) {
-        updateData.averageScore = (curr + care + fac) / 3;
+    if (data.teacherScore !== undefined || data.curriculumScore !== undefined || data.careScore !== undefined || data.facilitiesScore !== undefined) {
+      const scores = [data.teacherScore, data.curriculumScore, data.careScore, data.facilitiesScore].filter(s => s !== undefined && s !== null && s > 0) as number[];
+      if (scores.length > 0) {
+        updateData.averageScore = scores.reduce((a, b) => a + b, 0) / scores.length;
       }
     }
     

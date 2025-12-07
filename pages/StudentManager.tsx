@@ -1,10 +1,15 @@
 
 import React, { useState, useMemo } from 'react';
-import { Search, Filter, Gift, History, User, Phone, MoreHorizontal, Calendar, ArrowRight, Cake, Plus, Edit, Trash2, UserPlus } from 'lucide-react';
+import { Search, Filter, Gift, History, User, Phone, MoreHorizontal, Calendar, ArrowRight, Cake, Plus, Edit, Trash2, UserPlus, Shuffle, AlertTriangle, PlusCircle, MinusCircle, RefreshCw, Pause, UserMinus, ChevronDown, X } from 'lucide-react';
 import { Student, StudentStatus, Parent } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { useStudents } from '../src/hooks/useStudents';
 import { useParents } from '../src/hooks/useParents';
+import { useClasses } from '../src/hooks/useClasses';
+import { usePermissions } from '../src/hooks/usePermissions';
+import { useAuth } from '../src/hooks/useAuth';
+import { ClassModel } from '../types';
+import { createEnrollment } from '../src/services/enrollmentService';
 
 interface StudentManagerProps {
   initialStatusFilter?: StudentStatus;
@@ -22,16 +27,47 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [assigningClasses, setAssigningClasses] = useState(false);
   const navigate = useNavigate();
 
+  // Action modals state
+  const [actionStudent, setActionStudent] = useState<Student | null>(null);
+  const [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
+  const [showTransferSessionModal, setShowTransferSessionModal] = useState(false);
+  const [showTransferClassModal, setShowTransferClassModal] = useState(false);
+  const [showReserveModal, setShowReserveModal] = useState(false);
+  const [showRemoveClassModal, setShowRemoveClassModal] = useState(false);
+  const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
+
+  // Permissions
+  const { canCreate, canEdit, canDelete, shouldHideParentPhone, shouldShowOnlyOwnClasses, staffId } = usePermissions();
+  const { staffData } = useAuth();
+  const canCreateStudent = canCreate('students');
+  const canEditStudent = canEdit('students');
+  const canDeleteStudent = canDelete('students');
+  const hideParentPhone = shouldHideParentPhone('students');
+  const onlyOwnClasses = shouldShowOnlyOwnClasses('students');
+
   // Fetch students from Firebase
-  const { students, loading, error, createStudent, updateStudent, deleteStudent } = useStudents({
+  const { students: allStudents, loading, error, createStudent, updateStudent, deleteStudent } = useStudents({
     status: filterStatus === 'ALL' ? undefined : filterStatus,
     searchTerm: searchTerm || undefined
   });
   
   // Fetch parents for dropdown
   const { parents } = useParents();
+  
+  // Fetch classes for dropdown
+  const { classes } = useClasses({});
+
+  // Filter students based on teacher's classes (if onlyOwnClasses)
+  const students = useMemo(() => {
+    if (!onlyOwnClasses || !staffData) return allStudents;
+    // Teachers only see students from their classes
+    // This requires knowledge of which classes the teacher teaches
+    // For now, we'll filter on class reference if available
+    return allStudents; // TODO: Implement proper class-based filtering
+  }, [allStudents, onlyOwnClasses, staffData]);
 
   const filteredStudents = useMemo(() => {
     return students.filter(student => {
@@ -44,6 +80,52 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
       return matchesBirthday;
     });
   }, [students, birthdayMonth]);
+
+  // Find students without class assigned
+  const studentsWithoutClass = useMemo(() => {
+    return students.filter(s => !s.classId && !s.class);
+  }, [students]);
+
+  // Get active classes for assignment
+  const activeClasses = useMemo(() => {
+    return classes.filter(c => 
+      c.status === 'Đang học' || c.status === 'Chờ mở' || c.status === 'Active' || c.status === 'Pending'
+    );
+  }, [classes]);
+
+  // Assign classes randomly to students without class
+  const handleAssignClassesRandomly = async () => {
+    if (studentsWithoutClass.length === 0) {
+      alert('Tất cả học viên đã có lớp!');
+      return;
+    }
+    if (activeClasses.length === 0) {
+      alert('Không có lớp nào đang hoạt động!');
+      return;
+    }
+    if (!window.confirm(`Gán lớp ngẫu nhiên cho ${studentsWithoutClass.length} học viên chưa có lớp?`)) {
+      return;
+    }
+
+    setAssigningClasses(true);
+    let assigned = 0;
+    
+    for (const student of studentsWithoutClass) {
+      const randomClass = activeClasses[Math.floor(Math.random() * activeClasses.length)];
+      try {
+        await updateStudent(student.id, {
+          classId: randomClass.id,
+          class: randomClass.name
+        });
+        assigned++;
+      } catch (err) {
+        console.error('Error assigning class:', err);
+      }
+    }
+
+    setAssigningClasses(false);
+    alert(`Đã gán lớp cho ${assigned}/${studentsWithoutClass.length} học viên!`);
+  };
 
   // Normalize English status to Vietnamese
   const normalizeStatus = (status: string): string => {
@@ -60,6 +142,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
       'debt': 'Nợ phí',
       'Dropped': 'Nghỉ học',
       'dropped': 'Nghỉ học',
+      'Đã nghỉ': 'Nghỉ học', // Legacy status mapping
     };
     return statusMap[status] || status;
   };
@@ -156,14 +239,43 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
             ))}
           </select>
 
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-          >
-            <Plus size={16} /> Tạo mới
-          </button>
+          {canCreateStudent && (
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+            >
+              <Plus size={16} /> Tạo mới
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Data Integrity Warning */}
+      {studentsWithoutClass.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="text-amber-500" size={20} />
+              <div>
+                <span className="font-semibold text-amber-800">
+                  {studentsWithoutClass.length} học viên chưa được gán lớp
+                </span>
+                <p className="text-sm text-amber-600">
+                  Tổng: {students.length} | Có lớp: {students.length - studentsWithoutClass.length} | Chưa có lớp: {studentsWithoutClass.length}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleAssignClassesRandomly}
+              disabled={assigningClasses}
+              className="px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              <Shuffle size={16} />
+              {assigningClasses ? 'Đang gán...' : 'Gán lớp ngẫu nhiên'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className={`grid grid-cols-1 ${selectedStudent ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-6`}>
         {/* Student List */}
@@ -176,6 +288,11 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                     <th className="px-4 py-3 bg-gray-50">Học viên</th>
                     <th className="px-4 py-3 bg-gray-50">Phụ huynh</th>
                     <th className="px-4 py-3 bg-gray-50">Lớp học</th>
+                    <th className="px-4 py-3 bg-gray-50 text-center">Gói học</th>
+                    <th className="px-4 py-3 bg-gray-50 text-center">Đã học</th>
+                    <th className="px-4 py-3 bg-gray-50 text-center">Còn lại</th>
+                    <th className="px-4 py-3 bg-gray-50 text-center">Ngày BĐ</th>
+                    <th className="px-4 py-3 bg-gray-50 text-center">Ngày KT</th>
                     <th className="px-4 py-3 bg-gray-50">Trạng thái</th>
                     <th className="px-4 py-3 bg-gray-50"></th>
                 </tr>
@@ -183,7 +300,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                 <tbody className="divide-y divide-gray-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-10 text-gray-500">
+                    <td colSpan={11} className="text-center py-10 text-gray-500">
                       <div className="flex items-center justify-center gap-2">
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
                         Đang tải dữ liệu...
@@ -192,7 +309,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                   </tr>
                 ) : error ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-10 text-red-500">
+                    <td colSpan={11} className="text-center py-10 text-red-500">
                       Lỗi: {error}
                     </td>
                   </tr>
@@ -211,12 +328,31 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                     </td>
                     <td className="px-4 py-3 text-xs">
                         <p className="font-bold text-green-700">{student.parentName || '---'}</p>
-                        <p className="text-gray-500 flex items-center gap-1">
-                          <Phone size={10} /> {student.parentPhone || student.phone || '---'}
-                        </p>
+                        {!hideParentPhone && (
+                          <p className="text-gray-500 flex items-center gap-1">
+                            <Phone size={10} /> {student.parentPhone || student.phone || '---'}
+                          </p>
+                        )}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-600">
                        <p>{student.class || '---'}</p>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                       <span className="font-semibold text-blue-600">{student.registeredSessions || 0}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                       <span className="font-semibold text-green-600">{student.attendedSessions || 0}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                       <span className={`font-bold ${((student.registeredSessions || 0) - (student.attendedSessions || 0)) <= 5 ? 'text-red-600' : 'text-gray-700'}`}>
+                         {(student.registeredSessions || 0) - (student.attendedSessions || 0)}
+                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-xs text-gray-600">
+                       {student.startDate ? new Date(student.startDate).toLocaleDateString('vi-VN') : '---'}
+                    </td>
+                    <td className="px-4 py-3 text-center text-xs text-gray-600">
+                       {student.expectedEndDate ? new Date(student.expectedEndDate).toLocaleDateString('vi-VN') : '---'}
                     </td>
                     <td className="px-4 py-3">
                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold text-white ${
@@ -230,28 +366,32 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                         </span>
                     </td>
                     <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 justify-end">
-                          <button 
-                             onClick={(e) => { 
-                               e.stopPropagation(); 
-                               setEditingStudent(student);
-                               setShowEditModal(true);
-                             }}
-                             className="text-gray-400 hover:text-indigo-600 p-1"
-                             title="Chỉnh sửa"
-                          >
-                             <Edit size={16} />
-                          </button>
-                          <button 
-                             onClick={(e) => { 
-                               e.stopPropagation(); 
-                               handleDeleteStudent(student.id);
-                             }}
-                             className="text-gray-400 hover:text-red-600 p-1"
-                             title="Xóa"
-                          >
-                             <Trash2 size={16} />
-                          </button>
+                        <div className="flex items-center gap-1 justify-end relative">
+                          {canEditStudent && (
+                            <button 
+                               onClick={(e) => { 
+                                 e.stopPropagation(); 
+                                 setEditingStudent(student);
+                                 setShowEditModal(true);
+                               }}
+                               className="text-gray-400 hover:text-indigo-600 p-1"
+                               title="Chỉnh sửa"
+                            >
+                               <Edit size={16} />
+                            </button>
+                          )}
+                          {canDeleteStudent && (
+                            <button 
+                               onClick={(e) => { 
+                                 e.stopPropagation(); 
+                                 handleDeleteStudent(student.id);
+                               }}
+                               className="text-gray-400 hover:text-red-600 p-1"
+                               title="Xóa"
+                            >
+                               <Trash2 size={16} />
+                            </button>
+                          )}
                           <button 
                              onClick={(e) => { e.stopPropagation(); navigate(`/customers/student-detail/${student.id}`); }}
                              className="text-gray-400 hover:text-indigo-600 p-1"
@@ -259,12 +399,91 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                           >
                              <ArrowRight size={18} />
                           </button>
+                          {/* Action Dropdown */}
+                          {canEditStudent && (
+                            <div className="relative">
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation(); 
+                                  setActionDropdownId(actionDropdownId === student.id ? null : student.id);
+                                }}
+                                className="text-gray-400 hover:text-indigo-600 p-1"
+                                title="Thao tác"
+                              >
+                                <ChevronDown size={16} />
+                              </button>
+                              {actionDropdownId === student.id && (
+                                <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActionStudent(student);
+                                      setShowEnrollmentModal(true);
+                                      setActionDropdownId(null);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <PlusCircle size={14} className="text-blue-500" />
+                                    Thêm/Bớt buổi
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActionStudent(student);
+                                      setShowTransferSessionModal(true);
+                                      setActionDropdownId(null);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <Gift size={14} className="text-green-500" />
+                                    Tặng buổi cho HV khác
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActionStudent(student);
+                                      setShowTransferClassModal(true);
+                                      setActionDropdownId(null);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <RefreshCw size={14} className="text-indigo-500" />
+                                    Chuyển lớp
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActionStudent(student);
+                                      setShowReserveModal(true);
+                                      setActionDropdownId(null);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <Pause size={14} className="text-orange-500" />
+                                    Bảo lưu
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActionStudent(student);
+                                      setShowRemoveClassModal(true);
+                                      setActionDropdownId(null);
+                                    }}
+                                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 text-red-600"
+                                  >
+                                    <UserMinus size={14} />
+                                    Xóa khỏi lớp
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                     </td>
                     </tr>
                 )) : (
                     <tr>
-                        <td colSpan={6} className="text-center py-10 text-gray-500">
+                        <td colSpan={11} className="text-center py-10 text-gray-500">
                             Không tìm thấy học viên nào.
                         </td>
                     </tr>
@@ -296,7 +515,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                     </div>
                     <div className="p-2 bg-white rounded border border-gray-100">
                         <p className="text-xs text-gray-400">Trạng thái</p>
-                        <p className="font-medium text-blue-600">{selectedStudent.status}</p>
+                        <p className="font-medium text-blue-600">{normalizeStatus(selectedStudent.status)}</p>
                     </div>
                  </div>
               </div>
@@ -368,6 +587,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
       {showCreateModal && (
         <CreateStudentModal
           parents={parents}
+          classes={classes}
           onClose={() => setShowCreateModal(false)}
           onSubmit={handleCreateStudent}
         />
@@ -384,6 +604,184 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
           onSubmit={(data) => handleUpdateStudent(editingStudent.id, data)}
         />
       )}
+
+      {/* Enrollment Modal - Thêm/Bớt buổi */}
+      {showEnrollmentModal && actionStudent && (
+        <EnrollmentModal
+          student={actionStudent}
+          staffData={staffData}
+          onClose={() => {
+            setShowEnrollmentModal(false);
+            setActionStudent(null);
+          }}
+          onSubmit={async (data) => {
+            await updateStudent(actionStudent.id, {
+              registeredSessions: data.newSessions
+            });
+            await createEnrollment({
+              studentId: actionStudent.id,
+              studentName: actionStudent.fullName,
+              classId: actionStudent.classId || '',
+              className: actionStudent.class || '',
+              sessions: data.change,
+              type: 'Ghi danh thủ công',
+              reason: data.note,
+              createdBy: staffData?.name || 'Admin',
+              createdAt: new Date().toISOString()
+            });
+            setShowEnrollmentModal(false);
+            setActionStudent(null);
+          }}
+        />
+      )}
+
+      {/* Transfer Session Modal - Tặng buổi cho HV khác */}
+      {showTransferSessionModal && actionStudent && (
+        <TransferSessionModal
+          student={actionStudent}
+          allStudents={allStudents}
+          staffData={staffData}
+          onClose={() => {
+            setShowTransferSessionModal(false);
+            setActionStudent(null);
+          }}
+          onSubmit={async (data) => {
+            // Trừ buổi người cho
+            await updateStudent(actionStudent.id, {
+              registeredSessions: (actionStudent.registeredSessions || 0) - data.sessions
+            });
+            // Cộng buổi người nhận
+            await updateStudent(data.targetStudentId, {
+              registeredSessions: (data.targetSessions || 0) + data.sessions
+            });
+            // Log enrollment cho người cho (trừ)
+            await createEnrollment({
+              studentId: actionStudent.id,
+              studentName: actionStudent.fullName,
+              classId: actionStudent.classId || '',
+              className: actionStudent.class || '',
+              sessions: -data.sessions,
+              type: 'Tặng buổi',
+              reason: `Tặng ${data.sessions} buổi cho ${data.targetStudentName}. ${data.note}`,
+              createdBy: staffData?.name || 'Admin',
+              createdAt: new Date().toISOString()
+            });
+            // Log enrollment cho người nhận (cộng)
+            await createEnrollment({
+              studentId: data.targetStudentId,
+              studentName: data.targetStudentName,
+              classId: data.targetClassId || '',
+              className: data.targetClassName || '',
+              sessions: data.sessions,
+              type: 'Nhận tặng buổi',
+              reason: `Nhận ${data.sessions} buổi từ ${actionStudent.fullName}. ${data.note}`,
+              createdBy: staffData?.name || 'Admin',
+              createdAt: new Date().toISOString()
+            });
+            setShowTransferSessionModal(false);
+            setActionStudent(null);
+          }}
+        />
+      )}
+
+      {/* Transfer Class Modal - Chuyển lớp */}
+      {showTransferClassModal && actionStudent && (
+        <TransferClassModal
+          student={actionStudent}
+          classes={activeClasses}
+          staffData={staffData}
+          onClose={() => {
+            setShowTransferClassModal(false);
+            setActionStudent(null);
+          }}
+          onSubmit={async (data) => {
+            const oldClass = actionStudent.class || '';
+            await updateStudent(actionStudent.id, {
+              classId: data.newClassId,
+              class: data.newClassName,
+              registeredSessions: data.sessions
+            });
+            // Log enrollment
+            await createEnrollment({
+              studentId: actionStudent.id,
+              studentName: actionStudent.fullName,
+              classId: data.newClassId,
+              className: data.newClassName,
+              sessions: data.sessions,
+              type: 'Chuyển lớp',
+              reason: `Chuyển từ ${oldClass} sang ${data.newClassName}. ${data.note}`,
+              createdBy: staffData?.name || 'Admin',
+              createdAt: new Date().toISOString()
+            });
+            setShowTransferClassModal(false);
+            setActionStudent(null);
+          }}
+        />
+      )}
+
+      {/* Reserve Modal - Bảo lưu */}
+      {showReserveModal && actionStudent && (
+        <ReserveModal
+          student={actionStudent}
+          staffData={staffData}
+          onClose={() => {
+            setShowReserveModal(false);
+            setActionStudent(null);
+          }}
+          onSubmit={async (data) => {
+            await updateStudent(actionStudent.id, {
+              status: StudentStatus.RESERVED,
+              reserveDate: data.reserveDate,
+              reserveNote: data.note,
+              reserveSessions: (actionStudent.registeredSessions || 0) - (actionStudent.attendedSessions || 0)
+            });
+            setShowReserveModal(false);
+            setActionStudent(null);
+          }}
+        />
+      )}
+
+      {/* Remove From Class Modal - Xóa khỏi lớp */}
+      {showRemoveClassModal && actionStudent && (
+        <RemoveClassModal
+          student={actionStudent}
+          staffData={staffData}
+          onClose={() => {
+            setShowRemoveClassModal(false);
+            setActionStudent(null);
+          }}
+          onSubmit={async (data) => {
+            const oldClass = actionStudent.class || '';
+            await updateStudent(actionStudent.id, {
+              classId: '',
+              class: '',
+              status: data.newStatus
+            });
+            // Log
+            await createEnrollment({
+              studentId: actionStudent.id,
+              studentName: actionStudent.fullName,
+              classId: '',
+              className: '',
+              sessions: 0,
+              type: 'Xóa khỏi lớp',
+              reason: `Xóa khỏi lớp ${oldClass}. ${data.note}`,
+              createdBy: staffData?.name || 'Admin',
+              createdAt: new Date().toISOString()
+            });
+            setShowRemoveClassModal(false);
+            setActionStudent(null);
+          }}
+        />
+      )}
+
+      {/* Click outside to close dropdown */}
+      {actionDropdownId && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setActionDropdownId(null)}
+        />
+      )}
     </div>
   );
 };
@@ -393,11 +791,12 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 // ============================================
 interface CreateStudentModalProps {
   parents: Array<Parent & { children: Student[] }>;
+  classes: ClassModel[];
   onClose: () => void;
   onSubmit: (data: Partial<Student> & { newParentName?: string; newParentPhone?: string }) => void;
 }
 
-const CreateStudentModal: React.FC<CreateStudentModalProps> = ({ parents, onClose, onSubmit }) => {
+const CreateStudentModal: React.FC<CreateStudentModalProps> = ({ parents, classes, onClose, onSubmit }) => {
   const [parentMode, setParentMode] = useState<'select' | 'new'>('select');
   const [formData, setFormData] = useState({
     fullName: '',
@@ -408,7 +807,8 @@ const CreateStudentModal: React.FC<CreateStudentModalProps> = ({ parents, onClos
     newParentName: '',
     newParentPhone: '',
     status: StudentStatus.ACTIVE,
-    class: ''
+    class: '',
+    registeredSessions: 0
   });
 
   const selectedParent = parents.find(p => p.id === formData.parentId);
@@ -423,6 +823,8 @@ const CreateStudentModal: React.FC<CreateStudentModalProps> = ({ parents, onClos
       phone: formData.phone,
       status: formData.status,
       class: formData.class,
+      registeredSessions: formData.registeredSessions || 0,
+      attendedSessions: 0,
     };
 
     if (parentMode === 'select' && formData.parentId) {
@@ -617,17 +1019,45 @@ const CreateStudentModal: React.FC<CreateStudentModalProps> = ({ parents, onClos
               )}
             </div>
 
-            <div className="col-span-2">
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Lớp học hiện tại
               </label>
-              <input
-                type="text"
+              <select
                 value={formData.class}
                 onChange={(e) => setFormData({ ...formData, class: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="Kindy 1A"
+              >
+                <option value="">-- Chọn lớp --</option>
+                {classes
+                  .filter(c => c.status === 'Đang học' || c.status === 'Chờ mở' || c.status === 'Active' || c.status === 'Pending')
+                  .map(cls => (
+                    <option key={cls.id} value={cls.name}>
+                      {cls.name} {cls.teacher ? `(${cls.teacher})` : ''}
+                    </option>
+                  ))
+                }
+              </select>
+              {classes.length === 0 && (
+                <p className="text-xs text-yellow-600 mt-1">Chưa có lớp học nào trong hệ thống</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Số buổi đăng ký
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={formData.registeredSessions}
+                onChange={(e) => setFormData({ ...formData, registeredSessions: parseInt(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                placeholder="VD: 24"
               />
+              <p className="text-xs text-gray-500 mt-1">
+                Khi học vượt quá số buổi này, trạng thái sẽ tự động chuyển sang "Nợ phí"
+              </p>
             </div>
           </div>
 
@@ -670,7 +1100,9 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
     parentName: student.parentName || '',
     parentPhone: student.parentPhone || '',
     status: student.status || StudentStatus.ACTIVE,
-    class: student.class || ''
+    class: student.class || '',
+    registeredSessions: student.registeredSessions || 0,
+    attendedSessions: student.attendedSessions || 0
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -787,7 +1219,7 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
               />
             </div>
 
-            <div className="col-span-2">
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Lớp học hiện tại
               </label>
@@ -797,6 +1229,27 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
                 onChange={(e) => setFormData({ ...formData, class: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Số buổi đăng ký
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={formData.registeredSessions}
+                onChange={(e) => setFormData({ ...formData, registeredSessions: parseInt(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              {formData.attendedSessions > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Đã học: {formData.attendedSessions} buổi
+                  {formData.registeredSessions > 0 && formData.attendedSessions > formData.registeredSessions && (
+                    <span className="text-red-600 font-medium"> (Nợ {formData.attendedSessions - formData.registeredSessions} buổi)</span>
+                  )}
+                </p>
+              )}
             </div>
           </div>
 
@@ -813,6 +1266,530 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
             >
               Lưu thay đổi
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// ENROLLMENT MODAL - Thêm/Bớt buổi ghi danh
+// ============================================
+interface EnrollmentModalProps {
+  student: Student;
+  staffData: any;
+  onClose: () => void;
+  onSubmit: (data: { newSessions: number; change: number; note: string }) => void;
+}
+
+const EnrollmentModal: React.FC<EnrollmentModalProps> = ({ student, staffData, onClose, onSubmit }) => {
+  const [mode, setMode] = useState<'add' | 'subtract'>('add');
+  const [sessions, setSessions] = useState(0);
+  const [note, setNote] = useState('');
+
+  const currentSessions = student.registeredSessions || 0;
+  const newSessions = mode === 'add' ? currentSessions + sessions : currentSessions - sessions;
+  const change = mode === 'add' ? sessions : -sessions;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (sessions <= 0) {
+      alert('Vui lòng nhập số buổi hợp lệ');
+      return;
+    }
+    if (!note.trim()) {
+      alert('Vui lòng nhập ghi chú/lý do');
+      return;
+    }
+    onSubmit({ newSessions, change, note });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900">Thêm/Bớt buổi ghi danh</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <p className="font-medium text-gray-800">{student.fullName}</p>
+          <p className="text-sm text-gray-600">Lớp: {student.class || '---'}</p>
+          <p className="text-sm text-gray-600">Số buổi hiện tại: <span className="font-bold text-blue-600">{currentSessions}</span></p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setMode('add')}
+              className={`flex-1 py-2 rounded-lg font-medium transition-colors ${
+                mode === 'add' ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <PlusCircle size={16} className="inline mr-1" /> Thêm buổi
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('subtract')}
+              className={`flex-1 py-2 rounded-lg font-medium transition-colors ${
+                mode === 'subtract' ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <MinusCircle size={16} className="inline mr-1" /> Bớt buổi
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Số buổi</label>
+            <input
+              type="number"
+              min={1}
+              max={mode === 'subtract' ? currentSessions : 999}
+              value={sessions}
+              onChange={(e) => setSessions(parseInt(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="p-3 bg-blue-50 rounded-lg">
+            <p className="text-sm text-blue-800">
+              Sau khi {mode === 'add' ? 'thêm' : 'bớt'}: <span className="font-bold">{newSessions} buổi</span>
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú/Lý do <span className="text-red-500">*</span></label>
+            <textarea
+              required
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="Nhập lý do..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              Hủy
+            </button>
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              Xác nhận
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// TRANSFER SESSION MODAL - Tặng buổi cho HV khác
+// ============================================
+interface TransferSessionModalProps {
+  student: Student;
+  allStudents: Student[];
+  staffData: any;
+  onClose: () => void;
+  onSubmit: (data: { 
+    targetStudentId: string; 
+    targetStudentName: string;
+    targetSessions: number;
+    targetClassId?: string;
+    targetClassName?: string;
+    sessions: number; 
+    note: string 
+  }) => void;
+}
+
+const TransferSessionModal: React.FC<TransferSessionModalProps> = ({ student, allStudents, staffData, onClose, onSubmit }) => {
+  const [targetStudentId, setTargetStudentId] = useState('');
+  const [sessions, setSessions] = useState(0);
+  const [note, setNote] = useState('');
+
+  const currentSessions = student.registeredSessions || 0;
+  const targetStudent = allStudents.find(s => s.id === targetStudentId);
+  const otherStudents = allStudents.filter(s => s.id !== student.id && s.status !== StudentStatus.DROPPED);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetStudentId) {
+      alert('Vui lòng chọn học viên nhận');
+      return;
+    }
+    if (sessions <= 0 || sessions > currentSessions) {
+      alert('Số buổi không hợp lệ');
+      return;
+    }
+    onSubmit({ 
+      targetStudentId, 
+      targetStudentName: targetStudent?.fullName || '',
+      targetSessions: targetStudent?.registeredSessions || 0,
+      targetClassId: targetStudent?.classId,
+      targetClassName: targetStudent?.class,
+      sessions, 
+      note 
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900">Tặng buổi cho học viên khác</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <p className="font-medium text-gray-800">{student.fullName}</p>
+          <p className="text-sm text-gray-600">Số buổi hiện có: <span className="font-bold text-blue-600">{currentSessions}</span></p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Học viên nhận <span className="text-red-500">*</span></label>
+            <select
+              required
+              value={targetStudentId}
+              onChange={(e) => setTargetStudentId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">-- Chọn học viên --</option>
+              {otherStudents.map(s => (
+                <option key={s.id} value={s.id}>{s.fullName} - {s.class || 'Chưa có lớp'}</option>
+              ))}
+            </select>
+          </div>
+
+          {targetStudent && (
+            <div className="p-3 bg-green-50 rounded-lg">
+              <p className="text-sm text-green-800">
+                <span className="font-medium">{targetStudent.fullName}</span> hiện có: <span className="font-bold">{targetStudent.registeredSessions || 0} buổi</span>
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Số buổi tặng</label>
+            <input
+              type="number"
+              min={1}
+              max={currentSessions}
+              value={sessions}
+              onChange={(e) => setSessions(parseInt(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="p-3 bg-blue-50 rounded-lg text-sm">
+            <p className="text-blue-800">
+              Sau khi tặng: <span className="font-bold">{student.fullName}</span> còn <span className="font-bold">{currentSessions - sessions} buổi</span>
+            </p>
+            {targetStudent && (
+              <p className="text-blue-800 mt-1">
+                <span className="font-bold">{targetStudent.fullName}</span> có <span className="font-bold">{(targetStudent.registeredSessions || 0) + sessions} buổi</span>
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="Nhập ghi chú..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              Hủy
+            </button>
+            <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+              Xác nhận tặng
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// TRANSFER CLASS MODAL - Chuyển lớp
+// ============================================
+interface TransferClassModalProps {
+  student: Student;
+  classes: ClassModel[];
+  staffData: any;
+  onClose: () => void;
+  onSubmit: (data: { newClassId: string; newClassName: string; sessions: number; note: string }) => void;
+}
+
+const TransferClassModal: React.FC<TransferClassModalProps> = ({ student, classes, staffData, onClose, onSubmit }) => {
+  const [newClassId, setNewClassId] = useState('');
+  const [sessions, setSessions] = useState(student.registeredSessions || 0);
+  const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
+  const [note, setNote] = useState('');
+
+  const newClass = classes.find(c => c.id === newClassId);
+  const otherClasses = classes.filter(c => c.id !== student.classId);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClassId) {
+      alert('Vui lòng chọn lớp mới');
+      return;
+    }
+    onSubmit({ 
+      newClassId, 
+      newClassName: newClass?.name || '', 
+      sessions,
+      note: `Ngày chuyển: ${transferDate}. ${note}`
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900">Chuyển lớp học viên</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+          <p className="font-medium text-gray-800">{student.fullName} - {student.class || 'Chưa có lớp'}</p>
+          <p className="text-sm text-gray-600">Số buổi: {student.registeredSessions || 0} (Đã học: {student.attendedSessions || 0})</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Ngày chuyển</label>
+              <input
+                type="date"
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Lớp chuyển tới <span className="text-red-500">*</span></label>
+              <select
+                required
+                value={newClassId}
+                onChange={(e) => setNewClassId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">-- Chọn lớp --</option>
+                {otherClasses.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.teacher || 'Chưa có GV'})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Số buổi chuyển</label>
+            <input
+              type="number"
+              min={0}
+              value={sessions}
+              onChange={(e) => setSessions(parseInt(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Số buổi còn lại sẽ được chuyển sang lớp mới</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="Nhập ghi chú..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              Hủy bỏ
+            </button>
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              Lưu
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// RESERVE MODAL - Bảo lưu
+// ============================================
+interface ReserveModalProps {
+  student: Student;
+  staffData: any;
+  onClose: () => void;
+  onSubmit: (data: { reserveDate: string; note: string }) => void;
+}
+
+const ReserveModal: React.FC<ReserveModalProps> = ({ student, staffData, onClose, onSubmit }) => {
+  const [reserveDate, setReserveDate] = useState(new Date().toISOString().split('T')[0]);
+  const [note, setNote] = useState('');
+
+  const remainingSessions = (student.registeredSessions || 0) - (student.attendedSessions || 0);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit({ reserveDate, note });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900">Bảo lưu học viên</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mb-4 p-3 bg-orange-50 rounded-lg border border-orange-200">
+          <p className="font-medium text-orange-800">{student.fullName}</p>
+          <p className="text-sm text-orange-700">Lớp: {student.class || '---'}</p>
+          <p className="text-sm text-orange-700">Số buổi còn lại: <span className="font-bold">{remainingSessions}</span></p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ngày bảo lưu</label>
+            <input
+              type="date"
+              value={reserveDate}
+              onChange={(e) => setReserveDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <p className="text-sm text-gray-700">
+              <strong>Chi tiết bảo lưu:</strong>
+            </p>
+            <ul className="text-sm text-gray-600 mt-1 space-y-1">
+              <li>- Số buổi đã đăng ký: {student.registeredSessions || 0}</li>
+              <li>- Số buổi đã học: {student.attendedSessions || 0}</li>
+              <li>- Số buổi bảo lưu: <span className="font-bold text-orange-600">{remainingSessions}</span></li>
+            </ul>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="Lý do bảo lưu..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              Hủy
+            </button>
+            <button type="submit" className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
+              Xác nhận bảo lưu
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// REMOVE FROM CLASS MODAL - Xóa khỏi lớp
+// ============================================
+interface RemoveClassModalProps {
+  student: Student;
+  staffData: any;
+  onClose: () => void;
+  onSubmit: (data: { newStatus: StudentStatus; note: string }) => void;
+}
+
+const RemoveClassModal: React.FC<RemoveClassModalProps> = ({ student, staffData, onClose, onSubmit }) => {
+  const [newStatus, setNewStatus] = useState<StudentStatus>(StudentStatus.DROPPED);
+  const [note, setNote] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!window.confirm(`Xác nhận xóa ${student.fullName} khỏi lớp ${student.class}?`)) {
+      return;
+    }
+    onSubmit({ newStatus, note });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-red-600">Xóa học viên khỏi lớp</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
+          <p className="font-medium text-red-800">{student.fullName}</p>
+          <p className="text-sm text-red-700">Lớp hiện tại: {student.class || '---'}</p>
+          <p className="text-sm text-red-700">Số buổi còn: {(student.registeredSessions || 0) - (student.attendedSessions || 0)}</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Trạng thái mới</label>
+            <select
+              value={newStatus}
+              onChange={(e) => setNewStatus(e.target.value as StudentStatus)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value={StudentStatus.DROPPED}>Nghỉ học</option>
+              <option value={StudentStatus.RESERVED}>Bảo lưu</option>
+              <option value={StudentStatus.TRIAL}>Học thử</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="Lý do xóa khỏi lớp..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              Hủy
+            </button>
+            <button type="submit" className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+              Xác nhận xóa
             </button>
           </div>
         </form>

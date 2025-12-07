@@ -1,6 +1,6 @@
 /**
  * Dashboard Page
- * Giao diện trang chủ theo thiết kế Brisky
+ * Modern Glass Morphism Design
  */
 
 import React, { useState, useEffect } from 'react';
@@ -16,7 +16,17 @@ import {
   X,
   Phone,
   Mail,
-  MapPin
+  MapPin,
+  Sparkles,
+  CalendarDays,
+  Wallet,
+  PieChart as PieChartIcon,
+  BarChart3,
+  Heart,
+  Cake,
+  Box,
+  ChevronRight,
+  Activity
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -37,18 +47,27 @@ import { formatCurrency } from '../src/utils/currencyUtils';
 import { getRevenueSummary, RevenueByCategory } from '../src/services/financialReportService';
 import { seedAllData, clearAllData } from '../scripts/seedAllData';
 import { useSalaryReport } from '../src/hooks/useSalaryReport';
+import { useProducts } from '../src/hooks/useProducts';
 
-// Colors matching the design
+// Modern color palette
 const COLORS = {
-  noPhi: '#3b82f6',      // Blue - Nợ phí
-  hocThu: '#f97316',     // Orange - Học thử
-  baoLuu: '#eab308',     // Yellow - Bảo lưu
+  noPhi: '#6366f1',      // Indigo - Nợ phí
+  hocThu: '#f59e0b',     // Amber - Học thử
+  baoLuu: '#8b5cf6',     // Violet - Bảo lưu
   nghiHoc: '#ef4444',    // Red - Nghỉ học
-  hvMoi: '#22c55e',      // Green - HV mới
-  hocPhi: '#8b5cf6',     // Purple
+  hvMoi: '#10b981',      // Emerald - HV mới
+  hocPhi: '#ec4899',     // Pink
 };
 
-const PIE_COLORS = ['#3b82f6', '#f97316', '#eab308', '#ef4444', '#22c55e'];
+const PIE_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
+
+// Gradient definitions for cards
+const GRADIENTS = {
+  primary: 'from-indigo-500 via-purple-500 to-pink-500',
+  secondary: 'from-emerald-400 to-cyan-500',
+  warm: 'from-orange-400 to-rose-500',
+  cool: 'from-blue-500 to-indigo-600',
+};
 
 interface StudentData {
   id: string;
@@ -111,6 +130,9 @@ export const Dashboard: React.FC = () => {
   
   // Fetch salary report data
   const { summaries: salaryReportData } = useSalaryReport(statsMonth, statsYear);
+  
+  // Fetch products data (realtime)
+  const { products: allProducts } = useProducts();
   
   // State cho bảng sinh nhật
   const [birthdayFilter, setBirthdayFilter] = useState<'month' | 'week' | 'today'>('month');
@@ -258,13 +280,8 @@ export const Dashboard: React.FC = () => {
         { month: 'Chênh lệch', expected: 0, actual: totalRevenue * 0.2 },
       ] : [];
       
-      // Fetch products for low stock - real data from Firebase
-      const productsSnap = await getDocs(collection(db, 'products'));
-      const products = productsSnap.docs.map(d => d.data());
-      const lowStockProducts = products
-        .filter((p: any) => p.stock < (p.minStock || 10))
-        .map((p: any) => ({ name: p.name, quantity: p.stock }))
-        .slice(0, 5);
+      // Products are now loaded via useProducts() hook with realtime updates
+      // No need to fetch here - see allProducts from useProducts()
       
       // Fetch staff for birthday and salary - real data from Firebase
       const staffSnap = await getDocs(collection(db, 'staff'));
@@ -440,7 +457,7 @@ export const Dashboard: React.FC = () => {
         salaryForecast,
         salaryPercent,
         businessHealth,
-        lowStockProducts,
+        lowStockProducts: [], // Now using useProducts() hook with realtime
         upcomingBirthdays,
         studentBirthdays,
         classStats,
@@ -521,560 +538,732 @@ export const Dashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center -m-6">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-gray-500">Đang tải dữ liệu...</p>
+          <div className="relative">
+            <div className="w-16 h-16 border-4 border-purple-500/30 rounded-full"></div>
+            <div className="w-16 h-16 border-4 border-transparent border-t-purple-500 rounded-full animate-spin absolute top-0 left-0"></div>
+          </div>
+          <p className="text-purple-200 mt-4 font-medium">Đang tải dữ liệu...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 bg-gray-100 min-h-screen -m-6 p-4">
-      {/* Header Stats - Redesigned */}
-      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 rounded-xl p-4 shadow-lg">
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          {/* Left: Branch selector with color indicator */}
-          <div className="flex items-center gap-3">
-            <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${selectedBranchData.color} ring-2 ring-white/50`}></div>
-              <MapPin className="text-white/80" size={18} />
-              <span className="text-white/90 text-sm font-medium">Cơ sở:</span>
-              <select
-                value={selectedBranch}
-                onChange={(e) => setSelectedBranch(e.target.value)}
-                className="bg-white text-gray-800 border-0 rounded-md px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer"
-              >
-                {branches.map(branch => (
-                  <option key={branch.id} value={branch.id}>● {branch.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 -m-6 p-6">
+      {/* Decorative background elements */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
+        <div className="absolute top-1/2 -left-40 w-80 h-80 bg-indigo-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse" style={{ animationDelay: '2s' }}></div>
+        <div className="absolute -bottom-40 right-1/3 w-80 h-80 bg-pink-400 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse" style={{ animationDelay: '4s' }}></div>
+      </div>
+
+      <div className="relative z-10 space-y-6">
+        {/* Hero Header */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 p-6 shadow-2xl">
+          {/* Animated gradient overlay */}
+          <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/5 to-white/0 animate-shimmer"></div>
           
-          {/* Right: Stats Cards */}
-          <div className="flex flex-wrap gap-3">
-            <div className="bg-white rounded-xl px-5 py-3 shadow-md flex items-center gap-3 min-w-[140px]">
-              <div className="bg-indigo-100 p-2 rounded-lg">
-                <Users className="text-indigo-600" size={20} />
+          {/* Content */}
+          <div className="relative flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            {/* Left: Welcome & Branch */}
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-white/10 backdrop-blur-sm rounded-2xl">
+                <Sparkles className="text-white" size={28} />
               </div>
               <div>
-                <div className="text-xs text-gray-500 font-medium">Học viên</div>
-                <div className="text-2xl font-bold text-gray-800">{stats.totalStudents}</div>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl px-5 py-3 shadow-md flex items-center gap-3 min-w-[140px]">
-              <div className="bg-purple-100 p-2 rounded-lg">
-                <BookOpen className="text-purple-600" size={20} />
-              </div>
-              <div>
-                <div className="text-xs text-gray-500 font-medium">Lớp học</div>
-                <div className="text-2xl font-bold text-gray-800">{stats.totalClasses}</div>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl px-5 py-3 shadow-md flex items-center gap-3 min-w-[140px]">
-              <div className="bg-emerald-100 p-2 rounded-lg">
-                <TrendingUp className="text-emerald-600" size={20} />
-              </div>
-              <div>
-                <div className="text-xs text-gray-500 font-medium">TB/Lớp</div>
-                <div className="text-2xl font-bold text-gray-800">{stats.avgPerClass}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-12 gap-4">
-        {/* Left Column */}
-        <div className="col-span-7 space-y-4">
-          {/* Student Stats Bar Chart */}
-          <div className="bg-white rounded-lg p-4 shadow-sm">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold text-gray-700 text-sm">Thống kê học viên</h3>
-              <span className="text-xs text-gray-500">{currentMonth}</span>
-            </div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.studentsByStatus} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]} onClick={handleBarClick} className="cursor-pointer">
-                    {stats.studentsByStatus.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-2 justify-center">
-              {stats.studentsByStatus.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-1 text-xs">
-                  <div className="w-3 h-3 rounded" style={{ backgroundColor: item.color }}></div>
-                  <span>{item.name}</span>
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-gray-400 text-center mt-2">
-              Click vào từng cột để hiển thị danh sách chi tiết học sinh
-            </p>
-          </div>
-
-          {/* Revenue Comparison */}
-          <div className="bg-white rounded-lg p-4 shadow-sm">
-            <div className="flex justify-between items-center mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">{currentMonth}</span>
-                <span className="text-sm font-bold text-blue-600">{formatCurrency(stats.totalRevenue)}</span>
-              </div>
-              <div className="flex gap-4 text-xs">
-                <span className="font-bold">Doanh thu thực tế / Doanh thu kỳ vọng</span>
-              </div>
-            </div>
-            {stats.revenueData.length > 0 ? (
-              <>
-                <div className="h-40">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart 
-                      data={stats.revenueData.map(r => ({ name: r.month, value: r.expected || r.actual }))}
-                      margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                      <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${(v/1000000).toFixed(0)}tr`} />
-                      <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                      <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                        <Cell fill="#3b82f6" />
-                        <Cell fill="#22c55e" />
-                        <Cell fill="#ef4444" />
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="flex gap-4 mt-2 text-xs justify-center">
-                  <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded"></div> Kỳ vọng</div>
-                  <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div> Thực tế</div>
-                  <div className="flex items-center gap-1"><div className="w-3 h-3 bg-red-500 rounded"></div> Chênh lệch</div>
-                </div>
-              </>
-            ) : (
-              <div className="h-40 flex items-center justify-center text-gray-400 text-sm">
-                Chưa có dữ liệu doanh thu
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column - Pie Charts */}
-        <div className="col-span-5 space-y-4">
-          {/* Revenue Pie Chart */}
-          <div className="bg-white rounded-lg p-4 shadow-sm">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold text-gray-700 text-sm">Doanh số bán hàng</h3>
-              <div className="text-right">
-                <div className="text-lg font-bold text-blue-600">{formatCurrency(revenuePieData.reduce((sum, item) => sum + item.value, 0) || stats.totalRevenue)}</div>
-                <span className="text-xs text-gray-500">{currentMonth}</span>
-              </div>
-            </div>
-            <div className="h-44">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={revenuePieData.length > 0 ? revenuePieData : [{ name: 'Chưa có', value: 1, color: '#e5e7eb' }]}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={60}
-                    dataKey="value"
-                    label={revenuePieData.length > 0 ? ({ percent }) => `${(percent * 100).toFixed(0)}%` : undefined}
+                <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+                <div className="flex items-center gap-2 mt-1">
+                  <MapPin className="text-white/80" size={14} />
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="bg-white/20 backdrop-blur-md text-white border border-white/30 rounded-full px-4 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer hover:bg-white/30 transition-all appearance-none pr-8"
+                    style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center', backgroundSize: '16px' }}
                   >
-                    {(revenuePieData.length > 0 ? revenuePieData : [{ color: '#e5e7eb' }]).map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color || PIE_COLORS[index % PIE_COLORS.length]} />
+                    {branches.map(branch => (
+                      <option key={branch.id} value={branch.id} className="bg-white text-gray-800">{branch.name}</option>
                     ))}
-                  </Pie>
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Revenue vs Debt Pie Chart */}
-          <div className="bg-white rounded-lg p-4 shadow-sm">
-            <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold text-gray-700 text-sm">Doanh số / Nợ Phí</h3>
-              <div className="text-right">
-                <div className="text-lg font-bold text-indigo-600">{formatCurrency(stats.totalRevenue + stats.totalDebt)}</div>
-                <span className="text-xs text-gray-500">Tổng doanh số</span>
+                  </select>
+                </div>
               </div>
-            </div>
-            <div className="h-44">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={revenueDebtPieData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={60}
-                    dataKey="value"
-                    label={({ percent }) => percent > 0 ? `${(percent * 100).toFixed(0)}%` : ''}
-                  >
-                    {revenueDebtPieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex justify-between text-xs mt-2 pt-2 border-t border-gray-100">
-              <span className="text-blue-600">Đã thu: {formatCurrency(stats.totalRevenue)}</span>
-              <span className="text-amber-600">Nợ phí: {formatCurrency(stats.totalDebt)}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Section - 2 columns */}
-      <div className="grid grid-cols-2 gap-4 mt-4">
-        {/* Left Column */}
-        <div className="space-y-4">
-          {/* Dự báo lương */}
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
-            <div className="flex justify-between items-center mb-2 bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs">Dự báo lương</h3>
-              <span className="text-xs text-white">{currentMonth}</span>
-            </div>
-            <table className="w-full text-xs mt-2">
-              <tbody>
-                {stats.salaryForecast.map((item, idx) => (
-                  <tr key={idx} className={idx === stats.salaryForecast.length - 1 ? 'font-bold border-t border-gray-300' : 'border-b border-gray-100'}>
-                    <td className="py-1.5">{item.position}</td>
-                    <td className="py-1.5 text-right text-blue-600">{formatCurrency(item.amount)}</td>
-                  </tr>
-                ))}
-                <tr className="border-t border-gray-300">
-                  <td className="py-1.5 font-medium">Chiếm tỉ lệ</td>
-                  <td className="py-1.5 text-right text-blue-600 font-medium">{stats.salaryPercent}%</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* Chỉ số sức khỏe doanh nghiệp */}
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
-            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs text-center">CHỈ SỐ SỨC KHỎE DOANH NGHIỆP</h3>
-              <p className="text-white text-xs text-center">{currentMonth}</p>
-            </div>
-            <table className="w-full text-xs mt-2">
-              <thead className="text-gray-600 border-b">
-                <tr>
-                  <th className="text-left py-1">Hạng mục</th>
-                  <th className="text-center py-1">Số liệu</th>
-                  <th className="text-right py-1">Đánh giá</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.businessHealth.map((item, idx) => (
-                  <tr key={idx} className="border-b border-gray-100">
-                    <td className="py-1.5">{item.metric}</td>
-                    <td className="py-1.5 text-center">{item.value}%</td>
-                    <td className={`py-1.5 text-right font-medium ${
-                      item.status === 'Tốt' ? 'text-green-600' : 
-                      item.status === 'Khá' ? 'text-blue-500' :
-                      item.status === 'Trung Bình' ? 'text-orange-500' : 
-                      item.status === 'Yếu' ? 'text-red-500' : 'text-red-700'
-                    }`}>{item.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Vật phẩm còn lại trong kho */}
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
-            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs text-center">VẬT PHẨM CÒN LẠI TRONG KHO</h3>
-            </div>
-            <div className="flex items-center gap-2 text-xs mt-2 mb-2 p-2 bg-green-50 rounded">
-              <span className="text-gray-500">Hiển thị</span>
-              <select
-                value={stockFilter}
-                onChange={(e) => setStockFilter(e.target.value as any)}
-                className="text-green-600 font-medium bg-transparent border-none cursor-pointer focus:outline-none"
-              >
-                <option value="low">Sắp hết hàng</option>
-                <option value="all">Tất cả</option>
-              </select>
-            </div>
-            <table className="w-full text-xs border border-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left py-1.5 px-2 border-b">Tên sản phẩm</th>
-                  <th className="text-right py-1.5 px-2 border-b">Số lượng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.lowStockProducts.length > 0 ? (
-                  stats.lowStockProducts.map((item, idx) => (
-                    <tr key={idx} className="border-b border-gray-100">
-                      <td className="py-1.5 px-2">{item.name}</td>
-                      <td className={`py-1.5 px-2 text-right font-bold ${item.quantity < 5 ? 'text-red-600' : 'text-blue-600'}`}>
-                        {item.quantity}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={2} className="py-4 text-center text-gray-400">
-                      Chưa có dữ liệu sản phẩm trong kho
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-{/* Right Column */}
-        <div className="space-y-4">
-          {/* THỐNG KÊ */}
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
-            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs text-center">THỐNG KÊ</h3>
             </div>
             
-            {/* Filter row - interactive */}
-            <div className="grid grid-cols-2 gap-2 text-xs mt-2 mb-3 p-2 bg-green-50 rounded">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">Xem theo tháng</span>
-                <select 
-                  value={`${statsMonth}-${statsYear}`}
-                  onChange={(e) => {
-                    const [m, y] = e.target.value.split('-').map(Number);
-                    setStatsMonth(m);
-                    setStatsYear(y);
-                  }}
-                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
-                >
-                  {Array.from({ length: 12 }, (_, i) => {
-                    const d = new Date();
-                    d.setMonth(d.getMonth() - i);
-                    const val = `${d.getMonth() + 1}-${d.getFullYear()}`;
-                    const label = `${d.getMonth() + 1}/${d.getFullYear()}`;
-                    return <option key={val} value={val}>{label}</option>;
-                  })}
-                </select>
+            {/* Right: Stats Cards */}
+            <div className="flex flex-wrap gap-4">
+              {/* Students Card */}
+              <div className="group relative bg-white/10 backdrop-blur-md rounded-2xl px-6 py-4 border border-white/20 hover:bg-white/20 transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-default">
+                <div className="flex items-center gap-4">
+                  <div className="p-2.5 bg-white/20 rounded-xl group-hover:scale-110 transition-transform">
+                    <Users className="text-white" size={22} />
+                  </div>
+                  <div>
+                    <div className="text-white/70 text-xs font-medium uppercase tracking-wider">Học viên</div>
+                    <div className="text-3xl font-bold text-white">{stats.totalStudents}</div>
+                  </div>
+                </div>
               </div>
-              <div></div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">Hạng mục thống kê</span>
-                <select 
-                  value={statsCategory}
-                  onChange={(e) => setStatsCategory(e.target.value)}
-                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
-                >
-                  <option value="Lương nhân viên">Lương nhân viên</option>
-                  <option value="Số lượng học sinh">Số lượng học sinh</option>
-                  <option value="Doanh thu">Doanh thu</option>
-                </select>
+              
+              {/* Classes Card */}
+              <div className="group relative bg-white/10 backdrop-blur-md rounded-2xl px-6 py-4 border border-white/20 hover:bg-white/20 transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-default">
+                <div className="flex items-center gap-4">
+                  <div className="p-2.5 bg-white/20 rounded-xl group-hover:scale-110 transition-transform">
+                    <BookOpen className="text-white" size={22} />
+                  </div>
+                  <div>
+                    <div className="text-white/70 text-xs font-medium uppercase tracking-wider">Lớp học</div>
+                    <div className="text-3xl font-bold text-white">{stats.totalClasses}</div>
+                  </div>
+                </div>
               </div>
-              <div></div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">Kiểu xem</span>
-                <select 
-                  value={statsSortOrder}
-                  onChange={(e) => setStatsSortOrder(e.target.value)}
-                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
-                >
-                  <option value="asc">Từ thấp tới cao</option>
-                  <option value="desc">Từ cao tới thấp</option>
-                </select>
+              
+              {/* Average Card */}
+              <div className="group relative bg-white/10 backdrop-blur-md rounded-2xl px-6 py-4 border border-white/20 hover:bg-white/20 transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-default">
+                <div className="flex items-center gap-4">
+                  <div className="p-2.5 bg-white/20 rounded-xl group-hover:scale-110 transition-transform">
+                    <TrendingUp className="text-white" size={22} />
+                  </div>
+                  <div>
+                    <div className="text-white/70 text-xs font-medium uppercase tracking-wider">TB/Lớp</div>
+                    <div className="text-3xl font-bold text-white">{stats.avgPerClass}</div>
+                  </div>
+                </div>
               </div>
-              <div></div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-500">Hiển thị</span>
-                <select 
-                  value={statsLimit}
-                  onChange={(e) => setStatsLimit(Number(e.target.value))}
-                  className="text-green-600 font-medium bg-transparent border-none text-right cursor-pointer focus:outline-none"
-                >
-                  <option value={5}>TOP 5</option>
-                  <option value={10}>TOP 10</option>
-                  <option value={20}>TOP 20</option>
-                </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-12 gap-6">
+          {/* Left Column */}
+          <div className="col-span-12 lg:col-span-7 space-y-6">
+            {/* Student Stats Bar Chart */}
+            <div className="group bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/50 hover:shadow-xl transition-all duration-300">
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg">
+                    <BarChart3 className="text-white" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-800">Thống kê học viên</h3>
+                    <span className="text-xs text-gray-500">{currentMonth}</span>
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  {stats.studentsByStatus.map((item, idx) => (
+                    <div key={idx} className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }}></div>
+                  ))}
+                </div>
+              </div>
+              <div className="h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stats.studentsByStatus} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        background: 'rgba(255,255,255,0.95)', 
+                        border: 'none', 
+                        borderRadius: '12px', 
+                        boxShadow: '0 10px 40px rgba(0,0,0,0.1)' 
+                      }} 
+                    />
+                    <Bar dataKey="value" radius={[8, 8, 0, 0]} onClick={handleBarClick} className="cursor-pointer">
+                      {stats.studentsByStatus.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex flex-wrap gap-3 mt-4 justify-center">
+                {stats.studentsByStatus.map((item, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => { setSelectedCategory(item.name); setShowStudentModal(true); }}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-50 hover:bg-gray-100 transition-colors text-xs font-medium"
+                  >
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }}></div>
+                    <span className="text-gray-700">{item.name}</span>
+                    <span className="text-gray-400">({item.value})</span>
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Stats table - từ báo cáo lương */}
-            <table className="w-full text-xs border border-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left py-1.5 px-2 border-b">Tên nhân viên</th>
-                  <th className="text-right py-1.5 px-2 border-b">Lương tạm tính</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const sortedData = [...salaryReportData]
-                    .sort((a, b) => statsSortOrder === 'asc' 
-                      ? a.estimatedSalary - b.estimatedSalary 
-                      : b.estimatedSalary - a.estimatedSalary)
-                    .slice(0, statsLimit);
-                  
-                  return sortedData.length > 0 ? (
-                    sortedData.map((item, idx) => (
-                      <tr key={idx} className="border-b border-gray-100">
-                        <td className="py-1.5 px-2">{item.staffName}</td>
-                        <td className="py-1.5 px-2 text-right font-medium text-blue-600">{formatCurrency(item.estimatedSalary)}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={2} className="py-2 text-center text-gray-400">Chưa có dữ liệu lương</td>
-                    </tr>
-                  );
-                })()}
-              </tbody>
-            </table>
+            {/* Revenue Comparison */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/50 hover:shadow-xl transition-all duration-300">
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl shadow-lg">
+                    <Wallet className="text-white" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-800">Doanh thu</h3>
+                    <span className="text-xs text-gray-500">{currentMonth}</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
+                    {formatCurrency(stats.totalRevenue)}
+                  </div>
+                </div>
+              </div>
+              {stats.revenueData.length > 0 ? (
+                <>
+                  <div className="h-44">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart 
+                        data={stats.revenueData.map(r => ({ name: r.month, value: r.expected || r.actual }))}
+                        margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} tickFormatter={(v) => `${(v/1000000).toFixed(0)}tr`} axisLine={false} tickLine={false} />
+                        <Tooltip 
+                          formatter={(value: number) => formatCurrency(value)}
+                          contentStyle={{ background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}
+                        />
+                        <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                          <Cell fill="#6366f1" />
+                          <Cell fill="#10b981" />
+                          <Cell fill="#f43f5e" />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex gap-4 mt-4 text-xs justify-center">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 rounded-full">
+                      <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full"></div>
+                      <span className="text-gray-700">Kỳ vọng</span>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-full">
+                      <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
+                      <span className="text-gray-700">Thực tế</span>
+                    </div>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-rose-50 rounded-full">
+                      <div className="w-2.5 h-2.5 bg-rose-500 rounded-full"></div>
+                      <span className="text-gray-700">Chênh lệch</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="h-44 flex flex-col items-center justify-center text-gray-400">
+                  <Wallet size={40} className="mb-2 opacity-30" />
+                  <span className="text-sm">Chưa có dữ liệu doanh thu</span>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* DIỄN GIẢI HẠNG MỤC */}
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
-            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs text-center">DIỄN GIẢI HẠNG MỤC</h3>
-            </div>
-            <table className="w-full text-xs mt-2">
-              <thead className="text-gray-500 border-b">
-                <tr>
-                  <th className="text-left py-1">Hạng mục</th>
-                  <th className="text-left py-1">Diễn giải</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-b border-gray-100">
-                  <td className="py-1.5">Tỉ lệ đi học</td>
-                  <td className="py-1.5 text-gray-600 italic">Tỉ lệ chuyên cần của toàn trung tâm</td>
-                </tr>
-                <tr className="border-b border-gray-100">
-                  <td className="py-1.5">Tỉ lệ bồi bài</td>
-                  <td className="py-1.5 text-gray-600 italic">Tỉ lệ nghỉ được bồi</td>
-                </tr>
-                <tr className="border-b border-gray-100">
-                  <td className="py-1.5">Số lượng học sinh</td>
-                  <td className="py-1.5 text-gray-600 italic">Số học sinh đang học + nợ phí đang học</td>
-                </tr>
-                <tr className="border-b border-gray-100">
-                  <td className="py-1.5">Doanh thu thực tế</td>
-                  <td className="py-1.5 text-gray-600 italic">Doanh thu thực tế hiện tại</td>
-                </tr>
-                <tr className="border-b border-gray-100">
-                  <td className="py-1.5">Lợi nhuận thực tế</td>
-                  <td className="py-1.5 text-gray-600 italic">Doanh thu - chi phí GV + trợ giảng</td>
-                </tr>
-                <tr>
-                  <td className="py-1.5">Lương nhân viên</td>
-                  <td className="py-1.5 text-gray-600 italic">Xếp hạng lương nhận được của NV</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* SINH NHẬT */}
-          <div className="bg-white rounded-lg p-3 shadow-sm border border-green-500">
-            <div className="bg-green-500 -m-3 mb-2 p-2 rounded-t-lg">
-              <h3 className="font-bold text-white text-xs text-center mb-2">SINH NHẬT</h3>
-              <div className="flex justify-center gap-1">
-                <button
-                  onClick={() => setBirthdayType('staff')}
-                  className={`px-3 py-1 text-xs font-bold rounded transition-all ${
-                    birthdayType === 'staff' 
-                      ? 'bg-white text-green-600' 
-                      : 'bg-green-600 text-white hover:bg-green-400'
-                  }`}
-                >
-                  Nhân sự
-                </button>
-                <button
-                  onClick={() => setBirthdayType('student')}
-                  className={`px-3 py-1 text-xs font-bold rounded transition-all ${
-                    birthdayType === 'student' 
-                      ? 'bg-white text-green-600' 
-                      : 'bg-green-600 text-white hover:bg-green-400'
-                  }`}
-                >
-                  Học sinh
-                </button>
+          {/* Right Column - Pie Charts */}
+          <div className="col-span-12 lg:col-span-5 space-y-6">
+            {/* Revenue Pie Chart */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/50 hover:shadow-xl transition-all duration-300">
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-pink-500 to-rose-600 rounded-xl shadow-lg">
+                    <PieChartIcon className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-gray-800">Doanh số bán hàng</h3>
+                </div>
+                <div className="text-right">
+                  <div className="text-xl font-bold bg-gradient-to-r from-pink-600 to-rose-600 bg-clip-text text-transparent">
+                    {formatCurrency(revenuePieData.reduce((sum, item) => sum + item.value, 0) || stats.totalRevenue)}
+                  </div>
+                  <span className="text-xs text-gray-500">{currentMonth}</span>
+                </div>
+              </div>
+              <div className="h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={revenuePieData.length > 0 ? revenuePieData : [{ name: 'Chưa có', value: 1, color: '#e5e7eb' }]}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={40}
+                      outerRadius={70}
+                      dataKey="value"
+                      label={revenuePieData.length > 0 ? ({ percent }) => `${(percent * 100).toFixed(0)}%` : undefined}
+                      strokeWidth={2}
+                      stroke="#fff"
+                    >
+                      {(revenuePieData.length > 0 ? revenuePieData : [{ color: '#e5e7eb' }]).map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color || PIE_COLORS[index % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      formatter={(value: number) => formatCurrency(value)}
+                      contentStyle={{ background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}
+                    />
+                    <Legend 
+                      wrapperStyle={{ paddingTop: '20px' }}
+                      formatter={(value) => <span className="text-gray-600 text-sm">{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-xs mt-2 mb-2 p-2 bg-green-50 rounded">
-              <span className="text-gray-500">Hiển thị theo</span>
-              <select
-                value={birthdayFilter}
-                onChange={(e) => setBirthdayFilter(e.target.value as any)}
-                className="text-green-600 font-medium bg-transparent border-none cursor-pointer focus:outline-none"
-              >
-                <option value="today">Hôm nay</option>
-                <option value="week">Tuần này</option>
-                <option value="month">Tháng này</option>
-              </select>
+
+            {/* Revenue vs Debt Pie Chart */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/50 hover:shadow-xl transition-all duration-300">
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl shadow-lg">
+                    <DollarSign className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-gray-800">Doanh số / Nợ phí</h3>
+                </div>
+                <div className="text-right">
+                  <div className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 bg-clip-text text-transparent">
+                    {formatCurrency(stats.totalRevenue + stats.totalDebt)}
+                  </div>
+                  <span className="text-xs text-gray-500">Tổng cộng</span>
+                </div>
+              </div>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={revenueDebtPieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={40}
+                      outerRadius={70}
+                      dataKey="value"
+                      label={({ percent }) => percent > 0 ? `${(percent * 100).toFixed(0)}%` : ''}
+                      strokeWidth={2}
+                      stroke="#fff"
+                    >
+                      {revenueDebtPieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      formatter={(value: number) => formatCurrency(value)}
+                      contentStyle={{ background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.1)' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                  <span className="text-sm text-gray-600">Đã thu:</span>
+                  <span className="font-semibold text-indigo-600">{formatCurrency(stats.totalRevenue)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-amber-500"></div>
+                  <span className="text-sm text-gray-600">Nợ:</span>
+                  <span className="font-semibold text-amber-600">{formatCurrency(stats.totalDebt)}</span>
+                </div>
+              </div>
             </div>
-            <table className="w-full text-xs border border-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left py-1.5 px-2 border-b">{birthdayType === 'staff' ? 'Tên nhân sự' : 'Tên học viên'}</th>
-                  <th className="text-center py-1.5 px-2 border-b">Vị trí</th>
-                  <th className="text-right py-1.5 px-2 border-b">Ngày SN</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const now = new Date();
-                  const today = now.getDate();
-                  const thisMonth = now.getMonth();
-                  const thisYear = now.getFullYear();
-                  
-                  // Choose data source based on type
-                  const birthdayData = birthdayType === 'staff' ? stats.upcomingBirthdays : stats.studentBirthdays;
-                  
-                  // Filter birthdays based on selection
-                  const filteredBirthdays = birthdayData.filter(item => {
-                    const [day, month] = item.date.split('/').map(Number);
-                    
-                    if (birthdayFilter === 'today') {
-                      return day === today && month === thisMonth + 1;
-                    } else if (birthdayFilter === 'week') {
-                      const bdayThisYear = new Date(thisYear, month - 1, day);
-                      const diffDays = Math.ceil((bdayThisYear.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-                      return diffDays >= 0 && diffDays <= 7;
-                    } else {
-                      return month === thisMonth + 1;
-                    }
-                  });
-                  
-                  return filteredBirthdays.length > 0 ? (
-                    filteredBirthdays.map((item, idx) => (
-                      <tr key={idx} className="border-b border-gray-100">
-                        <td className="py-1.5 px-2">{item.name}</td>
-                        <td className="py-1.5 px-2 text-center">{item.position}</td>
-                        <td className="py-1.5 px-2 text-right">{item.date}</td>
+          </div>
+        </div>
+
+        {/* Bottom Section - 2 columns */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          {/* Left Column */}
+          <div className="space-y-6">
+            {/* Dự báo lương */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/50 overflow-hidden hover:shadow-xl transition-all duration-300">
+              <div className="bg-gradient-to-r from-emerald-500 to-teal-600 p-4">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white/20 rounded-xl">
+                      <Wallet className="text-white" size={20} />
+                    </div>
+                    <h3 className="font-bold text-white">Dự báo lương</h3>
+                  </div>
+                  <span className="text-sm text-white/80 bg-white/10 px-3 py-1 rounded-full">{currentMonth}</span>
+                </div>
+              </div>
+              <div className="p-4">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {stats.salaryForecast.map((item, idx) => (
+                      <tr key={idx} className={idx === stats.salaryForecast.length - 1 ? 'font-bold border-t-2 border-emerald-200' : 'border-b border-gray-100'}>
+                        <td className="py-2.5 text-gray-700">{item.position}</td>
+                        <td className="py-2.5 text-right font-semibold text-emerald-600">{formatCurrency(item.amount)}</td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={3} className="py-2 text-center text-gray-400">
-                        Không có sinh nhật {birthdayFilter === 'today' ? 'hôm nay' : birthdayFilter === 'week' ? 'tuần này' : 'tháng này'}
-                      </td>
+                    ))}
+                    <tr className="border-t-2 border-emerald-200 bg-emerald-50/50">
+                      <td className="py-2.5 font-semibold text-gray-800">Chiếm tỉ lệ</td>
+                      <td className="py-2.5 text-right font-bold text-emerald-600">{stats.salaryPercent}%</td>
                     </tr>
-                  );
-                })()}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Chỉ số sức khỏe doanh nghiệp */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/50 overflow-hidden hover:shadow-xl transition-all duration-300">
+              <div className="bg-gradient-to-r from-violet-500 to-purple-600 p-4 text-center">
+                <div className="flex items-center justify-center gap-3 mb-1">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <Activity className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-white">CHỈ SỐ SỨC KHỎE DOANH NGHIỆP</h3>
+                </div>
+                <p className="text-white/80 text-sm">{currentMonth}</p>
+              </div>
+              <div className="p-4">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-500 border-b-2 border-violet-100">
+                    <tr>
+                      <th className="text-left py-2 font-medium">Hạng mục</th>
+                      <th className="text-center py-2 font-medium">Số liệu</th>
+                      <th className="text-right py-2 font-medium">Đánh giá</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.businessHealth.map((item, idx) => (
+                      <tr key={idx} className="border-b border-gray-100 hover:bg-violet-50/30 transition-colors">
+                        <td className="py-2.5 text-gray-700">{item.metric}</td>
+                        <td className="py-2.5 text-center font-medium">{item.value}%</td>
+                        <td className={`py-2.5 text-right font-semibold ${
+                          item.status === 'Tốt' ? 'text-emerald-600' : 
+                          item.status === 'Khá' ? 'text-blue-600' :
+                          item.status === 'Trung Bình' ? 'text-amber-500' : 
+                          item.status === 'Yếu' ? 'text-rose-500' : 'text-rose-600'
+                        }`}>
+                          <span className={`px-2 py-1 rounded-full text-xs ${
+                            item.status === 'Tốt' ? 'bg-emerald-100' : 
+                            item.status === 'Khá' ? 'bg-blue-100' :
+                            item.status === 'Trung Bình' ? 'bg-amber-100' : 
+                            item.status === 'Yếu' ? 'bg-rose-100' : 'bg-rose-200'
+                          }`}>{item.status}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Vật phẩm còn lại trong kho */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/50 overflow-hidden hover:shadow-xl transition-all duration-300">
+              <div className="bg-gradient-to-r from-orange-500 to-amber-600 p-4 text-center">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <Box className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-white">VẬT PHẨM CÒN LẠI TRONG KHO</h3>
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="flex items-center gap-2 text-sm mb-4 p-3 bg-amber-50 rounded-xl border border-amber-100">
+                  <span className="text-gray-600">Hiển thị</span>
+                  <select
+                    value={stockFilter}
+                    onChange={(e) => setStockFilter(e.target.value as any)}
+                    className="text-amber-600 font-semibold bg-transparent border-none cursor-pointer focus:outline-none"
+                  >
+                    <option value="low">Sắp hết hàng</option>
+                    <option value="all">Tất cả</option>
+                  </select>
+                </div>
+                <table className="w-full text-sm">
+                  <thead className="bg-amber-50/50 border-b-2 border-amber-100">
+                    <tr>
+                      <th className="text-left py-2.5 px-3 font-medium text-gray-600">Tên sản phẩm</th>
+                      <th className="text-right py-2.5 px-3 font-medium text-gray-600">Số lượng</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const filteredProducts = stockFilter === 'low' 
+                        ? allProducts.filter(p => p.stock < (p.minStock || 10))
+                        : allProducts;
+                      
+                      return filteredProducts.length > 0 ? (
+                        filteredProducts.map((item, idx) => (
+                          <tr key={idx} className="border-b border-gray-100 hover:bg-amber-50/30 transition-colors">
+                            <td className="py-2.5 px-3 text-gray-700">{item.name}</td>
+                            <td className={`py-2.5 px-3 text-right font-bold ${item.stock < 5 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                              <span className={`px-2 py-1 rounded-full ${item.stock < 5 ? 'bg-rose-100' : 'bg-emerald-100'}`}>
+                                {item.stock}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={2} className="py-8 text-center text-gray-400">
+                            <Box size={32} className="mx-auto mb-2 opacity-30" />
+                            {stockFilter === 'low' ? 'Không có sản phẩm sắp hết hàng' : 'Chưa có dữ liệu sản phẩm trong kho'}
+                          </td>
+                        </tr>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column */}
+          <div className="space-y-6">
+            {/* THỐNG KÊ */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/50 overflow-hidden hover:shadow-xl transition-all duration-300">
+              <div className="bg-gradient-to-r from-cyan-500 to-blue-600 p-4 text-center">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <BarChart3 className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-white">THỐNG KÊ</h3>
+                </div>
+              </div>
+              <div className="p-4">
+                {/* Filter row - interactive */}
+                <div className="grid grid-cols-2 gap-3 text-sm mb-4 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Xem theo tháng</span>
+                    <select 
+                      value={`${statsMonth}-${statsYear}`}
+                      onChange={(e) => {
+                        const [m, y] = e.target.value.split('-').map(Number);
+                        setStatsMonth(m);
+                        setStatsYear(y);
+                      }}
+                      className="text-blue-600 font-semibold bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const d = new Date();
+                        d.setMonth(d.getMonth() - i);
+                        const val = `${d.getMonth() + 1}-${d.getFullYear()}`;
+                        const label = `${d.getMonth() + 1}/${d.getFullYear()}`;
+                        return <option key={val} value={val}>{label}</option>;
+                      })}
+                    </select>
+                  </div>
+                  <div></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Hạng mục thống kê</span>
+                    <select 
+                      value={statsCategory}
+                      onChange={(e) => setStatsCategory(e.target.value)}
+                      className="text-blue-600 font-semibold bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                    >
+                      <option value="Lương nhân viên">Lương nhân viên</option>
+                      <option value="Số lượng học sinh">Số lượng học sinh</option>
+                      <option value="Doanh thu">Doanh thu</option>
+                    </select>
+                  </div>
+                  <div></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Kiểu xem</span>
+                    <select 
+                      value={statsSortOrder}
+                      onChange={(e) => setStatsSortOrder(e.target.value)}
+                      className="text-blue-600 font-semibold bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                    >
+                      <option value="asc">Từ thấp tới cao</option>
+                      <option value="desc">Từ cao tới thấp</option>
+                    </select>
+                  </div>
+                  <div></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Hiển thị</span>
+                    <select 
+                      value={statsLimit}
+                      onChange={(e) => setStatsLimit(Number(e.target.value))}
+                      className="text-blue-600 font-semibold bg-transparent border-none text-right cursor-pointer focus:outline-none"
+                    >
+                      <option value={5}>TOP 5</option>
+                      <option value={10}>TOP 10</option>
+                      <option value={20}>TOP 20</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Stats table */}
+                <table className="w-full text-sm">
+                  <thead className="bg-blue-50/50 border-b-2 border-blue-100">
+                    <tr>
+                      <th className="text-left py-2.5 px-3 font-medium text-gray-600">Tên nhân viên</th>
+                      <th className="text-right py-2.5 px-3 font-medium text-gray-600">Lương tạm tính</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const sortedData = [...salaryReportData]
+                        .sort((a, b) => statsSortOrder === 'asc' 
+                          ? a.estimatedSalary - b.estimatedSalary 
+                          : b.estimatedSalary - a.estimatedSalary)
+                        .slice(0, statsLimit);
+                      
+                      return sortedData.length > 0 ? (
+                        sortedData.map((item, idx) => (
+                          <tr key={idx} className="border-b border-gray-100 hover:bg-blue-50/30 transition-colors">
+                            <td className="py-2.5 px-3 text-gray-700">{item.staffName}</td>
+                            <td className="py-2.5 px-3 text-right font-semibold text-blue-600">{formatCurrency(item.estimatedSalary)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={2} className="py-6 text-center text-gray-400">
+                            <BarChart3 size={32} className="mx-auto mb-2 opacity-30" />
+                            Chưa có dữ liệu lương
+                          </td>
+                        </tr>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* DIỄN GIẢI HẠNG MỤC */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/50 overflow-hidden hover:shadow-xl transition-all duration-300">
+              <div className="bg-gradient-to-r from-slate-500 to-gray-600 p-4 text-center">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <ChevronRight className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-white">DIỄN GIẢI HẠNG MỤC</h3>
+                </div>
+              </div>
+              <div className="p-4">
+                <table className="w-full text-sm">
+                  <thead className="text-gray-500 border-b-2 border-gray-200">
+                    <tr>
+                      <th className="text-left py-2 font-medium">Hạng mục</th>
+                      <th className="text-left py-2 font-medium">Diễn giải</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 font-medium text-gray-700">Tỉ lệ đi học</td>
+                      <td className="py-2.5 text-gray-500 italic">Tỉ lệ chuyên cần của toàn trung tâm</td>
+                    </tr>
+                    <tr className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 font-medium text-gray-700">Tỉ lệ bồi bài</td>
+                      <td className="py-2.5 text-gray-500 italic">Tỉ lệ nghỉ được bồi</td>
+                    </tr>
+                    <tr className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 font-medium text-gray-700">Số lượng học sinh</td>
+                      <td className="py-2.5 text-gray-500 italic">Số học sinh đang học + nợ phí đang học</td>
+                    </tr>
+                    <tr className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 font-medium text-gray-700">Doanh thu thực tế</td>
+                      <td className="py-2.5 text-gray-500 italic">Doanh thu thực tế hiện tại</td>
+                    </tr>
+                    <tr className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 font-medium text-gray-700">Lợi nhuận thực tế</td>
+                      <td className="py-2.5 text-gray-500 italic">Doanh thu - chi phí GV + trợ giảng</td>
+                    </tr>
+                    <tr className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 font-medium text-gray-700">Lương nhân viên</td>
+                      <td className="py-2.5 text-gray-500 italic">Xếp hạng lương nhận được của NV</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* SINH NHẬT */}
+            <div className="bg-white/70 backdrop-blur-sm rounded-2xl shadow-lg border border-white/50 overflow-hidden hover:shadow-xl transition-all duration-300">
+              <div className="bg-gradient-to-r from-pink-500 to-rose-600 p-4 text-center">
+                <div className="flex items-center justify-center gap-3 mb-3">
+                  <div className="p-2 bg-white/20 rounded-xl">
+                    <Cake className="text-white" size={20} />
+                  </div>
+                  <h3 className="font-bold text-white">SINH NHẬT</h3>
+                </div>
+                <div className="flex justify-center gap-2">
+                  <button
+                    onClick={() => setBirthdayType('staff')}
+                    className={`px-4 py-1.5 text-sm font-semibold rounded-full transition-all ${
+                      birthdayType === 'staff' 
+                        ? 'bg-white text-pink-600 shadow-md' 
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    Nhân sự
+                  </button>
+                  <button
+                    onClick={() => setBirthdayType('student')}
+                    className={`px-4 py-1.5 text-sm font-semibold rounded-full transition-all ${
+                      birthdayType === 'student' 
+                        ? 'bg-white text-pink-600 shadow-md' 
+                        : 'bg-white/20 text-white hover:bg-white/30'
+                    }`}
+                  >
+                    Học sinh
+                  </button>
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="flex items-center gap-2 text-sm mb-4 p-3 bg-pink-50 rounded-xl border border-pink-100">
+                  <span className="text-gray-600">Hiển thị theo</span>
+                  <select
+                    value={birthdayFilter}
+                    onChange={(e) => setBirthdayFilter(e.target.value as any)}
+                    className="text-pink-600 font-semibold bg-transparent border-none cursor-pointer focus:outline-none"
+                  >
+                    <option value="today">Hôm nay</option>
+                    <option value="week">Tuần này</option>
+                    <option value="month">Tháng này</option>
+                  </select>
+                </div>
+                <table className="w-full text-sm">
+                  <thead className="bg-pink-50/50 border-b-2 border-pink-100">
+                    <tr>
+                      <th className="text-left py-2.5 px-3 font-medium text-gray-600">{birthdayType === 'staff' ? 'Tên nhân sự' : 'Tên học viên'}</th>
+                      <th className="text-center py-2.5 px-3 font-medium text-gray-600">Vị trí</th>
+                      <th className="text-right py-2.5 px-3 font-medium text-gray-600">Ngày SN</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const now = new Date();
+                      const today = now.getDate();
+                      const thisMonth = now.getMonth();
+                      const thisYear = now.getFullYear();
+                      
+                      const birthdayData = birthdayType === 'staff' ? stats.upcomingBirthdays : stats.studentBirthdays;
+                      
+                      const filteredBirthdays = birthdayData.filter(item => {
+                        const [day, month] = item.date.split('/').map(Number);
+                        
+                        if (birthdayFilter === 'today') {
+                          return day === today && month === thisMonth + 1;
+                        } else if (birthdayFilter === 'week') {
+                          const bdayThisYear = new Date(thisYear, month - 1, day);
+                          const diffDays = Math.ceil((bdayThisYear.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                          return diffDays >= 0 && diffDays <= 7;
+                        } else {
+                          return month === thisMonth + 1;
+                        }
+                      });
+                      
+                      return filteredBirthdays.length > 0 ? (
+                        filteredBirthdays.map((item, idx) => (
+                          <tr key={idx} className="border-b border-gray-100 hover:bg-pink-50/30 transition-colors">
+                            <td className="py-2.5 px-3 text-gray-700">{item.name}</td>
+                            <td className="py-2.5 px-3 text-center">
+                              <span className="px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs">{item.position}</span>
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-medium text-pink-600">{item.date}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={3} className="py-6 text-center text-gray-400">
+                            <Cake size={32} className="mx-auto mb-2 opacity-30" />
+                            Không có sinh nhật {birthdayFilter === 'today' ? 'hôm nay' : birthdayFilter === 'week' ? 'tuần này' : 'tháng này'}
+                          </td>
+                        </tr>
+                      );
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>

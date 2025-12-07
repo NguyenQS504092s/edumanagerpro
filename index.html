@@ -11,7 +11,11 @@
         font-family: 'Inter', sans-serif;
       }
       @media print {
-        .no-print {
+        @page {
+          size: landscape;
+          margin: 10mm;
+        }
+        .no-print, .print\\:hidden {
           display: none !important;
         }
         .print-only {
@@ -19,6 +23,19 @@
         }
         body {
           background-color: white;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        table {
+          width: 100% !important;
+          font-size: 10px !important;
+        }
+        th, td {
+          padding: 4px !important;
+          min-width: auto !important;
+        }
+        * {
+          overflow: visible !important;
         }
       }
     </style>

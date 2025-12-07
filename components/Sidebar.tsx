@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -16,6 +16,56 @@ import {
   X
 } from 'lucide-react';
 import { MenuItem } from '../types';
+import { usePermissions } from '../src/hooks/usePermissions';
+import { useAuth } from '../src/hooks/useAuth';
+import { ModuleKey } from '../src/services/permissionService';
+
+// Map subItem id to ModuleKey for permission checking
+const subItemToModule: Record<string, ModuleKey> = {
+  'classes': 'classes',
+  'schedule': 'schedule',
+  'holidays': 'holidays',
+  'attendance': 'attendance',
+  'tutoring': 'tutoring',
+  'homework': 'homework',
+  'attendance-history': 'attendance_history',
+  'enrollment-history': 'enrollment_history',
+  'students': 'students',
+  'parents': 'parents',
+  'dropped': 'students_dropped',
+  'reserved': 'students_reserved',
+  'feedback': 'feedback',
+  'trial': 'students_trial',
+  'leads': 'leads',
+  'campaigns': 'campaigns',
+  'staff': 'staff',
+  'salary': 'salary_config',
+  'work-confirm': 'work_confirmation',
+  'report-teacher': 'salary_teacher',
+  'report-staff': 'salary_staff',
+  'contracts': 'contracts',
+  'contracts-create': 'contracts',
+  'invoices': 'invoices',
+  'debt': 'debt',
+  'revenue': 'revenue',
+  'report-training': 'reports_training',
+  'report-finance': 'reports_finance',
+  'settings-staff': 'settings',
+  'settings-products': 'settings',
+  'settings-inventory': 'settings',
+  'settings-rooms': 'settings',
+};
+
+// Map parent menu to required modules (at least one must be visible)
+const parentMenuModules: Record<string, ModuleKey[]> = {
+  'training': ['classes', 'schedule', 'holidays', 'attendance', 'tutoring', 'homework', 'attendance_history', 'enrollment_history'],
+  'customers': ['students', 'parents', 'students_dropped', 'students_reserved', 'feedback', 'students_trial'],
+  'business': ['leads', 'campaigns'],
+  'hr': ['staff', 'salary_config', 'work_confirmation', 'salary_teacher', 'salary_staff'],
+  'finance': ['contracts', 'invoices', 'debt', 'revenue'],
+  'reports': ['reports_training', 'reports_finance'],
+  'settings': ['settings'],
+};
 
 const menuItems: MenuItem[] = [
   { 
@@ -34,6 +84,7 @@ const menuItems: MenuItem[] = [
       { id: 'holidays', label: 'Lịch nghỉ', path: '/training/holidays', icon: ChevronRight },
       { id: 'attendance', label: 'Điểm danh', path: '/training/attendance', icon: ChevronRight },
       { id: 'tutoring', label: 'Lịch bồi', path: '/training/tutoring', icon: ChevronRight },
+      { id: 'homework', label: 'Bài tập về nhà', path: '/training/homework', icon: ChevronRight },
       { id: 'attendance-history', label: 'Lịch sử điểm danh', path: '/training/attendance-history', icon: ChevronRight },
       { id: 'enrollment-history', label: 'Lịch sử ghi danh', path: '/training/enrollment', icon: ChevronRight },
     ]
@@ -110,6 +161,35 @@ export const Sidebar: React.FC = () => {
   const [isOpen, setIsOpen] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<string[]>(['training', 'customers', 'settings']);
   const location = useLocation();
+  const { canView, role, isAdmin } = usePermissions();
+  const { user, staffData } = useAuth();
+
+  // Filter menu items based on permissions
+  const filteredMenuItems = useMemo(() => {
+    return menuItems.map(item => {
+      // Dashboard always visible
+      if (item.id === 'dashboard') return item;
+
+      // For parent menus with subItems
+      if (item.subItems) {
+        const modules = parentMenuModules[item.id];
+        // Check if at least one module is visible
+        const hasVisibleModule = modules?.some(m => canView(m));
+        if (!hasVisibleModule) return null;
+
+        // Filter subItems
+        const visibleSubItems = item.subItems.filter(sub => {
+          const moduleKey = subItemToModule[sub.id];
+          return moduleKey ? canView(moduleKey) : true;
+        });
+
+        if (visibleSubItems.length === 0) return null;
+        return { ...item, subItems: visibleSubItems };
+      }
+
+      return item;
+    }).filter(Boolean) as MenuItem[];
+  }, [canView, role]);
 
   const toggleMenu = (id: string) => {
     setExpandedMenus(prev => 
@@ -119,11 +199,16 @@ export const Sidebar: React.FC = () => {
 
   const toggleMobileSidebar = () => setIsOpen(!isOpen);
 
+  // Get user display info
+  const userName = staffData?.name || user?.displayName || 'User';
+  const userPosition = staffData?.position || 'Nhân viên';
+  const userInitials = userName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
+
   return (
     <>
       {/* Mobile Toggle */}
       <button 
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-indigo-600 text-white rounded-md shadow-lg"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-indigo-600 text-white rounded-md shadow-lg print:hidden"
         onClick={toggleMobileSidebar}
       >
         {isOpen ? <X size={24} /> : <Menu size={24} />}
@@ -133,21 +218,21 @@ export const Sidebar: React.FC = () => {
       <div className={`
         fixed inset-y-0 left-0 z-40 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out
         ${isOpen ? 'translate-x-0' : '-translate-x-full'}
-        lg:translate-x-0 lg:static lg:block
+        lg:translate-x-0 lg:static lg:block print:hidden
       `}>
         <div className="h-full flex flex-col">
           {/* Logo */}
-          <div className="h-16 flex items-center justify-center border-b border-gray-200 px-4">
+          <div className="h-20 flex items-center justify-center border-b border-gray-200 px-4">
             <img 
               src="/logo.jpg" 
               alt="Logo" 
-              className="h-12 object-contain"
+              className="h-16 w-auto object-contain"
             />
           </div>
 
           {/* Menu Items */}
           <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1 scrollbar-hide">
-            {menuItems.map((item) => (
+            {filteredMenuItems.map((item) => (
               <div key={item.id}>
                 {item.subItems ? (
                   // Parent Menu Item
@@ -211,11 +296,11 @@ export const Sidebar: React.FC = () => {
           <div className="p-4 border-t border-gray-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold">
-                AD
+                {userInitials}
               </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Admin User</p>
-                <p className="text-xs text-gray-500">Quản lý trung tâm</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{userName}</p>
+                <p className="text-xs text-gray-500 truncate">{userPosition}</p>
               </div>
             </div>
           </div>

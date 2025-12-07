@@ -1,55 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, ToggleLeft, ToggleRight, Trash2, X } from 'lucide-react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { db } from '../src/config/firebase';
-
-interface Holiday {
-  id: string;
-  name: string;
-  startDate: string;
-  endDate: string;
-  status: string;
-}
+import { Calendar, Plus, ToggleLeft, ToggleRight, Trash2, X, Building, Users, ChevronDown } from 'lucide-react';
+import { useHolidays } from '../src/hooks/useHolidays';
+import { useClasses } from '../src/hooks/useClasses';
+import { HolidayApplyType } from '../types';
 
 export const HolidayManager: React.FC = () => {
-  const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { holidays, loading, createHoliday, updateHoliday, deleteHoliday } = useHolidays();
+  const { classes } = useClasses();
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     startDate: '',
     endDate: '',
     status: 'Chưa áp dụng',
+    applyType: 'all_classes' as HolidayApplyType,
+    classIds: [] as string[],
+    branch: '',
   });
 
-  // Fetch holidays from Firebase
-  const fetchHolidays = async () => {
-    try {
-      const snapshot = await getDocs(collection(db, 'holidays'));
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Holiday[];
-      setHolidays(data.sort((a, b) => a.startDate.localeCompare(b.startDate)));
-    } catch (err) {
-      console.error('Error fetching holidays:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchHolidays();
-  }, []);
+  // Get unique branches from classes
+  const branches = [...new Set(classes.map(c => c.branch).filter(Boolean))] as string[];
 
   // Toggle status
   const toggleStatus = async (id: string, currentStatus: string) => {
     try {
       const newStatus = currentStatus === 'Đã áp dụng' ? 'Chưa áp dụng' : 'Đã áp dụng';
-      await updateDoc(doc(db, 'holidays', id), { status: newStatus });
-      setHolidays(holidays.map(h => 
-        h.id === id ? { ...h, status: newStatus } : h
-      ));
+      await updateHoliday(id, { status: newStatus });
     } catch (err) {
       console.error('Error updating holiday:', err);
     }
@@ -62,21 +38,58 @@ export const HolidayManager: React.FC = () => {
       return;
     }
 
+    // Validate apply type specific requirements
+    if (formData.applyType === 'specific_classes' && formData.classIds.length === 0) {
+      alert('Vui lòng chọn ít nhất 1 lớp!');
+      return;
+    }
+    if (formData.applyType === 'specific_branch' && !formData.branch) {
+      alert('Vui lòng chọn chi nhánh!');
+      return;
+    }
+
     try {
-      await addDoc(collection(db, 'holidays'), {
+      // Get class names for display
+      const selectedClassNames = formData.classIds.map(id => {
+        const cls = classes.find(c => c.id === id);
+        return cls?.name || '';
+      }).filter(Boolean);
+
+      // Build data object - only include fields that have values
+      const holidayData: any = {
         name: formData.name,
         startDate: formData.startDate,
         endDate: formData.endDate,
         status: formData.status,
+        applyType: formData.applyType,
+        date: formData.startDate,
         createdAt: new Date().toISOString(),
-      });
+      };
+
+      // Only add optional fields if they have values
+      if (formData.applyType === 'specific_classes' && formData.classIds.length > 0) {
+        holidayData.classIds = formData.classIds;
+        holidayData.classNames = selectedClassNames;
+      }
+      if (formData.applyType === 'specific_branch' && formData.branch) {
+        holidayData.branch = formData.branch;
+      }
+
+      await createHoliday(holidayData);
       setShowModal(false);
-      setFormData({ name: '', startDate: '', endDate: '', status: 'Chưa áp dụng' });
-      fetchHolidays();
+      setFormData({ 
+        name: '', 
+        startDate: '', 
+        endDate: '', 
+        status: 'Chưa áp dụng',
+        applyType: 'all_classes',
+        classIds: [],
+        branch: '',
+      });
       alert('Đã thêm lịch nghỉ mới!');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error creating holiday:', err);
-      alert('Có lỗi xảy ra!');
+      alert('Có lỗi xảy ra: ' + (err.message || err));
     }
   };
 
@@ -85,8 +98,7 @@ export const HolidayManager: React.FC = () => {
     if (!confirm(`Bạn có chắc muốn xóa "${name}"?`)) return;
     
     try {
-      await deleteDoc(doc(db, 'holidays', id));
-      setHolidays(holidays.filter(h => h.id !== id));
+      await deleteHoliday(id);
     } catch (err) {
       console.error('Error deleting holiday:', err);
     }
@@ -121,8 +133,8 @@ export const HolidayManager: React.FC = () => {
           <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
             <tr>
               <th className="px-6 py-4">Tên kỳ nghỉ</th>
-              <th className="px-6 py-4">Thời gian bắt đầu</th>
-              <th className="px-6 py-4">Thời gian kết thúc</th>
+              <th className="px-6 py-4">Thời gian</th>
+              <th className="px-6 py-4">Áp dụng cho</th>
               <th className="px-6 py-4">Trạng thái</th>
               <th className="px-6 py-4 text-right">Hành động</th>
             </tr>
@@ -132,8 +144,48 @@ export const HolidayManager: React.FC = () => {
               holidays.map((holiday) => (
                 <tr key={holiday.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 font-medium text-gray-900">{holiday.name}</td>
-                  <td className="px-6 py-4">{holiday.startDate}</td>
-                  <td className="px-6 py-4">{holiday.endDate}</td>
+                  <td className="px-6 py-4">
+                    <div className="text-sm">{holiday.startDate}</div>
+                    <div className="text-xs text-gray-400">đến {holiday.endDate}</div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-1">
+                      {holiday.applyType === 'all_classes' && (
+                        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                          Tất cả lớp
+                        </span>
+                      )}
+                      {holiday.applyType === 'all_branches' && (
+                        <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-medium">
+                          Tất cả chi nhánh
+                        </span>
+                      )}
+                      {holiday.applyType === 'specific_branch' && (
+                        <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs font-medium">
+                          CN: {holiday.branch}
+                        </span>
+                      )}
+                      {holiday.applyType === 'specific_classes' && (
+                        <div className="flex flex-wrap gap-1">
+                          {(holiday.classNames || []).slice(0, 2).map((name, idx) => (
+                            <span key={idx} className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-medium">
+                              {name}
+                            </span>
+                          ))}
+                          {(holiday.classNames || []).length > 2 && (
+                            <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+                              +{(holiday.classNames || []).length - 2}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {!holiday.applyType && (
+                        <span className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">
+                          Chưa xác định
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-6 py-4">
                     <button 
                       onClick={() => toggleStatus(holiday.id, holiday.status)}
@@ -211,6 +263,86 @@ export const HolidayManager: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* Apply Type Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Áp dụng cho *</label>
+                <select
+                  value={formData.applyType}
+                  onChange={(e) => setFormData({ 
+                    ...formData, 
+                    applyType: e.target.value as HolidayApplyType,
+                    classIds: [],
+                    branch: ''
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  <option value="all_classes">Tất cả các lớp</option>
+                  <option value="all_branches">Tất cả chi nhánh</option>
+                  <option value="specific_branch">Một chi nhánh cụ thể</option>
+                  <option value="specific_classes">Một số lớp cụ thể</option>
+                </select>
+              </div>
+
+              {/* Branch Selection */}
+              {formData.applyType === 'specific_branch' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Chọn chi nhánh *</label>
+                  <select
+                    value={formData.branch}
+                    onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">-- Chọn chi nhánh --</option>
+                    {branches.map(branch => (
+                      <option key={branch} value={branch}>{branch}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Class Selection */}
+              {formData.applyType === 'specific_classes' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Chọn lớp * ({formData.classIds.length} đã chọn)
+                  </label>
+                  <div className="max-h-48 overflow-y-auto border border-gray-300 rounded-lg p-2 space-y-1">
+                    {classes.filter(c => c.status === 'Đang học' || c.status === 'Chờ mở').map(cls => (
+                      <label 
+                        key={cls.id} 
+                        className={`flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-gray-50 ${
+                          formData.classIds.includes(cls.id) ? 'bg-indigo-50' : ''
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.classIds.includes(cls.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFormData({ ...formData, classIds: [...formData.classIds, cls.id] });
+                            } else {
+                              setFormData({ ...formData, classIds: formData.classIds.filter(id => id !== cls.id) });
+                            }
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm">{cls.name}</span>
+                        {cls.branch && <span className="text-xs text-gray-400">({cls.branch})</span>}
+                      </label>
+                    ))}
+                  </div>
+                  {formData.classIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, classIds: [] })}
+                      className="mt-2 text-xs text-red-500 hover:text-red-700"
+                    >
+                      Bỏ chọn tất cả
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Trạng thái</label>

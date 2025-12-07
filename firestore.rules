@@ -2,65 +2,190 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ⚠️ DEV MODE: Open rules for testing
-    // TODO: Restore strict rules for production
-    match /{document=**} {
-      allow read, write: if true;
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
-    // === PRODUCTION RULES (uncomment when ready) ===
-    // function isAuthenticated() {
-    //   return request.auth != null;
-    // }
-    // 
-    // function isAdmin() {
-    //   return isAuthenticated() && 
-    //     get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role in ['Quản trị viên', 'Quản lý'];
-    // }
-    // 
-    // function isStaff() {
-    //   return isAuthenticated() && 
-    //     exists(/databases/$(database)/documents/staff/$(request.auth.uid));
-    // }
-    // 
-    // match /students/{studentId} {
-    //   allow read: if isStaff();
-    //   allow write: if isAdmin();
-    // }
-    // 
-    // match /classes/{classId} {
-    //   allow read: if isStaff();
-    //   allow write: if isAdmin();
-    // }
-    // 
-    // match /staff/{staffId} {
-    //   allow read: if isStaff();
-    //   allow write: if isAdmin();
-    // }
-    // 
-    // match /parents/{parentId} {
-    //   allow read: if isStaff();
-    //   allow write: if isAdmin();
-    // }
-    // 
-    // match /attendance/{attendanceId} {
-    //   allow read: if isStaff();
-    //   allow write: if isStaff();
-    // }
-    // 
-    // match /tutoring/{tutoringId} {
-    //   allow read: if isStaff();
-    //   allow write: if isStaff();
-    // }
-    // 
-    // match /contracts/{contractId} {
-    //   allow read: if isStaff();
-    //   allow write: if isAdmin();
-    // }
-    // 
-    // match /{document=**} {
-    //   allow read: if isStaff();
-    //   allow write: if isAdmin();
-    // }
+    function isAdmin() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role in ['Quản trị viên', 'Quản lý'];
+    }
+    
+    function isStaff() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/staff/$(request.auth.uid));
+    }
+    
+    // Students collection
+    match /students/{studentId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Classes collection
+    match /classes/{classId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Staff collection
+    match /staff/{staffId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Parents collection
+    match /parents/{parentId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Student Attendance collection
+    match /studentAttendance/{docId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Tutoring collection
+    match /tutoring/{tutoringId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Contracts collection
+    match /contracts/{contractId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Leads collection (Customer Database)
+    match /leads/{leadId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Campaigns collection
+    match /campaigns/{campaignId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Invoices collection
+    match /invoices/{invoiceId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Feedback collection
+    match /feedback/{feedbackId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    match /feedbacks/{feedbackId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Enrollments collection
+    match /enrollments/{enrollmentId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Class Sessions collection
+    match /classSessions/{sessionId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Work Sessions collection
+    match /workSessions/{sessionId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Settings collection
+    match /settings/{settingId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    // Curriculums collection
+    match /curriculums/{curriculumId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Rooms collection
+    match /rooms/{roomId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    // Branches collection
+    match /branches/{branchId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    // Financial Transactions collection
+    match /financialTransactions/{transactionId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Salary related collections
+    match /staffSalaries/{salaryId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    match /salaryRules/{ruleId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    match /salaryRanges/{rangeId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    // Staff Attendance collection
+    match /staffAttendance/{docId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Holidays collection
+    match /holidays/{holidayId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
+    // Products collection
+    match /products/{productId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Homework Records collection
+    match /homeworkRecords/{recordId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Default: deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

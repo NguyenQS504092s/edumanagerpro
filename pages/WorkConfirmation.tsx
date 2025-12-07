@@ -8,8 +8,14 @@
 import React, { useState, useMemo } from 'react';
 import { Search, CheckCircle, Clock, Plus, User } from 'lucide-react';
 import { useAutoWorkSessions, WorkSession } from '../src/hooks/useAutoWorkSessions';
+import { usePermissions } from '../src/hooks/usePermissions';
+import { useAuth } from '../src/hooks/useAuth';
 
 export const WorkConfirmation: React.FC = () => {
+  // Permissions - Teachers only see their own work
+  const { isTeacher, canApprove, staffId } = usePermissions();
+  const { staffData } = useAuth();
+  const canApproveWork = canApprove('work_confirmation');
   // Week navigation - current week
   const [currentWeekStart] = useState(() => {
     const today = new Date();
@@ -51,6 +57,13 @@ export const WorkConfirmation: React.FC = () => {
     const today = new Date().toISOString().split('T')[0];
     
     return sessions.filter(s => {
+      // Teachers only see their own work
+      if (isTeacher && staffData) {
+        const myName = staffData.name;
+        const myId = staffData.id || staffId;
+        if (s.staffName !== myName && s.staffId !== myId) return false;
+      }
+
       // Time filter
       if (timeFilter === 'Hôm nay' && s.date !== today) return false;
       
@@ -65,7 +78,7 @@ export const WorkConfirmation: React.FC = () => {
       
       return true;
     });
-  }, [sessions, timeFilter, statusFilter, positionFilter, searchTerm]);
+  }, [sessions, timeFilter, statusFilter, positionFilter, searchTerm, isTeacher, staffData, staffId]);
 
   // Confirm all pending
   const handleConfirmAll = async () => {

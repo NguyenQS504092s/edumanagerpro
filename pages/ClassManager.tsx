@@ -1,9 +1,29 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Plus, Edit, Trash, ChevronDown, RotateCcw, X, BookOpen, Users, Clock, Calendar } from 'lucide-react';
-import { ClassStatus, ClassModel } from '../types';
+import { Search, Plus, Edit, Trash, ChevronDown, RotateCcw, X, BookOpen, Users, Clock, Calendar, UserPlus, UserMinus, Eye, MapPin, User, GraduationCap, CheckCircle } from 'lucide-react';
+import { ClassStatus, ClassModel, Student, StudentStatus, TrainingHistoryEntry } from '../types';
 import { useClasses } from '../src/hooks/useClasses';
-import { collection, getDocs } from 'firebase/firestore';
+import { usePermissions } from '../src/hooks/usePermissions';
+import { useAuth } from '../src/hooks/useAuth';
+import { collection, getDocs, doc, updateDoc, arrayUnion, arrayRemove, query, where, addDoc, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
+import { getScheduleTime, getScheduleDays, formatSchedule } from '../src/utils/scheduleUtils';
+
+// Helper to safely format date
+const formatDateSafe = (dateValue: any): string => {
+  if (!dateValue) return '?';
+  try {
+    // Handle Timestamp object
+    if (dateValue && typeof dateValue.toDate === 'function') {
+      return dateValue.toDate().toLocaleDateString('vi-VN');
+    }
+    // Handle string or Date
+    const date = new Date(dateValue);
+    if (isNaN(date.getTime())) return '?';
+    return date.toLocaleDateString('vi-VN');
+  } catch {
+    return '?';
+  }
+};
 
 export const ClassManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -13,13 +33,40 @@ export const ClassManager: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassModel | null>(null);
   const [selectedClassHistory, setSelectedClassHistory] = useState<ClassModel | null>(null);
-  const [showProgressModal, setShowProgressModal] = useState(false);
+  // Progress modal removed - progress is now auto-calculated from sessions
   const [showTestModal, setShowTestModal] = useState(false);
+  const [showStudentsModal, setShowStudentsModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedClassForAction, setSelectedClassForAction] = useState<ClassModel | null>(null);
+  const [selectedClassForStudents, setSelectedClassForStudents] = useState<ClassModel | null>(null);
+  const [selectedClassForDetail, setSelectedClassForDetail] = useState<ClassModel | null>(null);
 
-  const { classes, loading, createClass, updateClass, deleteClass } = useClasses({
+  // Permissions
+  const { canCreate, canEdit, canDelete, shouldShowOnlyOwnClasses, shouldHideParentPhone, staffId } = usePermissions();
+  const { user, staffData } = useAuth();
+  const canCreateClass = canCreate('classes');
+  const canEditClass = canEdit('classes');
+  const canDeleteClass = canDelete('classes');
+  const onlyOwnClasses = shouldShowOnlyOwnClasses('classes');
+
+  const { classes: allClasses, loading, createClass, updateClass, deleteClass } = useClasses({
     searchTerm: searchTerm || undefined
   });
+
+  // Filter classes based on permission (onlyOwnClasses for teachers)
+  const classes = useMemo(() => {
+    if (!onlyOwnClasses || !staffData) return allClasses;
+    const myName = staffData.name;
+    const myId = staffData.id || staffId;
+    return allClasses.filter(cls => 
+      cls.teacher === myName || 
+      cls.teacherId === myId ||
+      cls.assistant === myName ||
+      cls.assistantId === myId ||
+      cls.foreignTeacher === myName ||
+      cls.foreignTeacherId === myId
+    );
+  }, [allClasses, onlyOwnClasses, staffData, staffId]);
 
   // State for student counts per class
   const [classStudentCounts, setClassStudentCounts] = useState<Record<string, {
@@ -28,7 +75,38 @@ export const ClassManager: React.FC = () => {
     active: number;
     debt: number;
     reserved: number;
+    dropped: number;
   }>>({});
+
+  // State for session progress per class (Single Source of Truth)
+  const [classSessionStats, setClassSessionStats] = useState<Record<string, {
+    completed: number;
+    total: number;
+  }>>({});
+
+  // State for curriculum autocomplete (used in parent, also duplicated in ClassFormModal)
+  const [curriculumList, setCurriculumList] = useState<string[]>([]);
+
+  // Fetch curriculums from Firestore
+  useEffect(() => {
+    const fetchCurriculums = async () => {
+      try {
+        const curriculumsSnap = await getDocs(collection(db, 'curriculums'));
+        const list = curriculumsSnap.docs.map(doc => doc.data().name as string).filter(Boolean);
+        // Also extract unique curriculums from existing classes
+        const classesSnap = await getDocs(collection(db, 'classes'));
+        const classCurriculums = classesSnap.docs
+          .map(doc => doc.data().curriculum as string)
+          .filter(Boolean);
+        // Combine and deduplicate
+        const allCurriculums = [...new Set([...list, ...classCurriculums])].sort();
+        setCurriculumList(allCurriculums);
+      } catch (err) {
+        console.error('Error fetching curriculums:', err);
+      }
+    };
+    fetchCurriculums();
+  }, []);
 
   // Normalize student status
   const normalizeStudentStatus = (status: string): string => {
@@ -41,18 +119,23 @@ export const ClassManager: React.FC = () => {
     return status;
   };
 
-  // Fetch students and calculate counts for each class
+  // REALTIME: Listen to students collection and calculate counts for each class
   useEffect(() => {
-    const fetchStudentCounts = async () => {
-      try {
-        const studentsSnap = await getDocs(collection(db, 'students'));
-        const students = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (classes.length === 0) {
+      setClassStudentCounts({});
+      return;
+    }
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'students'),
+      (snapshot) => {
+        const students = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-        const counts: Record<string, { total: number; trial: number; active: number; debt: number; reserved: number }> = {};
+        const counts: Record<string, { total: number; trial: number; active: number; debt: number; reserved: number; dropped: number }> = {};
         
         // Initialize counts for all classes
         classes.forEach(cls => {
-          counts[cls.id] = { total: 0, trial: 0, active: 0, debt: 0, reserved: 0 };
+          counts[cls.id] = { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0 };
         });
         
         // Count students per class
@@ -74,27 +157,79 @@ export const ClassManager: React.FC = () => {
           
           if (matchedClassId && counts[matchedClassId]) {
             counts[matchedClassId].total++;
-            if (status === 'Học thử') counts[matchedClassId].trial++;
-            else if (status === 'Đang học') counts[matchedClassId].active++;
-            else if (status === 'Nợ phí' || student.hasDebt) counts[matchedClassId].debt++;
-            else if (status === 'Bảo lưu') counts[matchedClassId].reserved++;
+            
+            // Count by status - "Nợ phí" takes priority if hasDebt is true
+            if (status === 'Nợ phí' || student.hasDebt === true) {
+              counts[matchedClassId].debt++;
+            } else if (status === 'Học thử') {
+              counts[matchedClassId].trial++;
+            } else if (status === 'Đang học') {
+              counts[matchedClassId].active++;
+            } else if (status === 'Bảo lưu') {
+              counts[matchedClassId].reserved++;
+            } else if (status === 'Nghỉ học') {
+              counts[matchedClassId].dropped++;
+            }
           }
         });
         
         setClassStudentCounts(counts);
-      } catch (err) {
-        console.error('Error fetching student counts:', err);
+      },
+      (err) => {
+        console.error('Error listening to students:', err);
       }
-    };
-    
-    if (classes.length > 0) {
-      fetchStudentCounts();
+    );
+
+    return () => unsubscribe();
+  }, [classes]);
+
+  // REALTIME: Listen to classSessions collection for session stats
+  useEffect(() => {
+    if (classes.length === 0) {
+      setClassSessionStats({});
+      return;
     }
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'classSessions'),
+      (snapshot) => {
+        const stats: Record<string, { completed: number; total: number }> = {};
+        
+        // Initialize stats for all classes
+        classes.forEach(cls => {
+          stats[cls.id] = { completed: 0, total: 0 };
+        });
+        
+        // Count sessions per class
+        snapshot.docs.forEach(doc => {
+          const data = doc.data();
+          const classId = data.classId;
+          if (classId && stats[classId]) {
+            stats[classId].total++;
+            if (data.status === 'Đã học') {
+              stats[classId].completed++;
+            }
+          }
+        });
+        
+        setClassSessionStats(stats);
+      },
+      (err) => {
+        console.error('Error listening to sessions:', err);
+      }
+    );
+
+    return () => unsubscribe();
   }, [classes]);
 
   // Get counts for a specific class
   const getClassCounts = (classId: string) => {
-    return classStudentCounts[classId] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0 };
+    return classStudentCounts[classId] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0 };
+  };
+
+  // Get session stats for a specific class
+  const getSessionStats = (classId: string) => {
+    return classSessionStats[classId] || { completed: 0, total: 0 };
   };
 
   // Filter by teacher on client side
@@ -116,6 +251,7 @@ export const ClassManager: React.FC = () => {
       active: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).active), 0),
       owing: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).debt), 0),
       reserved: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).reserved), 0),
+      dropped: filteredClasses.reduce((sum, c) => sum + (getClassCounts(c.id).dropped), 0),
     };
   }, [filteredClasses, classStudentCounts]);
 
@@ -167,24 +303,142 @@ export const ClassManager: React.FC = () => {
 
   const handleUpdate = async (id: string, data: Partial<ClassModel>) => {
     try {
+      const existingClass = classes.find(c => c.id === id);
+      if (!existingClass) {
+        throw new Error('Không tìm thấy lớp học');
+      }
+
+      // Detect changes and create training history entries
+      const historyEntries: TrainingHistoryEntry[] = [];
+      const now = new Date().toISOString();
+
+      // Check schedule change
+      if (data.schedule && data.schedule !== existingClass.schedule) {
+        historyEntries.push({
+          id: `TH_${Date.now()}_schedule`,
+          date: now,
+          type: 'schedule_change',
+          description: 'Thay đổi lịch học',
+          oldValue: existingClass.schedule || 'Chưa có',
+          newValue: data.schedule,
+          changedBy: user?.displayName || 'System'
+        });
+      }
+
+      // Check teacher change
+      if (data.teacher && data.teacher !== existingClass.teacher) {
+        historyEntries.push({
+          id: `TH_${Date.now()}_teacher`,
+          date: now,
+          type: 'teacher_change',
+          description: 'Thay đổi giáo viên chính',
+          oldValue: existingClass.teacher || 'Chưa có',
+          newValue: data.teacher,
+          changedBy: user?.displayName || 'System'
+        });
+      }
+
+      // Check assistant change
+      if (data.assistant !== undefined && data.assistant !== existingClass.assistant) {
+        historyEntries.push({
+          id: `TH_${Date.now()}_assistant`,
+          date: now,
+          type: 'teacher_change',
+          description: 'Thay đổi trợ giảng',
+          oldValue: existingClass.assistant || 'Chưa có',
+          newValue: data.assistant || 'Không có',
+          changedBy: user?.displayName || 'System'
+        });
+      }
+
+      // Check foreign teacher change
+      if (data.foreignTeacher !== undefined && data.foreignTeacher !== existingClass.foreignTeacher) {
+        historyEntries.push({
+          id: `TH_${Date.now()}_foreign`,
+          date: now,
+          type: 'teacher_change',
+          description: 'Thay đổi giáo viên nước ngoài',
+          oldValue: existingClass.foreignTeacher || 'Chưa có',
+          newValue: data.foreignTeacher || 'Không có',
+          changedBy: user?.displayName || 'System'
+        });
+      }
+
+      // Check room change
+      if (data.room !== undefined && data.room !== existingClass.room) {
+        historyEntries.push({
+          id: `TH_${Date.now()}_room`,
+          date: now,
+          type: 'room_change',
+          description: 'Thay đổi phòng học',
+          oldValue: existingClass.room || 'Chưa có',
+          newValue: data.room || 'Không có',
+          changedBy: user?.displayName || 'System'
+        });
+      }
+
+      // Check status change
+      if (data.status && data.status !== existingClass.status) {
+        historyEntries.push({
+          id: `TH_${Date.now()}_status`,
+          date: now,
+          type: 'status_change',
+          description: 'Thay đổi trạng thái lớp',
+          oldValue: existingClass.status || 'Chưa có',
+          newValue: data.status,
+          changedBy: user?.displayName || 'System'
+        });
+      }
+
+      // Merge new history entries with existing
+      if (historyEntries.length > 0) {
+        const existingHistory = existingClass.trainingHistory || [];
+        data.trainingHistory = [...existingHistory, ...historyEntries];
+      }
+
+      console.log('[handleUpdate] Updating class with data:', data);
       await updateClass(id, data);
+      console.log('[handleUpdate] Update successful');
       setShowEditModal(false);
       setEditingClass(null);
-    } catch (err) {
+      
+      // Wait for realtime update then reopen detail modal
+      setTimeout(() => {
+        const updatedClass = classes.find(c => c.id === id);
+        if (updatedClass) {
+          const mergedClass = { ...updatedClass, ...data };
+          setSelectedClassForDetail(mergedClass as ClassModel);
+          setShowDetailModal(true);
+        }
+      }, 200);
+    } catch (err: any) {
       console.error('Error updating class:', err);
+      alert('Lỗi khi cập nhật lớp học: ' + (err.message || err));
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Bạn có chắc muốn xóa lớp học này?')) return;
     try {
-      await deleteClass(id);
+      const result = await deleteClass(id);
+      if (!result.success) {
+        // Show validation error with option to force delete
+        const forceDelete = confirm(`${result.message}\n\nBạn có muốn xóa bắt buộc không? (Dữ liệu liên quan sẽ được cập nhật tự động)`);
+        if (forceDelete) {
+          const forceResult = await deleteClass(id, true);
+          if (forceResult.success) {
+            alert(forceResult.message);
+          }
+        }
+      } else {
+        alert(result.message);
+      }
     } catch (err) {
       console.error('Error deleting class:', err);
     }
   };
 
-  const statsColumns = ['STT', 'Lớp học', 'Tổng số học viên', 'Học viên học thử', 'Học viên đang học', 'Học viên nợ phí', 'Học viên bảo lưu', 'Tên giáo viên / Lịch học', 'Trạng thái'];
+  const statsColumns = ['STT', 'Lớp học', 'Tổng', 'Học thử', 'Đang học', 'Nợ phí', 'Bảo lưu', 'Tên giáo viên / Lịch học', 'Trạng thái'];
   const curriculumColumns = ['STT', 'Lớp học', 'Độ tuổi', 'Tên giáo viên / Lịch học', 'Giáo trình đang học', 'Lịch test', 'Trạng thái'];
   const columns = viewMode === 'stats' ? statsColumns : curriculumColumns;
 
@@ -202,7 +456,7 @@ export const ClassManager: React.FC = () => {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
         <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto flex-1">
           {/* Teacher Filter */}
-          <div className="relative min-w-[180px]">
+          <div className="min-w-[180px]">
             <select 
               className="w-full pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
               value={teacherFilter}
@@ -213,7 +467,6 @@ export const ClassManager: React.FC = () => {
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
-            <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
           </div>
 
           {/* Search */}
@@ -229,13 +482,15 @@ export const ClassManager: React.FC = () => {
           </div>
         </div>
 
-        <button 
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 bg-green-500 text-white px-5 py-2.5 rounded-md hover:bg-green-600 transition-colors text-sm font-semibold"
-        >
-          <Plus size={18} />
-          Tạo mới
-        </button>
+        {canCreateClass && (
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 bg-green-500 text-white px-5 py-2.5 rounded-md hover:bg-green-600 transition-colors text-sm font-semibold"
+          >
+            <Plus size={18} />
+            Tạo mới
+          </button>
+        )}
       </div>
 
       {/* View Mode Toggle */}
@@ -264,21 +519,24 @@ export const ClassManager: React.FC = () => {
       </div>
 
       {/* Stats Ribbon */}
-      <div className="grid grid-cols-5 bg-gray-50 rounded-lg border border-gray-200 divide-x divide-gray-200">
+      <div className="grid grid-cols-6 bg-gray-50 rounded-lg border border-gray-200 divide-x divide-gray-200">
         <div className="flex items-center justify-center p-3">
-          <span className="text-blue-600 font-bold text-sm">Tổng số học viên: {pageStats.total}</span>
+          <span className="text-blue-600 font-bold text-sm">Tổng: {pageStats.total}</span>
         </div>
         <div className="flex items-center justify-center p-3">
-          <span className="text-yellow-600 font-bold text-sm">Học viên học thử: {pageStats.trial}</span>
+          <span className="text-purple-600 font-bold text-sm">Học thử: {pageStats.trial}</span>
         </div>
         <div className="flex items-center justify-center p-3">
-          <span className="text-green-600 font-bold text-sm">Học viên đang học: {pageStats.active}</span>
+          <span className="text-green-600 font-bold text-sm">Đang học: {pageStats.active}</span>
         </div>
         <div className="flex items-center justify-center p-3">
-          <span className="text-red-600 font-bold text-sm">Học viên nợ phí: {pageStats.owing}</span>
+          <span className="text-red-600 font-bold text-sm">Nợ phí: {pageStats.owing}</span>
         </div>
         <div className="flex items-center justify-center p-3">
-          <span className="text-gray-800 font-bold text-sm">Học viên bảo lưu: {pageStats.reserved}</span>
+          <span className="text-orange-600 font-bold text-sm">Bảo lưu: {pageStats.reserved}</span>
+        </div>
+        <div className="flex items-center justify-center p-3">
+          <span className="text-gray-500 font-bold text-sm">Nghỉ học: {pageStats.dropped}</span>
         </div>
       </div>
 
@@ -305,11 +563,11 @@ export const ClassManager: React.FC = () => {
                 <th className="px-4 py-4 min-w-[150px]">Lớp học</th>
                 {viewMode === 'stats' ? (
                   <>
-                    <th className="px-4 py-4 text-center">Tổng số học viên</th>
-                    <th className="px-4 py-4 text-center">Học viên học thử</th>
-                    <th className="px-4 py-4 text-center">Học viên đang học</th>
-                    <th className="px-4 py-4 text-center">Học viên nợ phí</th>
-                    <th className="px-4 py-4 text-center">Học viên bảo lưu</th>
+                    <th className="px-3 py-4 text-center whitespace-nowrap">Tổng</th>
+                    <th className="px-3 py-4 text-center whitespace-nowrap">Học thử</th>
+                    <th className="px-3 py-4 text-center whitespace-nowrap">Đang học</th>
+                    <th className="px-3 py-4 text-center whitespace-nowrap">Nợ phí</th>
+                    <th className="px-3 py-4 text-center whitespace-nowrap">Bảo lưu</th>
                   </>
                 ) : (
                   <th className="px-4 py-4">Độ tuổi</th>
@@ -333,7 +591,10 @@ export const ClassManager: React.FC = () => {
                     
                     {/* Lớp học */}
                     <td className="px-4 py-4">
-                      <span className="font-bold text-blue-600 hover:text-blue-800 cursor-pointer block">
+                      <span 
+                        className="font-bold text-blue-600 hover:text-blue-800 cursor-pointer block"
+                        onClick={() => { setSelectedClassForDetail(cls); setShowDetailModal(true); }}
+                      >
                         {cls.name}
                       </span>
                       {viewMode === 'curriculum' && (
@@ -375,7 +636,7 @@ export const ClassManager: React.FC = () => {
                           <p className="font-medium text-gray-900">{cls.teacher}</p>
                           {cls.assistant && <p className="text-xs text-gray-600">TG: {cls.assistant}</p>}
                           <p className="text-xs text-gray-500 mt-0.5">
-                            {cls.schedule || cls.startDate} {cls.room ? `(${cls.room})` : ''}
+                            {formatSchedule(cls.schedule) || cls.startDate} {cls.room ? `(${cls.room})` : ''}
                           </p>
                         </div>
                       ) : (
@@ -391,8 +652,8 @@ export const ClassManager: React.FC = () => {
                           <div className="flex items-start gap-2">
                             <Clock size={14} className="text-gray-400 mt-0.5" />
                             <div>
-                              <p className="text-sm text-gray-700">{cls.schedule?.match(/\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}/)?.[0] || '17:30 - 19:00'}</p>
-                              <p className="text-xs text-gray-500">{cls.schedule?.replace(/\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*/, '').trim() || cls.startDate} {cls.room ? `(${cls.room})` : ''}</p>
+                              <p className="text-sm text-gray-700">{getScheduleTime(cls.schedule) || '17:30 - 19:00'}</p>
+                              <p className="text-xs text-gray-500">{getScheduleDays(cls.schedule) || cls.startDate} {cls.room ? `(${cls.room})` : ''}</p>
                             </div>
                           </div>
                         </div>
@@ -406,25 +667,35 @@ export const ClassManager: React.FC = () => {
                           <div className="flex items-start gap-2">
                             <div className="flex-1">
                               <p className="text-teal-700 font-medium">{cls.curriculum || '-'}</p>
-                              {cls.progress && (
-                                <>
-                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2 mb-1">
-                                    <div 
-                                      className="bg-teal-500 h-1.5 rounded-full" 
-                                      style={{ width: `${(parseInt(cls.progress.split('/')[0]) / parseInt(cls.progress.split('/')[1])) * 100}%` }}
-                                    ></div>
-                                  </div>
-                                  <span className="text-xs text-gray-500">{cls.progress} Buổi</span>
-                                </>
-                              )}
+                              {(() => {
+                                const stats = getSessionStats(cls.id);
+                                if (stats.total > 0) {
+                                  return (
+                                    <>
+                                      <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2 mb-1">
+                                        <div 
+                                          className="bg-teal-500 h-1.5 rounded-full" 
+                                          style={{ width: `${(stats.completed / stats.total) * 100}%` }}
+                                        ></div>
+                                      </div>
+                                      <span className="text-xs text-gray-500">{stats.completed}/{stats.total} Buổi</span>
+                                    </>
+                                  );
+                                } else if (cls.totalSessions) {
+                                  return (
+                                    <>
+                                      <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2 mb-1">
+                                        <div className="bg-teal-500 h-1.5 rounded-full" style={{ width: '0%' }}></div>
+                                      </div>
+                                      <span className="text-xs text-gray-500">0/{cls.totalSessions} Buổi</span>
+                                    </>
+                                  );
+                                } else {
+                                  return <span className="text-xs text-gray-400">Chưa thiết lập</span>;
+                                }
+                              })()}
                             </div>
-                            <button 
-                              onClick={() => { setSelectedClassForAction(cls); setShowProgressModal(true); }}
-                              className="text-green-600 hover:bg-green-50 p-1 rounded-full border border-green-300"
-                              title="Cập nhật tiến trình"
-                            >
-                              <Plus size={14} />
-                            </button>
+                            {/* Progress is now auto-calculated from sessions */}
                           </div>
                         </td>
 
@@ -449,19 +720,30 @@ export const ClassManager: React.FC = () => {
                     <td className="px-4 py-4">
                       <div className="flex items-center justify-center gap-2">
                         <button 
-                          onClick={() => { setEditingClass(cls); setShowEditModal(true); }}
-                          className="text-gray-400 hover:text-indigo-600" 
-                          title="Sửa"
+                          onClick={() => { setSelectedClassForStudents(cls); setShowStudentsModal(true); }}
+                          className="text-gray-400 hover:text-green-600" 
+                          title="Quản lý học viên"
                         >
-                          <Edit size={18} />
+                          <Users size={18} />
                         </button>
-                        <button 
-                          onClick={() => handleDelete(cls.id)}
-                          className="text-gray-400 hover:text-red-600" 
-                          title="Xóa"
-                        >
-                          <Trash size={18} />
-                        </button>
+                        {canEditClass && (
+                          <button 
+                            onClick={() => { setEditingClass(cls); setShowEditModal(true); }}
+                            className="text-gray-400 hover:text-indigo-600" 
+                            title="Sửa"
+                          >
+                            <Edit size={18} />
+                          </button>
+                        )}
+                        {canDeleteClass && (
+                          <button 
+                            onClick={() => handleDelete(cls.id)}
+                            className="text-gray-400 hover:text-red-600" 
+                            title="Xóa"
+                          >
+                            <Trash size={18} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -471,12 +753,14 @@ export const ClassManager: React.FC = () => {
                   <td colSpan={viewMode === 'stats' ? 10 : 9} className="px-6 py-12 text-center text-gray-500">
                     <BookOpen size={32} className="mx-auto mb-2 opacity-30" />
                     <p>Chưa có lớp học nào</p>
-                    <button 
-                      onClick={() => setShowCreateModal(true)}
-                      className="mt-2 text-indigo-600 hover:underline text-sm"
-                    >
-                      + Tạo lớp học mới
-                    </button>
+                    {canCreateClass && (
+                      <button 
+                        onClick={() => setShowCreateModal(true)}
+                        className="mt-2 text-indigo-600 hover:underline text-sm"
+                      >
+                        + Tạo lớp học mới
+                      </button>
+                    )}
                   </td>
                 </tr>
               )}
@@ -487,7 +771,7 @@ export const ClassManager: React.FC = () => {
         {/* Footer */}
         <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-white">
           <span className="text-xs text-gray-500">
-            Hiển thị 1 đến {filteredClasses.length} trong tổng số {pageStats.total} bản ghi
+            Hiển thị {filteredClasses.length} / {classes.length} lớp học
           </span>
           <div className="flex gap-2">
             <button className="px-3 py-1 bg-white border border-gray-200 rounded text-xs font-medium text-gray-500" disabled>Trước</button>
@@ -513,18 +797,7 @@ export const ClassManager: React.FC = () => {
         />
       )}
 
-      {/* Progress Modal */}
-      {showProgressModal && selectedClassForAction && (
-        <ProgressModal
-          classData={selectedClassForAction}
-          onClose={() => { setShowProgressModal(false); setSelectedClassForAction(null); }}
-          onSubmit={async (newProgress) => {
-            await updateClass(selectedClassForAction.id, { progress: newProgress });
-            setShowProgressModal(false);
-            setSelectedClassForAction(null);
-          }}
-        />
-      )}
+      {/* Progress Modal removed - progress is now auto-calculated from sessions */}
 
       {/* Test Schedule Modal */}
       {showTestModal && selectedClassForAction && (
@@ -537,6 +810,37 @@ export const ClassManager: React.FC = () => {
             setShowTestModal(false);
             setSelectedClassForAction(null);
           }}
+        />
+      )}
+
+      {/* Students In Class Modal */}
+      {showStudentsModal && selectedClassForStudents && (
+        <StudentsInClassModal
+          classData={selectedClassForStudents}
+          onClose={() => { setShowStudentsModal(false); setSelectedClassForStudents(null); }}
+          onUpdate={() => {
+            // No-op: realtime listeners auto-update counts
+          }}
+        />
+      )}
+
+      {/* Class Detail Modal */}
+      {showDetailModal && selectedClassForDetail && (
+        <ClassDetailModal
+          classData={selectedClassForDetail}
+          studentCounts={classStudentCounts[selectedClassForDetail.id] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0 }}
+          onClose={() => { setShowDetailModal(false); setSelectedClassForDetail(null); }}
+          onEdit={() => {
+            setShowDetailModal(false);
+            setEditingClass(selectedClassForDetail);
+            setShowEditModal(true);
+          }}
+          onManageStudents={() => {
+            setShowDetailModal(false);
+            setSelectedClassForStudents(selectedClassForDetail);
+            setShowStudentsModal(true);
+          }}
+          canEdit={canEditClass}
         />
       )}
     </div>
@@ -561,7 +865,8 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
     assistant: classData?.assistant || '',
     foreignTeacher: classData?.foreignTeacher || '',
     curriculum: classData?.curriculum || '',
-    progress: classData?.progress || '0/24',
+    progress: classData?.progress || '0/48',
+    totalSessions: classData?.totalSessions || 48,
     schedule: classData?.schedule || '',
     scheduleStartTime: '',
     scheduleEndTime: '',
@@ -575,11 +880,79 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
     activeStudents: classData?.activeStudents || 0,
     debtStudents: classData?.debtStudents || 0,
     reservedStudents: classData?.reservedStudents || 0,
+    // Teacher duration allocation
+    teacherEnabled: classData?.teacherDuration ? true : !!classData?.teacher,
+    teacherDuration: classData?.teacherDuration || 90,
+    foreignTeacherEnabled: classData?.foreignTeacherDuration ? true : !!classData?.foreignTeacher,
+    foreignTeacherDuration: classData?.foreignTeacherDuration || 45,
+    assistantEnabled: classData?.assistantDuration ? true : !!classData?.assistant,
+    assistantDuration: classData?.assistantDuration || 90,
   });
+
+  // Fetch actual session count for existing classes without totalSessions
+  useEffect(() => {
+    const fetchActualSessionCount = async () => {
+      if (classData && !classData.totalSessions) {
+        try {
+          const sessionsSnap = await getDocs(
+            query(collection(db, 'classSessions'), where('classId', '==', classData.id))
+          );
+          const actualCount = sessionsSnap.size;
+          if (actualCount > 0) {
+            setFormData(prev => ({
+              ...prev,
+              totalSessions: actualCount,
+              progress: `0/${actualCount}`
+            }));
+          }
+        } catch (err) {
+          console.error('Error fetching session count:', err);
+        }
+      }
+    };
+    fetchActualSessionCount();
+  }, [classData]);
 
   // Dropdown options
   const [staffList, setStaffList] = useState<{ id: string; name: string; position: string }[]>([]);
   const [roomList, setRoomList] = useState<{ id: string; name: string }[]>([]);
+
+  // Curriculum autocomplete state
+  const [curriculumList, setCurriculumList] = useState<string[]>([]);
+  const [showCurriculumDropdown, setShowCurriculumDropdown] = useState(false);
+
+  // Fetch curriculums
+  useEffect(() => {
+    const fetchCurriculums = async () => {
+      try {
+        const curriculumsSnap = await getDocs(collection(db, 'curriculums'));
+        const list = curriculumsSnap.docs.map(doc => doc.data().name as string).filter(Boolean);
+        const classesSnap = await getDocs(collection(db, 'classes'));
+        const classCurriculums = classesSnap.docs
+          .map(doc => doc.data().curriculum as string)
+          .filter(Boolean);
+        const allCurriculums = [...new Set([...list, ...classCurriculums])].sort();
+        setCurriculumList(allCurriculums);
+      } catch (err) {
+        console.error('Error fetching curriculums:', err);
+      }
+    };
+    fetchCurriculums();
+  }, []);
+
+  // Save new curriculum
+  const saveCurriculum = async (name: string) => {
+    if (!name.trim() || curriculumList.includes(name.trim())) return;
+    try {
+      await addDoc(collection(db, 'curriculums'), { 
+        name: name.trim(),
+        createdAt: new Date().toISOString()
+      });
+      setCurriculumList(prev => [...prev, name.trim()].sort());
+    } catch (err) {
+      console.error('Error saving curriculum:', err);
+    }
+  };
 
   // Predefined options
   const ageGroupOptions = [
@@ -764,6 +1137,52 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
     }));
   };
 
+  // Calculate end date based on startDate, totalSessions, and scheduleDays
+  const calculateEndDate = (startDate: string, totalSessions: number, scheduleDays: string[]): string => {
+    if (!startDate || totalSessions <= 0 || scheduleDays.length === 0) return '';
+    
+    // Convert day strings to dayOfWeek numbers (0=Sunday, 1=Monday, ..., 6=Saturday)
+    const dayMap: Record<string, number> = {
+      '2': 1, '3': 2, '4': 3, '5': 4, '6': 5, '7': 6, 'CN': 0
+    };
+    const targetDays = scheduleDays.map(d => dayMap[d]).filter(d => d !== undefined);
+    
+    if (targetDays.length === 0) return '';
+    
+    let currentDate = new Date(startDate);
+    let sessionCount = 0;
+    const maxDays = 365 * 2; // Safety limit: 2 years
+    let daysChecked = 0;
+    
+    while (sessionCount < totalSessions && daysChecked < maxDays) {
+      const dayOfWeek = currentDate.getDay();
+      if (targetDays.includes(dayOfWeek)) {
+        sessionCount++;
+        if (sessionCount === totalSessions) {
+          return currentDate.toISOString().split('T')[0];
+        }
+      }
+      currentDate.setDate(currentDate.getDate() + 1);
+      daysChecked++;
+    }
+    
+    return '';
+  };
+
+  // Auto-calculate endDate when relevant fields change
+  useEffect(() => {
+    if (formData.startDate && formData.totalSessions > 0 && formData.scheduleDays.length > 0) {
+      const calculatedEndDate = calculateEndDate(
+        formData.startDate,
+        formData.totalSessions,
+        formData.scheduleDays
+      );
+      if (calculatedEndDate && calculatedEndDate !== formData.endDate) {
+        setFormData(prev => ({ ...prev, endDate: calculatedEndDate }));
+      }
+    }
+  }, [formData.startDate, formData.totalSessions, formData.scheduleDays]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -774,7 +1193,35 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
       schedule = `${formData.scheduleStartTime}-${formData.scheduleEndTime} ${daysStr}`;
     }
     
-    onSubmit({ ...formData, schedule });
+    // Build submit data - exclude UI-only fields
+    const submitData: any = {
+      name: formData.name,
+      branch: formData.branch,
+      ageGroup: formData.ageGroup,
+      curriculum: formData.curriculum,
+      progress: formData.progress,
+      totalSessions: formData.totalSessions,
+      schedule,
+      room: formData.room,
+      startDate: formData.startDate,
+      endDate: formData.endDate,
+      status: formData.status,
+      studentsCount: formData.studentsCount,
+      trialStudents: formData.trialStudents,
+      activeStudents: formData.activeStudents,
+      debtStudents: formData.debtStudents,
+      reservedStudents: formData.reservedStudents,
+      // Teacher fields - only include if enabled
+      teacher: formData.teacherEnabled ? formData.teacher : '',
+      teacherDuration: formData.teacherEnabled ? formData.teacherDuration : null,
+      foreignTeacher: formData.foreignTeacherEnabled ? formData.foreignTeacher : '',
+      foreignTeacherDuration: formData.foreignTeacherEnabled ? formData.foreignTeacherDuration : null,
+      assistant: formData.assistantEnabled ? formData.assistant : '',
+      assistantDuration: formData.assistantEnabled ? formData.assistantDuration : null,
+    };
+    
+    console.log('[ClassFormModal] Submitting:', submitData);
+    onSubmit(submitData);
   };
 
   return (
@@ -808,7 +1255,7 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
               <select
                 required
                 value={formData.teacher}
-                onChange={(e) => setFormData({ ...formData, teacher: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, teacher: e.target.value, teacherEnabled: !!e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
               >
                 <option value="">-- Chọn giáo viên --</option>
@@ -824,7 +1271,7 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
               <label className="block text-sm font-medium text-gray-700 mb-1">Trợ giảng</label>
               <select
                 value={formData.assistant}
-                onChange={(e) => setFormData({ ...formData, assistant: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, assistant: e.target.value, assistantEnabled: !!e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
               >
                 <option value="">-- Chọn trợ giảng --</option>
@@ -840,7 +1287,7 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
               <label className="block text-sm font-medium text-gray-700 mb-1">GV Nước ngoài</label>
               <select
                 value={formData.foreignTeacher}
-                onChange={(e) => setFormData({ ...formData, foreignTeacher: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, foreignTeacher: e.target.value, foreignTeacherEnabled: !!e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
               >
                 <option value="">-- Chọn GV nước ngoài --</option>
@@ -922,6 +1369,111 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
               )}
             </div>
 
+            {/* Phân bổ thời lượng giảng dạy */}
+            <div className="col-span-2 border-t pt-4 mt-2">
+              <label className="block text-sm font-medium text-gray-700 mb-3">Phân bổ thời lượng (phút/buổi)</label>
+              <div className="space-y-3">
+                {/* Giáo viên VN */}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={formData.teacherEnabled}
+                    onChange={(e) => setFormData({ ...formData, teacherEnabled: e.target.checked })}
+                    className="w-4 h-4 text-green-600 rounded"
+                  />
+                  <span className="text-sm text-gray-600 w-32">Giáo viên VN</span>
+                  <select
+                    value={formData.teacher}
+                    onChange={(e) => setFormData({ ...formData, teacher: e.target.value, teacherEnabled: !!e.target.value })}
+                    disabled={!formData.teacherEnabled}
+                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100"
+                  >
+                    <option value="">-- Chọn --</option>
+                    {vietnameseTeachers.map(t => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    value={formData.teacherDuration}
+                    onChange={(e) => setFormData({ ...formData, teacherDuration: parseInt(e.target.value) || 0 })}
+                    disabled={!formData.teacherEnabled}
+                    min={0}
+                    max={180}
+                    className="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center disabled:bg-gray-100"
+                    placeholder="Phút"
+                  />
+                  <span className="text-xs text-gray-500">phút</span>
+                </div>
+
+                {/* Giáo viên nước ngoài */}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={formData.foreignTeacherEnabled}
+                    onChange={(e) => setFormData({ ...formData, foreignTeacherEnabled: e.target.checked })}
+                    className="w-4 h-4 text-purple-600 rounded"
+                  />
+                  <span className="text-sm text-gray-600 w-32">GV Nước ngoài</span>
+                  <select
+                    value={formData.foreignTeacher}
+                    onChange={(e) => setFormData({ ...formData, foreignTeacher: e.target.value, foreignTeacherEnabled: !!e.target.value })}
+                    disabled={!formData.foreignTeacherEnabled}
+                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100"
+                  >
+                    <option value="">-- Chọn --</option>
+                    {foreignTeachers.map(t => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    value={formData.foreignTeacherDuration}
+                    onChange={(e) => setFormData({ ...formData, foreignTeacherDuration: parseInt(e.target.value) || 0 })}
+                    disabled={!formData.foreignTeacherEnabled}
+                    min={0}
+                    max={180}
+                    className="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center disabled:bg-gray-100"
+                    placeholder="Phút"
+                  />
+                  <span className="text-xs text-gray-500">phút</span>
+                </div>
+
+                {/* Trợ giảng */}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={formData.assistantEnabled}
+                    onChange={(e) => setFormData({ ...formData, assistantEnabled: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 rounded"
+                  />
+                  <span className="text-sm text-gray-600 w-32">Trợ giảng</span>
+                  <select
+                    value={formData.assistant}
+                    onChange={(e) => setFormData({ ...formData, assistant: e.target.value, assistantEnabled: !!e.target.value })}
+                    disabled={!formData.assistantEnabled}
+                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100"
+                  >
+                    <option value="">-- Chọn --</option>
+                    {assistants.map(t => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    value={formData.assistantDuration}
+                    onChange={(e) => setFormData({ ...formData, assistantDuration: parseInt(e.target.value) || 0 })}
+                    disabled={!formData.assistantEnabled}
+                    min={0}
+                    max={180}
+                    className="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm text-center disabled:bg-gray-100"
+                    placeholder="Phút"
+                  />
+                  <span className="text-xs text-gray-500">phút</span>
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Phòng học</label>
               <select
@@ -940,23 +1492,95 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Giáo trình</label>
-              <input
-                type="text"
-                value={formData.curriculum}
-                onChange={(e) => setFormData({ ...formData, curriculum: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="Academy Stars 1"
-              />
+              <div className="flex gap-2">
+                <select
+                  value={formData.curriculum}
+                  onChange={(e) => setFormData({ ...formData, curriculum: e.target.value })}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">-- Chọn giáo trình --</option>
+                  {curriculumList.map(curriculum => (
+                    <option key={curriculum} value={curriculum}>{curriculum}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowCurriculumDropdown(true)}
+                  className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1"
+                  title="Thêm giáo trình mới"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+              
+              {/* Add New Curriculum Modal */}
+              {showCurriculumDropdown && (
+                <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]" onClick={() => setShowCurriculumDropdown(false)}>
+                  <div className="bg-white rounded-lg shadow-xl p-4 w-80" onClick={(e) => e.stopPropagation()}>
+                    <h4 className="font-medium text-gray-800 mb-3">Thêm giáo trình mới</h4>
+                    <input
+                      type="text"
+                      id="newCurriculumInput"
+                      placeholder="Nhập tên giáo trình..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-3"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const input = e.target as HTMLInputElement;
+                          if (input.value.trim()) {
+                            saveCurriculum(input.value.trim());
+                            setFormData({ ...formData, curriculum: input.value.trim() });
+                            setShowCurriculumDropdown(false);
+                          }
+                        }
+                      }}
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setShowCurriculumDropdown(false)}
+                        className="px-3 py-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors text-sm"
+                      >
+                        Hủy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const input = document.getElementById('newCurriculumInput') as HTMLInputElement;
+                          if (input?.value.trim()) {
+                            saveCurriculum(input.value.trim());
+                            setFormData({ ...formData, curriculum: input.value.trim() });
+                            setShowCurriculumDropdown(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors text-sm"
+                      >
+                        Thêm
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
+            {/* Tổng số buổi học */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tiến trình</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tổng số buổi học *</label>
               <input
-                type="text"
-                value={formData.progress}
-                onChange={(e) => setFormData({ ...formData, progress: e.target.value })}
+                type="number"
+                value={formData.totalSessions}
+                onChange={(e) => {
+                  const total = parseInt(e.target.value) || 48;
+                  setFormData({ 
+                    ...formData, 
+                    totalSessions: total,
+                    progress: `0/${total}`
+                  });
+                }}
+                min={1}
+                max={200}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                placeholder="12/24"
+                placeholder="VD: 48"
               />
             </div>
 
@@ -968,6 +1592,27 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
                 onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Ngày kết thúc 
+                {formData.endDate && formData.scheduleDays.length > 0 && (
+                  <span className="text-xs text-green-600 font-normal ml-1">(tự động tính)</span>
+                )}
+              </label>
+              <input
+                type="date"
+                value={formData.endDate}
+                onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-gray-50"
+                readOnly={formData.scheduleDays.length > 0 && formData.totalSessions > 0}
+              />
+              {formData.startDate && formData.endDate && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Từ {new Date(formData.startDate).toLocaleDateString('vi-VN')} đến {new Date(formData.endDate).toLocaleDateString('vi-VN')}
+                </p>
+              )}
             </div>
 
             <div>
@@ -1044,116 +1689,7 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
   );
 };
 
-// ============================================
-// PROGRESS MODAL - Cập nhật tiến trình
-// ============================================
-interface ProgressModalProps {
-  classData: ClassModel;
-  onClose: () => void;
-  onSubmit: (newProgress: string) => void;
-}
-
-const ProgressModal: React.FC<ProgressModalProps> = ({ classData, onClose, onSubmit }) => {
-  const currentProgress = classData.progress?.split('/') || ['0', '24'];
-  const [completed, setCompleted] = useState(parseInt(currentProgress[0]) || 0);
-  const [total, setTotal] = useState(parseInt(currentProgress[1]) || 24);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSubmit(`${completed}/${total}`);
-  };
-
-  const handleAddSession = () => {
-    if (completed < total) {
-      setCompleted(completed + 1);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
-        <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-teal-50 to-green-50">
-          <div>
-            <h3 className="text-lg font-bold text-gray-900">Cập nhật tiến trình</h3>
-            <p className="text-sm text-gray-600">{classData.name}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <X size={22} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-5">
-          <div className="mb-4">
-            <p className="text-sm text-gray-600 mb-2">Giáo trình: <span className="font-medium text-teal-700">{classData.curriculum || '-'}</span></p>
-          </div>
-
-          <div className="flex items-center gap-4 mb-4">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Đã học</label>
-              <input
-                type="number"
-                min="0"
-                max={total}
-                value={completed}
-                onChange={(e) => setCompleted(parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
-            <span className="text-2xl text-gray-400 mt-6">/</span>
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tổng buổi</label>
-              <input
-                type="number"
-                min="1"
-                value={total}
-                onChange={(e) => setTotal(parseInt(e.target.value) || 1)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
-          </div>
-
-          {/* Progress bar preview */}
-          <div className="mb-4">
-            <div className="w-full bg-gray-200 rounded-full h-3">
-              <div 
-                className="bg-teal-500 h-3 rounded-full transition-all duration-300" 
-                style={{ width: `${(completed / total) * 100}%` }}
-              ></div>
-            </div>
-            <p className="text-center text-sm text-gray-600 mt-2">{completed}/{total} Buổi ({Math.round((completed / total) * 100)}%)</p>
-          </div>
-
-          {/* Quick add button */}
-          <button
-            type="button"
-            onClick={handleAddSession}
-            disabled={completed >= total}
-            className="w-full mb-4 py-2 border-2 border-dashed border-teal-300 text-teal-600 rounded-lg hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <Plus size={18} />
-            Thêm 1 buổi học
-          </button>
-
-          <div className="flex justify-end gap-3 pt-4 border-t">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600"
-            >
-              Lưu tiến trình
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
+// ProgressModal removed - progress is now auto-calculated from classSessions
 
 // ============================================
 // TEST SCHEDULE MODAL - Thêm lịch test
@@ -1261,3 +1797,749 @@ const TestScheduleModal: React.FC<TestScheduleModalProps> = ({ classData, onClos
     </div>
   );
 };
+
+// ============================================
+// STUDENTS IN CLASS MODAL
+// ============================================
+interface StudentsInClassModalProps {
+  classData: ClassModel;
+  onClose: () => void;
+  onUpdate: () => void;
+}
+
+const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, onClose, onUpdate }) => {
+  const [studentsInClass, setStudentsInClass] = useState<any[]>([]);
+  const [allStudents, setAllStudents] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+
+  // Normalize student status
+  const normalizeStatus = (status: string): string => {
+    const map: { [key: string]: string } = {
+      'Active': 'Đang học', 'active': 'Đang học',
+      'Trial': 'Học thử', 'trial': 'Học thử',
+      'Reserved': 'Bảo lưu', 'reserved': 'Bảo lưu',
+      'Debt': 'Nợ phí', 'debt': 'Nợ phí',
+      'Dropped': 'Nghỉ học', 'dropped': 'Nghỉ học',
+    };
+    return map[status] || status;
+  };
+
+  const getStatusColor = (status: string) => {
+    const normalized = normalizeStatus(status);
+    switch (normalized) {
+      case 'Đang học': return 'bg-green-100 text-green-700';
+      case 'Học thử': return 'bg-purple-100 text-purple-700';
+      case 'Nợ phí': return 'bg-red-100 text-red-700';
+      case 'Bảo lưu': return 'bg-orange-100 text-orange-700';
+      case 'Nghỉ học': return 'bg-gray-100 text-gray-700';
+      default: return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  // Fetch students
+  useEffect(() => {
+    const fetchStudents = async () => {
+      setLoading(true);
+      try {
+        const studentsSnap = await getDocs(collection(db, 'students'));
+        const students = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Students in this class (match by classId, classIds array, className, or class field)
+        const inClass = students.filter((s: any) => 
+          s.classId === classData.id || 
+          s.classIds?.includes(classData.id) ||
+          s.className === classData.name ||
+          s.class === classData.name
+        );
+        
+        // Students not in this class (available to add)
+        const notInClass = students.filter((s: any) => 
+          s.classId !== classData.id && 
+          !s.classIds?.includes(classData.id) &&
+          s.className !== classData.name &&
+          s.class !== classData.name
+        );
+        
+        setStudentsInClass(inClass);
+        setAllStudents(notInClass);
+      } catch (err) {
+        console.error('Error fetching students:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchStudents();
+  }, [classData]);
+
+  // Add student to class
+  const addStudentToClass = async (student: any) => {
+    setAdding(true);
+    try {
+      const studentRef = doc(db, 'students', student.id);
+      
+      // Update student with classId and add to classIds array
+      await updateDoc(studentRef, {
+        classId: classData.id,
+        className: classData.name,
+        class: classData.name,
+        classIds: arrayUnion(classData.id),
+      });
+      
+      // Update local state
+      setStudentsInClass(prev => [...prev, { ...student, classId: classData.id, className: classData.name }]);
+      setAllStudents(prev => prev.filter(s => s.id !== student.id));
+      onUpdate();
+    } catch (err) {
+      console.error('Error adding student to class:', err);
+      alert('Không thể thêm học viên vào lớp');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  // Remove student from class
+  const removeStudentFromClass = async (student: any) => {
+    if (!confirm(`Bạn có chắc muốn xóa ${student.fullName || student.name} khỏi lớp ${classData.name}?`)) return;
+    
+    try {
+      const studentRef = doc(db, 'students', student.id);
+      
+      // Remove class reference
+      await updateDoc(studentRef, {
+        classId: null,
+        className: null,
+        class: null,
+        classIds: arrayRemove(classData.id),
+      });
+      
+      // Update local state
+      setStudentsInClass(prev => prev.filter(s => s.id !== student.id));
+      setAllStudents(prev => [...prev, { ...student, classId: null, className: null }]);
+      onUpdate();
+    } catch (err) {
+      console.error('Error removing student from class:', err);
+      alert('Không thể xóa học viên khỏi lớp');
+    }
+  };
+
+  // Filter available students by search
+  const filteredAvailableStudents = useMemo(() => {
+    if (!searchTerm) return allStudents.slice(0, 10); // Show first 10 by default
+    const term = searchTerm.toLowerCase();
+    return allStudents.filter(s => 
+      (s.fullName || s.name || '').toLowerCase().includes(term) ||
+      (s.code || '').toLowerCase().includes(term) ||
+      (s.phone || '').includes(term)
+    ).slice(0, 20);
+  }, [allStudents, searchTerm]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-green-50 to-teal-50">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <Users className="text-green-600" size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Quản lý học viên trong lớp</h3>
+              <p className="text-sm text-gray-600">{classData.name} - {studentsInClass.length} học viên</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+            <X size={22} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+          {/* Current Students List */}
+          <div className="flex-1 p-4 border-r border-gray-200 overflow-y-auto">
+            <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+              Học viên trong lớp ({studentsInClass.length})
+            </h4>
+            
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-600"></div>
+              </div>
+            ) : studentsInClass.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <Users size={32} className="mx-auto mb-2 opacity-30" />
+                <p>Chưa có học viên nào trong lớp</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {studentsInClass.map((student) => (
+                  <div 
+                    key={student.id}
+                    className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:border-green-300 transition-colors"
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900">{student.fullName || student.name}</span>
+                        <span className="text-xs text-gray-500">({student.code})</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`text-xs px-2 py-0.5 rounded ${getStatusColor(student.status)}`}>
+                          {normalizeStatus(student.status)}
+                        </span>
+                        {student.phone && <span className="text-xs text-gray-500">{student.phone}</span>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeStudentFromClass(student)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Xóa khỏi lớp"
+                    >
+                      <UserMinus size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add Students Section */}
+          <div className="w-full lg:w-80 p-4 bg-gray-50 overflow-y-auto">
+            <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+              Thêm học viên
+            </h4>
+            
+            {/* Search */}
+            <div className="relative mb-3">
+              <input
+                type="text"
+                placeholder="Tìm theo tên, mã, SĐT..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+
+            {/* Available Students */}
+            <div className="space-y-2">
+              {filteredAvailableStudents.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">
+                  {searchTerm ? 'Không tìm thấy học viên' : 'Không có học viên khả dụng'}
+                </p>
+              ) : (
+                filteredAvailableStudents.map((student) => (
+                  <div 
+                    key={student.id}
+                    className="flex items-center justify-between p-2.5 bg-white border border-gray-200 rounded-lg hover:border-blue-300 transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-gray-800 text-sm truncate">{student.fullName || student.name}</p>
+                      <p className="text-xs text-gray-500">{student.code}</p>
+                    </div>
+                    <button
+                      onClick={() => addStudentToClass(student)}
+                      disabled={adding}
+                      className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors disabled:opacity-50"
+                      title="Thêm vào lớp"
+                    >
+                      <UserPlus size={18} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {allStudents.length > 10 && !searchTerm && (
+              <p className="text-xs text-gray-500 text-center mt-3">
+                Hiển thị 10/{allStudents.length} học viên. Tìm kiếm để xem thêm.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            Đóng
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// CLASS DETAIL MODAL
+// ============================================
+interface ClassDetailModalProps {
+  classData: ClassModel;
+  studentCounts: { total: number; trial: number; active: number; debt: number; reserved: number; dropped: number };
+  onClose: () => void;
+  onEdit: () => void;
+  onManageStudents: () => void;
+  canEdit: boolean;
+}
+
+const ClassDetailModal: React.FC<ClassDetailModalProps> = ({ 
+  classData, 
+  studentCounts, 
+  onClose, 
+  onEdit, 
+  onManageStudents,
+  canEdit 
+}) => {
+  const [studentsInClass, setStudentsInClass] = useState<any[]>([]);
+  const [sessionStats, setSessionStats] = useState<{ completed: number; total: number; upcoming: ClassSession[] }>({ completed: 0, total: 0, upcoming: [] });
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+
+  // Fetch students in class and session stats
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        // Fetch students
+        const studentsSnap = await getDocs(collection(db, 'students'));
+        const students = studentsSnap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter((s: any) => 
+            s.classId === classData.id || 
+            s.currentClassId === classData.id ||
+            s.class === classData.name ||
+            s.className === classData.name
+          );
+        setStudentsInClass(students);
+
+        // Fetch sessions
+        const sessionsSnap = await getDocs(
+          query(
+            collection(db, 'classSessions'),
+            where('classId', '==', classData.id)
+          )
+        );
+        const sessions = sessionsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ClassSession[];
+        const completed = sessions.filter(s => s.status === 'Đã học').length;
+        const today = new Date().toISOString().split('T')[0];
+        const upcoming = sessions
+          .filter(s => s.status === 'Chưa học' && s.date >= today)
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .slice(0, 3);
+        
+        setSessionStats({ completed, total: sessions.length, upcoming });
+      } catch (err) {
+        console.error('Error fetching class data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [classData.id, classData.name]);
+
+  // Generate sessions for this class
+  const handleGenerateSessions = async () => {
+    if (!classData.schedule || !classData.totalSessions) {
+      alert('Vui lòng cập nhật lịch học và tổng số buổi trước khi tạo buổi học');
+      return;
+    }
+    
+    if (!confirm(`Tạo ${classData.totalSessions} buổi học cho lớp ${classData.name}?`)) return;
+    
+    setGenerating(true);
+    try {
+      // Parse schedule
+      const DAY_MAP: Record<string, number> = {
+        'chủ nhật': 0, 'cn': 0,
+        'thứ 2': 1, 'thứ hai': 1, 't2': 1,
+        'thứ 3': 2, 'thứ ba': 2, 't3': 2,
+        'thứ 4': 3, 'thứ tư': 3, 't4': 3,
+        'thứ 5': 4, 'thứ năm': 4, 't5': 4,
+        'thứ 6': 5, 'thứ sáu': 5, 't6': 5,
+        'thứ 7': 6, 'thứ bảy': 6, 't7': 6,
+      };
+      const DAY_NAMES = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+      
+      const scheduleLower = classData.schedule.toLowerCase();
+      const days: Set<number> = new Set();
+      
+      for (const [dayName, dayNum] of Object.entries(DAY_MAP)) {
+        if (scheduleLower.includes(dayName)) days.add(dayNum);
+      }
+      const tMatches = classData.schedule.match(/T([2-7])/gi);
+      if (tMatches) {
+        tMatches.forEach(match => {
+          const n = parseInt(match.substring(1));
+          if (n >= 2 && n <= 7) days.add(n === 7 ? 6 : n - 1);
+        });
+      }
+      
+      const scheduleDays = Array.from(days).sort();
+      if (scheduleDays.length === 0) {
+        alert('Không thể phân tích lịch học. Vui lòng kiểm tra định dạng.');
+        setGenerating(false);
+        return;
+      }
+      
+      // Parse time
+      const timeMatch = classData.schedule.match(/(\d{1,2})[h:](\d{2})?\s*[-–]\s*(\d{1,2})[h:](\d{2})?/);
+      const time = timeMatch 
+        ? `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}-${timeMatch[3].padStart(2, '0')}:${(timeMatch[4] || '00').padStart(2, '0')}`
+        : null;
+      
+      // Generate sessions
+      const sessions: any[] = [];
+      let currentDate = classData.startDate ? new Date(classData.startDate) : new Date();
+      let sessionNumber = 1;
+      let daysChecked = 0;
+      
+      while (sessionNumber <= classData.totalSessions && daysChecked < 365) {
+        const dayOfWeek = currentDate.getDay();
+        if (scheduleDays.includes(dayOfWeek)) {
+          sessions.push({
+            classId: classData.id,
+            className: classData.name,
+            sessionNumber,
+            date: currentDate.toISOString().split('T')[0],
+            dayOfWeek: DAY_NAMES[dayOfWeek],
+            time,
+            room: classData.room || null,
+            teacherName: classData.teacher || null,
+            status: 'Chưa học',
+            createdAt: new Date().toISOString(),
+          });
+          sessionNumber++;
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+        daysChecked++;
+      }
+      
+      // Save to Firestore
+      for (const session of sessions) {
+        await addDoc(collection(db, 'classSessions'), session);
+      }
+      
+      alert(`Đã tạo ${sessions.length} buổi học!`);
+      
+      // Refresh session stats
+      setSessionStats({ completed: 0, total: sessions.length, upcoming: sessions.slice(0, 3) as ClassSession[] });
+    } catch (err) {
+      console.error('Error generating sessions:', err);
+      alert('Lỗi khi tạo buổi học');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Đang hoạt động':
+      case 'Active':
+        return 'bg-green-100 text-green-700';
+      case 'Kết thúc':
+        return 'bg-gray-100 text-gray-700';
+      case 'Tạm dừng':
+        return 'bg-yellow-100 text-yellow-700';
+      default:
+        return 'bg-blue-100 text-blue-700';
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold">{classData.name}</h2>
+              <div className="flex items-center gap-2 mt-1">
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(classData.status)}`}>
+                  {classData.status}
+                </span>
+                {classData.level && (
+                  <span className="text-blue-200 text-sm">• {classData.level}</span>
+                )}
+              </div>
+            </div>
+            <button onClick={onClose} className="text-white/80 hover:text-white">
+              <X size={24} />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Info Grid */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <User className="text-blue-600 mt-0.5" size={20} />
+              <div>
+                <p className="text-xs text-gray-500">Giáo viên VN</p>
+                <p className="font-medium text-gray-800">{classData.teacher || 'Chưa phân công'}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <GraduationCap className="text-purple-600 mt-0.5" size={20} />
+              <div>
+                <p className="text-xs text-gray-500">Giáo viên NN</p>
+                <p className="font-medium text-gray-800">{classData.foreignTeacher || 'Không có'}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <Clock className="text-green-600 mt-0.5" size={20} />
+              <div>
+                <p className="text-xs text-gray-500">Lịch học</p>
+                <p className="font-medium text-gray-800">{formatSchedule(classData.schedule) || 'Chưa có'}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <MapPin className="text-red-600 mt-0.5" size={20} />
+              <div>
+                <p className="text-xs text-gray-500">Phòng học</p>
+                <p className="font-medium text-gray-800">{classData.room || 'Chưa xếp'}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <Calendar className="text-orange-600 mt-0.5" size={20} />
+              <div>
+                <p className="text-xs text-gray-500">Thời gian</p>
+                <p className="font-medium text-gray-800">
+                  {formatDateSafe(classData.startDate)} → {formatDateSafe(classData.endDate)}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+              <BookOpen className="text-indigo-600 mt-0.5" size={20} />
+              <div>
+                <p className="text-xs text-gray-500">Giáo trình</p>
+                <p className="font-medium text-gray-800">{classData.curriculum || 'Chưa có'}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Session Progress */}
+          <div className={`rounded-lg p-4 ${classData.status === 'Kết thúc' ? 'bg-gray-100' : 'bg-indigo-50'}`}>
+            <h3 className={`font-semibold mb-3 flex items-center gap-2 ${classData.status === 'Kết thúc' ? 'text-gray-700' : 'text-indigo-900'}`}>
+              <CheckCircle size={18} />
+              Tiến độ buổi học
+            </h3>
+            {loading ? (
+              <div className="text-center text-indigo-600">Đang tải...</div>
+            ) : classData.status === 'Kết thúc' ? (
+              /* Lớp đã kết thúc */
+              <div className="text-gray-600 text-sm">
+                {sessionStats.total > 0 ? (
+                  <p>Lớp đã kết thúc - Hoàn thành {sessionStats.completed}/{sessionStats.total} buổi</p>
+                ) : (
+                  <p>Lớp đã kết thúc (không có dữ liệu buổi học)</p>
+                )}
+              </div>
+            ) : sessionStats.total > 0 ? (
+              <>
+                <div className="flex items-center gap-4 mb-3">
+                  <div className="flex-1 bg-indigo-200 rounded-full h-3">
+                    <div 
+                      className="bg-indigo-600 h-3 rounded-full transition-all"
+                      style={{ width: `${(sessionStats.completed / sessionStats.total) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium text-indigo-900">
+                    {sessionStats.completed}/{sessionStats.total} buổi
+                  </span>
+                </div>
+                {sessionStats.upcoming.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-xs text-indigo-700 mb-2">Buổi học sắp tới:</p>
+                    <div className="space-y-1">
+                      {sessionStats.upcoming.map(s => (
+                        <div key={s.id} className="text-sm text-indigo-800 flex items-center gap-2">
+                          <span className="w-16">Buổi {s.sessionNumber}</span>
+                          <span>{new Date(s.date).toLocaleDateString('vi-VN')}</span>
+                          <span className="text-indigo-500">({s.dayOfWeek})</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : classData.totalSessions ? (
+              /* Có tổng số buổi nhưng chưa tạo sessions */
+              <div>
+                <div className="flex items-center gap-4 mb-3">
+                  <div className="flex-1 bg-indigo-200 rounded-full h-3">
+                    <div 
+                      className="bg-indigo-600 h-3 rounded-full transition-all"
+                      style={{ width: '0%' }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium text-indigo-900">
+                    0/{classData.totalSessions} buổi
+                  </span>
+                </div>
+                <button
+                  onClick={handleGenerateSessions}
+                  disabled={generating}
+                  className="w-full mt-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm font-medium"
+                >
+                  {generating ? 'Đang tạo...' : `Tạo ${classData.totalSessions} buổi học`}
+                </button>
+              </div>
+            ) : (
+              <div>
+                <p className="text-indigo-600 text-sm mb-2">Chưa thiết lập số buổi học</p>
+                <p className="text-xs text-gray-500">Vui lòng chỉnh sửa lớp để thêm tổng số buổi và lịch học</p>
+              </div>
+            )}
+          </div>
+
+          {/* Student Stats */}
+          <div className="bg-green-50 rounded-lg p-4">
+            <h3 className="font-semibold text-green-900 mb-3 flex items-center gap-2">
+              <Users size={18} />
+              Học viên ({studentCounts.total})
+            </h3>
+            <div className="grid grid-cols-5 gap-2 text-center">
+              <div className="bg-white rounded-lg p-2">
+                <p className="text-lg font-bold text-green-600">{studentCounts.active}</p>
+                <p className="text-xs text-gray-500">Đang học</p>
+              </div>
+              <div className="bg-white rounded-lg p-2">
+                <p className="text-lg font-bold text-purple-600">{studentCounts.trial}</p>
+                <p className="text-xs text-gray-500">Học thử</p>
+              </div>
+              <div className="bg-white rounded-lg p-2">
+                <p className="text-lg font-bold text-red-600">{studentCounts.debt}</p>
+                <p className="text-xs text-gray-500">Nợ phí</p>
+              </div>
+              <div className="bg-white rounded-lg p-2">
+                <p className="text-lg font-bold text-orange-600">{studentCounts.reserved}</p>
+                <p className="text-xs text-gray-500">Bảo lưu</p>
+              </div>
+              <div className="bg-white rounded-lg p-2">
+                <p className="text-lg font-bold text-gray-500">{studentCounts.dropped}</p>
+                <p className="text-xs text-gray-500">Nghỉ học</p>
+              </div>
+            </div>
+            
+            {/* Student List Preview */}
+            {studentsInClass.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-green-200">
+                <p className="text-xs text-green-700 mb-2">Danh sách học viên:</p>
+                <div className="flex flex-wrap gap-1">
+                  {studentsInClass.slice(0, 8).map((s: any) => (
+                    <span key={s.id} className="px-2 py-1 bg-white rounded text-xs text-gray-700">
+                      {s.fullName || s.name}
+                    </span>
+                  ))}
+                  {studentsInClass.length > 8 && (
+                    <span className="px-2 py-1 bg-green-200 rounded text-xs text-green-700">
+                      +{studentsInClass.length - 8} khác
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Training History */}
+          {classData.trainingHistory && classData.trainingHistory.length > 0 && (
+            <div className="bg-purple-50 rounded-lg p-4">
+              <h3 className="font-semibold text-purple-900 mb-3 flex items-center gap-2">
+                <Clock size={18} />
+                Lịch sử đào tạo ({classData.trainingHistory.length})
+              </h3>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {[...classData.trainingHistory]
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                  .map((entry) => (
+                    <div key={entry.id} className="bg-white rounded-lg p-3 border border-purple-100">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          entry.type === 'schedule_change' ? 'bg-blue-100 text-blue-700' :
+                          entry.type === 'teacher_change' ? 'bg-green-100 text-green-700' :
+                          entry.type === 'room_change' ? 'bg-orange-100 text-orange-700' :
+                          entry.type === 'status_change' ? 'bg-red-100 text-red-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {entry.type === 'schedule_change' ? 'Lịch học' :
+                           entry.type === 'teacher_change' ? 'Giáo viên' :
+                           entry.type === 'room_change' ? 'Phòng học' :
+                           entry.type === 'status_change' ? 'Trạng thái' : 'Khác'}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {new Date(entry.date).toLocaleDateString('vi-VN', { 
+                            day: '2-digit', 
+                            month: '2-digit', 
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-800 font-medium">{entry.description}</p>
+                      <div className="text-xs text-gray-600 mt-1">
+                        <span className="line-through text-red-500">{entry.oldValue}</span>
+                        <span className="mx-2">→</span>
+                        <span className="text-green-600 font-medium">{entry.newValue}</span>
+                      </div>
+                      {entry.changedBy && (
+                        <p className="text-xs text-gray-400 mt-1">Bởi: {entry.changedBy}</p>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* Notes */}
+          {classData.notes && (
+            <div className="bg-yellow-50 rounded-lg p-4">
+              <h3 className="font-semibold text-yellow-900 mb-2">Ghi chú</h3>
+              <p className="text-sm text-yellow-800">{classData.notes}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-between">
+          <button
+            onClick={onManageStudents}
+            className="px-4 py-2 border border-green-500 text-green-600 rounded-lg hover:bg-green-50 flex items-center gap-2"
+          >
+            <Users size={18} /> Quản lý học viên
+          </button>
+          <div className="flex gap-2">
+            {canEdit && (
+              <button
+                onClick={onEdit}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2"
+              >
+                <Edit size={18} /> Chỉnh sửa
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Type for ClassSession used in detail modal
+interface ClassSession {
+  id: string;
+  classId: string;
+  sessionNumber: number;
+  date: string;
+  dayOfWeek: string;
+  status: string;
+}

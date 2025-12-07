@@ -42,7 +42,18 @@ export interface Student {
   parentPhone?: string; // Denormalized for display (auto-synced)
   status: StudentStatus;
   careHistory: CareLog[];
-  class?: string; // Current class name
+  class?: string; // Current class name (legacy)
+  classId?: string; // Primary class ID
+  classIds?: string[]; // All enrolled class IDs (for multi-class support)
+  registeredSessions?: number; // Số buổi đã đăng ký/đóng tiền
+  attendedSessions?: number; // Số buổi đã học (tự động tính từ điểm danh)
+  startSessionNumber?: number; // Buổi học bắt đầu (khi đăng ký giữa khoá)
+  enrollmentDate?: string; // Ngày đăng ký
+  startDate?: string; // Ngày bắt đầu học
+  expectedEndDate?: string; // Ngày kết thúc dự kiến (tự động tính)
+  reserveDate?: string; // Ngày bảo lưu
+  reserveNote?: string; // Ghi chú bảo lưu  
+  reserveSessions?: number; // Số buổi bảo lưu
 }
 
 export interface CareLog {
@@ -53,6 +64,18 @@ export interface CareLog {
   staff: string;
 }
 
+// Lịch sử thay đổi lớp học (giáo viên, lịch học, phòng học...)
+export interface TrainingHistoryEntry {
+  id: string;
+  date: string; // ISO date khi thay đổi
+  type: 'schedule_change' | 'teacher_change' | 'room_change' | 'status_change' | 'other';
+  description: string; // Mô tả chi tiết
+  oldValue?: string; // Giá trị cũ
+  newValue?: string; // Giá trị mới
+  changedBy?: string; // Người thay đổi
+  note?: string; // Ghi chú thêm
+}
+
 export interface ClassModel {
   id: string;
   name: string;
@@ -60,10 +83,14 @@ export interface ClassModel {
   curriculum: string;
   ageGroup: string;
   progress: string; // e.g., "12/24 Buổi"
+  totalSessions?: number; // Tổng số buổi học của lớp
   teacher: string;
   teacherId?: string;
+  teacherDuration?: number; // Thời lượng dạy của GV VN (phút)
   assistant: string;
+  assistantDuration?: number; // Thời lượng dạy của trợ giảng (phút)
   foreignTeacher?: string;
+  foreignTeacherDuration?: number; // Thời lượng dạy của GVNN (phút)
   studentsCount: number;
   trialStudents?: number;
   activeStudents?: number;
@@ -76,6 +103,7 @@ export interface ClassModel {
   endDate: string;
   createdAt?: string;
   updatedAt?: string;
+  trainingHistory?: TrainingHistoryEntry[]; // Lịch sử đào tạo
 }
 
 export interface Staff {
@@ -92,12 +120,21 @@ export interface Staff {
   startDate?: string;
 }
 
+export type HolidayApplyType = 'all_classes' | 'specific_classes' | 'specific_branch' | 'all_branches';
+
 export interface Holiday {
   id: string;
   name: string;
   startDate: string;
   endDate: string;
   status: 'Đã áp dụng' | 'Chưa áp dụng';
+  applyType: HolidayApplyType;
+  classIds?: string[]; // Khi applyType = 'specific_classes'
+  classNames?: string[]; // Tên lớp để hiển thị
+  branch?: string; // Khi applyType = 'specific_branch'
+  affectedSessionIds?: string[]; // Các session đã bị ảnh hưởng (để revert)
+  date?: string; // Legacy field for ordering
+  createdAt?: string;
 }
 
 export interface TutoringSession {
@@ -144,8 +181,22 @@ export interface Product {
   name: string;
   price: number;
   category: 'Sách' | 'Đồng phục' | 'Học liệu' | 'Khác';
-  stock: number;
+  stock: number; // Tổng tồn kho (deprecated - dùng branchStock)
+  branchStock?: Record<string, number>; // Tồn kho theo cơ sở { branchId: quantity }
   status: 'Kích hoạt' | 'Tạm khoá';
+}
+
+export interface InventoryTransfer {
+  id: string;
+  productId: string;
+  productName: string;
+  fromBranch: string;
+  toBranch: string;
+  quantity: number;
+  transferDate: string;
+  note?: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface Room {
@@ -159,14 +210,22 @@ export interface Room {
 export interface EnrollmentRecord {
   id: string;
   studentName: string;
+  studentId?: string;
+  classId?: string;
+  className?: string;
   sessions: number;
-  type: 'Hợp đồng mới' | 'Hợp đồng tái phí' | 'Ghi danh thủ công';
+  type: 'Hợp đồng mới' | 'Hợp đồng tái phí' | 'Ghi danh thủ công' | 'Tặng buổi' | 'Nhận tặng buổi' | 'Chuyển lớp' | 'Xóa khỏi lớp';
   contractCode?: string;
-  originalAmount: number;
-  finalAmount: number;
-  createdDate: string;
+  contractId?: string;
+  originalAmount?: number;
+  finalAmount?: number;
+  createdDate?: string;
+  createdAt?: string;
   createdBy: string;
+  staff?: string; // Alias for createdBy for display
   note?: string;
+  notes?: string; // Alias
+  reason?: string; // Lý do thay đổi
 }
 
 export interface Parent {
@@ -185,9 +244,12 @@ export interface FeedbackRecord {
   id: string;
   date: string;
   type: 'Call' | 'Form';
+  studentId?: string;
   studentName: string;
+  classId?: string;
   className: string;
-  teacher: string;
+  teacher?: string;
+  teacherScore?: number;
   curriculumScore?: number;
   careScore?: number;
   facilitiesScore?: number;
@@ -195,6 +257,11 @@ export interface FeedbackRecord {
   caller?: string; // For Call type
   content?: string; // For Call type
   status: 'Cần gọi' | 'Đã gọi' | 'Hoàn thành';
+  parentId?: string;
+  parentName?: string;
+  parentPhone?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SalaryRule {
@@ -291,6 +358,12 @@ export enum ContractType {
   PRODUCT = 'Học liệu'
 }
 
+export enum ContractCategory {
+  NEW = 'Hợp đồng mới',
+  RENEWAL = 'Hợp đồng tái phí',
+  MIGRATION = 'Hợp đồng liên kết'
+}
+
 export enum ContractStatus {
   DRAFT = 'Nháp',
   PAID = 'Đã thanh toán',
@@ -340,6 +413,7 @@ export interface Contract {
   id: string;
   code: string;
   type: ContractType;
+  category?: ContractCategory; // Loại hợp đồng: mới, tái phí, liên kết
   
   // Student Info
   studentId?: string;

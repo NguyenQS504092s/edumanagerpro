@@ -22,6 +22,7 @@ export type ModuleKey =
   | 'attendance_history'
   | 'enrollment_history'
   | 'tutoring'
+  | 'homework'
   | 'students'
   | 'students_reserved'
   | 'students_dropped'
@@ -73,6 +74,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
     attendance_history: { view: true, create: true, edit: true, delete: true },
     enrollment_history: { view: true, create: true, edit: true, delete: true },
     tutoring: { view: true, create: true, edit: true, delete: true },
+    homework: { view: true, create: true, edit: true, delete: true },
     students: { view: true, create: true, edit: true, delete: true },
     students_reserved: { view: true, create: true, edit: true, delete: true },
     students_dropped: { view: true, create: true, edit: true, delete: true },
@@ -107,6 +109,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
     attendance_history: { view: true, create: false, edit: false, delete: false },
     enrollment_history: { view: true, create: true, edit: true, delete: false },
     tutoring: { view: true, create: true, edit: true, delete: false },
+    homework: { view: true, create: true, edit: true, delete: false },
     students: { view: true, create: true, edit: true, delete: false },
     students_reserved: { view: true, create: true, edit: true, delete: false },
     students_dropped: { view: true, create: true, edit: true, delete: false },
@@ -141,6 +144,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
     attendance_history: { view: false, create: false, edit: false, delete: false },
     enrollment_history: { view: true, create: false, edit: false, delete: false },
     tutoring: { view: false, create: false, edit: false, delete: false },
+    homework: { view: false, create: false, edit: false, delete: false },
     students: { view: true, create: false, edit: false, delete: false },
     students_reserved: { view: true, create: false, edit: false, delete: false },
     students_dropped: { view: true, create: false, edit: false, delete: false },
@@ -175,6 +179,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
     attendance_history: { view: true, create: false, edit: false, delete: false, onlyOwnClasses: true },
     enrollment_history: { view: false, create: false, edit: false, delete: false }, // Ẩn
     tutoring: { view: true, create: true, edit: true, delete: false, onlyOwnClasses: true },
+    homework: { view: true, create: true, edit: true, delete: false, onlyOwnClasses: true },
     students: { view: true, create: false, edit: false, delete: false, onlyOwnClasses: true, hideParentPhone: true },
     students_reserved: { view: false, create: false, edit: false, delete: false }, // Ẩn
     students_dropped: { view: false, create: false, edit: false, delete: false }, // Ẩn
@@ -209,6 +214,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
     attendance_history: { view: true, create: false, edit: false, delete: false, onlyOwnClasses: true },
     enrollment_history: { view: false, create: false, edit: false, delete: false },
     tutoring: { view: true, create: true, edit: true, delete: false, onlyOwnClasses: true },
+    homework: { view: true, create: true, edit: true, delete: false, onlyOwnClasses: true },
     students: { view: true, create: false, edit: false, delete: false, onlyOwnClasses: true, hideParentPhone: true },
     students_reserved: { view: false, create: false, edit: false, delete: false },
     students_dropped: { view: false, create: false, edit: false, delete: false },
@@ -243,6 +249,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
     attendance_history: { view: true, create: false, edit: false, delete: false, onlyOwnClasses: true },
     enrollment_history: { view: false, create: false, edit: false, delete: false },
     tutoring: { view: true, create: true, edit: true, delete: false, onlyOwnClasses: true },
+    homework: { view: true, create: true, edit: true, delete: false, onlyOwnClasses: true },
     students: { view: true, create: false, edit: false, delete: false, onlyOwnClasses: true, hideParentPhone: true },
     students_reserved: { view: false, create: false, edit: false, delete: false },
     students_dropped: { view: false, create: false, edit: false, delete: false },
@@ -268,14 +275,32 @@ export const ROLE_PERMISSIONS: Record<UserRole, Partial<Record<ModuleKey, Module
 
 // Map position string to role
 export const POSITION_TO_ROLE: Record<string, UserRole> = {
+  // Admin variations
   'Quản lý (Admin)': 'admin',
+  'Quản trị viên': 'admin',
+  'Quản lý': 'admin',
+  'Admin': 'admin',
+  'admin': 'admin',
+  // CSKH variations
   'Tư vấn viên': 'cskh',
   'Lễ tân': 'cskh',
   'Nhân viên': 'cskh',
+  'CSKH': 'cskh',
+  // Kế toán
   'Kế toán': 'ketoan',
+  // Giáo viên Việt variations
   'Giáo Viên Việt': 'gv_viet',
+  'Giáo viên Việt': 'gv_viet',
+  'GV Việt': 'gv_viet',
+  // Giáo viên nước ngoài variations
   'Giáo Viên Nước Ngoài': 'gv_nuocngoai',
+  'Giáo viên nước ngoài': 'gv_nuocngoai',
+  'GV Ngoại': 'gv_nuocngoai',
+  'GVNN': 'gv_nuocngoai',
+  // Trợ giảng variations
   'Trợ Giảng': 'tro_giang',
+  'Trợ giảng': 'tro_giang',
+  'TG': 'tro_giang',
 };
 
 // Helper functions

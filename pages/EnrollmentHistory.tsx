@@ -30,13 +30,17 @@ export const EnrollmentHistory: React.FC = () => {
     switch(type) {
         case 'Hợp đồng mới': return 'bg-green-100 text-green-700 border-green-200';
         case 'Hợp đồng tái phí': return 'bg-blue-100 text-blue-700 border-blue-200';
-        case 'Ghi danh thủ công': return 'bg-gray-100 text-gray-600 border-gray-200';
+        case 'Ghi danh thủ công': return 'bg-amber-100 text-amber-700 border-amber-200';
+        case 'Tặng buổi': return 'bg-red-100 text-red-700 border-red-200';
+        case 'Nhận tặng buổi': return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        case 'Chuyển lớp': return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+        case 'Xóa khỏi lớp': return 'bg-gray-100 text-gray-600 border-gray-200';
         default: return 'bg-gray-100 text-gray-600';
     }
   };
 
-  const totalRevenue = filteredData.reduce((sum, item) => sum + item.finalAmount, 0);
-  const totalSessions = filteredData.reduce((sum, item) => sum + item.sessions, 0);
+  const totalRevenue = filteredData.reduce((sum, item) => sum + (item.finalAmount || 0), 0);
+  const totalSessions = filteredData.reduce((sum, item) => sum + (item.sessions || 0), 0);
 
   const exportToExcel = () => {
     const data = filteredData.map((item, index) => ({
@@ -45,10 +49,10 @@ export const EnrollmentHistory: React.FC = () => {
       'Số buổi': item.sessions,
       'Loại ghi danh': item.type,
       'Mã HĐ': item.contractCode || '-',
-      'Số tiền': item.finalAmount.toLocaleString('vi-VN') + 'đ',
-      'Ngày': item.createdDate,
-      'Nhân viên': item.staff,
-      'Ghi chú': item.notes || '',
+      'Số tiền': item.finalAmount ? item.finalAmount.toLocaleString('vi-VN') + 'đ' : '-',
+      'Ngày': item.createdDate || item.createdAt?.split('T')[0] || '-',
+      'Nhân viên': item.staff || item.createdBy,
+      'Ghi chú': item.reason || item.note || item.notes || '',
     }));
     
     const ws = XLSX.utils.json_to_sheet(data);
@@ -111,6 +115,10 @@ export const EnrollmentHistory: React.FC = () => {
                 <option value="Hợp đồng mới">Hợp đồng mới</option>
                 <option value="Hợp đồng tái phí">Hợp đồng tái phí</option>
                 <option value="Ghi danh thủ công">Ghi danh thủ công</option>
+                <option value="Tặng buổi">Tặng buổi</option>
+                <option value="Nhận tặng buổi">Nhận tặng buổi</option>
+                <option value="Chuyển lớp">Chuyển lớp</option>
+                <option value="Xóa khỏi lớp">Xóa khỏi lớp</option>
              </select>
              <div className="flex items-center gap-2">
                 <select
@@ -149,66 +157,56 @@ export const EnrollmentHistory: React.FC = () => {
             <table className="w-full text-left text-sm text-gray-600">
                 <thead className="bg-gray-50 text-xs uppercase font-bold text-gray-500">
                     <tr>
-                        <th className="px-6 py-4 w-16 text-center">No</th>
-                        <th className="px-6 py-4">Tên học viên</th>
-                        <th className="px-6 py-4 text-center">Số buổi</th>
-                        <th className="px-6 py-4">Kiểu ghi danh</th>
-                        <th className="px-6 py-4">Hợp đồng</th>
-                        <th className="px-6 py-4 text-right">Số tiền</th>
-                        <th className="px-6 py-4">Ngày tạo</th>
-                        <th className="px-6 py-4">Nhân viên tạo</th>
-                        <th className="px-6 py-4 max-w-[200px]">Ghi chú</th>
-                        <th className="px-4 py-4"></th>
+                        <th className="px-3 py-3 text-center whitespace-nowrap">No</th>
+                        <th className="px-3 py-3 whitespace-nowrap">Tên học viên</th>
+                        <th className="px-3 py-3 text-center whitespace-nowrap">Số buổi</th>
+                        <th className="px-3 py-3 whitespace-nowrap">Kiểu ghi danh</th>
+                        <th className="px-3 py-3 whitespace-nowrap">Hợp đồng</th>
+                        <th className="px-3 py-3 text-right whitespace-nowrap">Số tiền</th>
+                        <th className="px-3 py-3 whitespace-nowrap">Ngày tạo</th>
+                        <th className="px-3 py-3 whitespace-nowrap">Người tạo</th>
+                        <th className="px-3 py-3 whitespace-nowrap">Ghi chú</th>
+                        <th className="px-2 py-3"></th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                     {filteredData.length > 0 ? (
                         filteredData.map((record, index) => (
                             <tr key={record.id} className="hover:bg-gray-50 transition-colors group">
-                                <td className="px-6 py-4 text-center font-medium text-gray-400">{index + 1}</td>
-                                <td className="px-6 py-4">
+                                <td className="px-3 py-3 text-center font-medium text-gray-400">{index + 1}</td>
+                                <td className="px-3 py-3 whitespace-nowrap">
                                     <span className="font-bold text-gray-900">{record.studentName}</span>
                                 </td>
-                                <td className="px-6 py-4 text-center">
+                                <td className="px-3 py-3 text-center whitespace-nowrap">
                                     <span className={`font-bold ${record.sessions < 0 ? 'text-red-500' : 'text-gray-800'}`}>
                                         {record.sessions}
                                     </span>
                                 </td>
-                                <td className="px-6 py-4">
-                                    <span className={`inline-block px-2.5 py-1 rounded border text-[11px] font-semibold uppercase ${getTypeBadge(record.type)}`}>
+                                <td className="px-3 py-3 whitespace-nowrap">
+                                    <span className={`inline-block px-2 py-0.5 rounded border text-[11px] font-semibold uppercase ${getTypeBadge(record.type)}`}>
                                         {record.type}
                                     </span>
                                 </td>
-                                <td className="px-6 py-4 font-mono text-xs text-gray-500">
+                                <td className="px-3 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">
                                     {record.contractCode || '---'}
                                 </td>
-                                <td className="px-6 py-4 text-right">
-                                    <div className="flex flex-col items-end">
-                                        <span className="font-bold text-gray-900">{record.finalAmount.toLocaleString()} đ</span>
-                                        {record.originalAmount !== record.finalAmount && record.finalAmount > 0 && (
-                                            <span className="text-xs text-gray-400 line-through decoration-gray-400">
-                                                {record.originalAmount.toLocaleString()} đ
-                                            </span>
-                                        )}
-                                    </div>
+                                <td className="px-3 py-3 text-right whitespace-nowrap">
+                                    <span className="font-bold text-gray-900">{record.finalAmount.toLocaleString()} đ</span>
                                 </td>
-                                <td className="px-6 py-4 text-gray-600">
+                                <td className="px-3 py-3 text-gray-600 whitespace-nowrap">
                                     {record.createdDate}
                                 </td>
-                                <td className="px-6 py-4">
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[10px] font-bold">
-                                            {record.createdBy.charAt(0)}
-                                        </div>
-                                        <span className="text-xs">{record.createdBy}</span>
-                                    </div>
+                                <td className="px-3 py-3 whitespace-nowrap" title={record.createdBy}>
+                                    <span className="text-xs text-gray-700">
+                                        {record.createdBy.length > 12 ? record.createdBy.slice(0, 10) + '...' : record.createdBy}
+                                    </span>
                                 </td>
-                                <td className="px-6 py-4 text-gray-500 italic max-w-[200px] truncate" title={record.note}>
-                                    {record.note || ''}
+                                <td className="px-3 py-3 text-gray-500 text-xs max-w-[150px] truncate" title={record.note}>
+                                    {record.note || '-'}
                                 </td>
-                                <td className="px-4 py-4 text-right">
+                                <td className="px-2 py-3 text-right">
                                     <button className="text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <MoreHorizontal size={18} />
+                                        <MoreHorizontal size={16} />
                                     </button>
                                 </td>
                             </tr>

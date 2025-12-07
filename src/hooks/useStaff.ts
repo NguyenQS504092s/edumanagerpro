@@ -1,9 +1,11 @@
 /**
- * useStaff Hook
+ * useStaff Hook - Realtime listener
  * React hook for staff operations
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../config/firebase';
 import { Staff } from '../../types';
 import * as staffService from '../services/staffService';
 
@@ -24,45 +26,65 @@ interface UseStaffReturn {
 }
 
 export const useStaff = (props?: UseStaffProps): UseStaffReturn => {
-  const [staff, setStaff] = useState<Staff[]>([]);
+  const [allStaff, setAllStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchStaff = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await staffService.getStaff({
-        department: props?.department,
-        role: props?.role,
-        status: props?.status,
-      });
-      setStaff(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Realtime listener
   useEffect(() => {
-    fetchStaff();
-  }, [props?.department, props?.role, props?.status]);
+    setLoading(true);
+    setError(null);
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'staff'),
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Staff[];
+        setAllStaff(data);
+        setLoading(false);
+      },
+      (err) => {
+        setError(err.message || 'Không thể tải danh sách nhân viên');
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Client-side filtering
+  const staff = useMemo(() => {
+    let filtered = allStaff;
+    
+    if (props?.department) {
+      filtered = filtered.filter(s => s.department === props.department);
+    }
+    if (props?.role) {
+      filtered = filtered.filter(s => s.role === props.role);
+    }
+    if (props?.status) {
+      filtered = filtered.filter(s => s.status === props.status);
+    }
+    
+    return filtered;
+  }, [allStaff, props?.department, props?.role, props?.status]);
 
   const createStaff = async (data: Omit<Staff, 'id'>): Promise<string> => {
-    const id = await staffService.createStaff(data);
-    await fetchStaff();
-    return id;
+    return await staffService.createStaff(data);
   };
 
   const updateStaff = async (id: string, data: Partial<Staff>): Promise<void> => {
     await staffService.updateStaff(id, data);
-    await fetchStaff();
   };
 
   const deleteStaff = async (id: string): Promise<void> => {
     await staffService.deleteStaff(id);
-    await fetchStaff();
+  };
+
+  const refresh = async (): Promise<void> => {
+    // No-op for realtime - data auto-updates
   };
 
   return {
@@ -72,6 +94,6 @@ export const useStaff = (props?: UseStaffProps): UseStaffReturn => {
     createStaff,
     updateStaff,
     deleteStaff,
-    refresh: fetchStaff,
+    refresh,
   };
 };

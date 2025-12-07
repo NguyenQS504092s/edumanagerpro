@@ -62,6 +62,7 @@ export const useAuth = () => {
 
   return {
     user,
+    staffData: user?.staffData || null,
     loading,
     error,
     signIn,
