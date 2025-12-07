@@ -10,12 +10,15 @@ import {
   User, Calendar, Save, FileCheck, Printer 
 } from 'lucide-react';
 import { 
-  Contract, ContractType, ContractItem, PaymentMethod,
+  Contract, ContractType, ContractCategory, ContractItem, PaymentMethod,
   Student, Course, Product, ContractStatus
 } from '../types';
 import { useAuth } from '../src/hooks/useAuth';
 import { useStudents } from '../src/hooks/useStudents';
 import { useContracts } from '../src/hooks/useContracts';
+import { createEnrollment } from '../src/services/enrollmentService';
+import { useCurriculums } from '../src/hooks/useCurriculums';
+import { useProducts } from '../src/hooks/useProducts';
 import { 
   formatCurrency, 
   numberToWords, 
@@ -233,9 +236,12 @@ export const ContractCreation: React.FC = () => {
   const { user } = useAuth();
   const { students } = useStudents();
   const { createContract } = useContracts();
+  const { curriculums } = useCurriculums({ status: 'Active' });
+  const { products } = useProducts({ status: 'Kích hoạt' });
 
   // Form state
   const [contractType, setContractType] = useState<ContractType>(ContractType.STUDENT);
+  const [contractCategory, setContractCategory] = useState<ContractCategory>(ContractCategory.NEW);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [items, setItems] = useState<ContractItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.FULL);
@@ -244,48 +250,28 @@ export const ContractCreation: React.FC = () => {
   const [showContractPreview, setShowContractPreview] = useState(false);
   const [createdContract, setCreatedContract] = useState<Partial<Contract> | null>(null);
 
-  // Mock courses data (should come from Firebase in production)
-  const MOCK_COURSES: Course[] = [
-    {
-      id: '1',
-      code: 'CAM48',
-      name: 'Cambridge 48',
-      totalSessions: 48,
-      pricePerSession: 150000,
-      totalPrice: 7200000,
-      status: 'Active',
-      createdAt: '',
-      updatedAt: '',
-    },
-    {
-      id: '2',
-      code: 'CAM72',
-      name: 'Cambridge 72',
-      totalSessions: 72,
-      pricePerSession: 120000,
-      totalPrice: 8640000,
-      status: 'Active',
-      createdAt: '',
-      updatedAt: '',
-    },
-    {
-      id: '3',
-      code: 'ONLINE',
-      name: 'Online 1 vs 1',
-      totalSessions: 24,
-      pricePerSession: 200000,
-      totalPrice: 4800000,
-      status: 'Active',
-      createdAt: '',
-      updatedAt: '',
-    },
-  ];
+  // Convert curriculums to course format for contract
+  const availableCourses: Course[] = curriculums.map(c => ({
+    id: c.id || '',
+    code: c.code,
+    name: c.name,
+    totalSessions: c.totalSessions,
+    pricePerSession: Math.round(c.tuitionFee / c.totalSessions),
+    totalPrice: c.tuitionFee,
+    status: c.status,
+    createdAt: c.createdAt || '',
+    updatedAt: c.updatedAt || '',
+  }));
 
-  const MOCK_PRODUCTS: Product[] = [
-    { id: '1', name: 'Sách giáo trình Cambridge', price: 250000, category: 'Sách', stock: 50, status: 'Kích hoạt' },
-    { id: '2', name: 'Bộ bút chì màu', price: 50000, category: 'Học liệu', stock: 100, status: 'Kích hoạt' },
-    { id: '3', name: 'Phần mềm học online', price: 500000, category: 'Học liệu', stock: 999, status: 'Kích hoạt' },
-  ];
+  // Convert products to expected format
+  const availableProducts: Product[] = products.map(p => ({
+    id: p.id || '',
+    name: p.name,
+    price: p.price,
+    category: p.category,
+    stock: p.stock,
+    status: p.status,
+  }));
 
   // Calculate totals
   const calculations = useMemo(() => {
@@ -374,6 +360,7 @@ export const ContractCreation: React.FC = () => {
 
       const contractData: Partial<Contract> = {
         type: contractType,
+        category: contractCategory,
         studentId: selectedStudent?.id,
         studentName: selectedStudent?.fullName,
         studentDOB: selectedStudent?.dob,
@@ -394,13 +381,47 @@ export const ContractCreation: React.FC = () => {
       };
 
       const contractId = await createContract(contractData);
+      const contractCode = contractId ? `Brisky${String(Date.now()).slice(-3)}` : 'Brisky001';
+      
+      // Create enrollment record for each course item when contract is PAID
+      if (status === ContractStatus.PAID && selectedStudent) {
+        // Map contract category to enrollment type
+        const enrollmentType = contractCategory === ContractCategory.RENEWAL 
+          ? 'Hợp đồng tái phí' 
+          : contractCategory === ContractCategory.MIGRATION
+          ? 'Hợp đồng liên kết' as any
+          : 'Hợp đồng mới';
+        
+        for (const item of items) {
+          if (item.type === 'course') {
+            try {
+              await createEnrollment({
+                studentId: selectedStudent.id,
+                studentName: selectedStudent.fullName || selectedStudent.name || '',
+                sessions: item.quantity || item.sessions || 0,
+                type: enrollmentType,
+                contractCode: contractCode,
+                finalAmount: item.finalPrice,
+                createdDate: new Date().toLocaleDateString('vi-VN'),
+                createdBy: user.displayName || user.email || 'Unknown',
+                note: `Ghi danh từ hợp đồng ${contractCode} - ${item.name}`,
+                courseName: item.name,
+                classId: item.classId || '',
+                className: item.className || '',
+              });
+            } catch (err) {
+              console.error('Error creating enrollment:', err);
+            }
+          }
+        }
+      }
       
       if (status === ContractStatus.PAID) {
         // Show preview only for paid contracts
         setCreatedContract({
           ...contractData,
           id: contractId,
-          code: contractId ? `Brisky${String(Date.now()).slice(-3)}` : 'Brisky001',
+          code: contractCode,
         });
         setShowContractPreview(true);
       } else {
@@ -462,6 +483,48 @@ export const ContractCreation: React.FC = () => {
             <p className="font-semibold">Học liệu</p>
           </button>
         </div>
+
+        {/* Contract Category - only for student type */}
+        {contractType === ContractType.STUDENT && (
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <h4 className="font-medium text-gray-700 mb-3">Phân loại hợp đồng</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                onClick={() => setContractCategory(ContractCategory.NEW)}
+                className={`p-3 border-2 rounded-lg text-sm transition-all ${
+                  contractCategory === ContractCategory.NEW
+                    ? 'border-green-500 bg-green-50 text-green-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <p className="font-semibold">Hợp đồng mới</p>
+                <p className="text-xs text-gray-500 mt-1">Học sinh mới đăng ký</p>
+              </button>
+              <button
+                onClick={() => setContractCategory(ContractCategory.RENEWAL)}
+                className={`p-3 border-2 rounded-lg text-sm transition-all ${
+                  contractCategory === ContractCategory.RENEWAL
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <p className="font-semibold">Hợp đồng tái phí</p>
+                <p className="text-xs text-gray-500 mt-1">Gia hạn/Đăng ký thêm</p>
+              </button>
+              <button
+                onClick={() => setContractCategory(ContractCategory.MIGRATION)}
+                className={`p-3 border-2 rounded-lg text-sm transition-all ${
+                  contractCategory === ContractCategory.MIGRATION
+                    ? 'border-purple-500 bg-purple-50 text-purple-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <p className="font-semibold">Hợp đồng liên kết</p>
+                <p className="text-xs text-gray-500 mt-1">Chuyển từ hệ thống cũ</p>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Student Selection (only if type is STUDENT) */}
@@ -525,7 +588,7 @@ export const ContractCreation: React.FC = () => {
           <div className="flex gap-2">
             <select
               onChange={(e) => {
-                const course = MOCK_COURSES.find(c => c.id === e.target.value);
+                const course = availableCourses.find(c => c.id === e.target.value);
                 if (course) {
                   addCourseItem(course);
                   e.target.value = '';
@@ -534,7 +597,7 @@ export const ContractCreation: React.FC = () => {
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
               <option value="">+ Thêm khóa học</option>
-              {MOCK_COURSES.map(course => (
+              {availableCourses.map(course => (
                 <option key={course.id} value={course.id}>
                   {course.name} - {formatCurrency(course.totalPrice)}
                 </option>
@@ -542,7 +605,7 @@ export const ContractCreation: React.FC = () => {
             </select>
             <select
               onChange={(e) => {
-                const product = MOCK_PRODUCTS.find(p => p.id === e.target.value);
+                const product = availableProducts.find(p => p.id === e.target.value);
                 if (product) {
                   addProductItem(product);
                   e.target.value = '';
@@ -551,7 +614,7 @@ export const ContractCreation: React.FC = () => {
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
               <option value="">+ Thêm sản phẩm</option>
-              {MOCK_PRODUCTS.map(product => (
+              {availableProducts.map(product => (
                 <option key={product.id} value={product.id}>
                   {product.name} - {formatCurrency(product.price)}
                 </option>

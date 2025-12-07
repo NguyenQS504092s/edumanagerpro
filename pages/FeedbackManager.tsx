@@ -3,10 +3,13 @@
  * Quản lý phản hồi phụ huynh (Gọi điện + Form khảo sát)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Phone, FileText, Plus, Search, X, Star, Trash2, CheckCircle } from 'lucide-react';
 import { useFeedback } from '../src/hooks/useFeedback';
+import { useStudents } from '../src/hooks/useStudents';
+import { useClasses } from '../src/hooks/useClasses';
 import { FeedbackRecord, FeedbackType, FeedbackStatus } from '../src/services/feedbackService';
+import { Student } from '../types';
 
 export const FeedbackManager: React.FC = () => {
   const { feedbacks, callFeedbacks, formFeedbacks, loading, error, createFeedback, updateStatus, deleteFeedback } = useFeedback();
@@ -188,6 +191,7 @@ export const FeedbackManager: React.FC = () => {
                   <th className="px-4 py-3">Ngày</th>
                   <th className="px-4 py-3">Học sinh</th>
                   <th className="px-4 py-3">Lớp</th>
+                  <th className="px-4 py-3 text-center">Giáo viên</th>
                   <th className="px-4 py-3 text-center">Chương trình</th>
                   <th className="px-4 py-3 text-center">Chăm sóc</th>
                   <th className="px-4 py-3 text-center">Cơ sở VC</th>
@@ -199,7 +203,7 @@ export const FeedbackManager: React.FC = () => {
               <tbody className="divide-y divide-gray-100">
                 {filteredForms.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-8 text-gray-400">
+                    <td colSpan={10} className="text-center py-8 text-gray-400">
                       <FileText size={48} className="mx-auto mb-2 opacity-20" />
                       Chưa có form khảo sát nào
                     </td>
@@ -209,6 +213,9 @@ export const FeedbackManager: React.FC = () => {
                     <td className="px-4 py-3">{fb.date}</td>
                     <td className="px-4 py-3 font-medium text-gray-900">{fb.studentName}</td>
                     <td className="px-4 py-3">{fb.className}</td>
+                    <td className="px-4 py-3 text-center">
+                      <ScoreBadge score={fb.teacherScore} />
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <ScoreBadge score={fb.curriculumScore} />
                     </td>
@@ -286,19 +293,83 @@ interface FeedbackModalProps {
 }
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, onSubmit }) => {
+  const { students } = useStudents();
+  const { classes } = useClasses();
+  
   const [formData, setFormData] = useState({
     type: 'Call' as FeedbackType,
     date: new Date().toISOString().split('T')[0],
+    studentId: '',
     studentName: '',
     className: '',
     caller: '',
     content: '',
+    teacherScore: 8,
     curriculumScore: 8,
     careScore: 8,
     facilitiesScore: 8,
     status: 'Cần gọi' as FeedbackStatus,
   });
   const [loading, setLoading] = useState(false);
+  const [studentSearch, setStudentSearch] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  // Filter students based on search
+  const filteredStudents = useMemo(() => {
+    if (!studentSearch.trim()) return [];
+    const searchLower = studentSearch.toLowerCase();
+    return students.filter(s => 
+      (s.fullName?.toLowerCase().includes(searchLower)) ||
+      ((s as any).name?.toLowerCase().includes(searchLower)) ||
+      (s.code?.toLowerCase().includes(searchLower))
+    ).slice(0, 10); // Limit to 10 suggestions
+  }, [students, studentSearch]);
+
+  // Get classes for selected student
+  const studentClasses = useMemo(() => {
+    if (!selectedStudent) return [];
+    
+    const studentClassIds: string[] = [];
+    const studentClassNames: string[] = [];
+    
+    // Collect all possible class references
+    if (selectedStudent.classId) studentClassIds.push(selectedStudent.classId);
+    if ((selectedStudent as any).classIds) studentClassIds.push(...(selectedStudent as any).classIds);
+    if (selectedStudent.class) studentClassNames.push(selectedStudent.class);
+    if ((selectedStudent as any).className) studentClassNames.push((selectedStudent as any).className);
+    
+    // Filter classes
+    return classes.filter(c => 
+      studentClassIds.includes(c.id) || 
+      studentClassNames.includes(c.name)
+    );
+  }, [selectedStudent, classes]);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Handle student selection
+  const handleSelectStudent = (student: Student) => {
+    setSelectedStudent(student);
+    setStudentSearch(student.fullName || (student as any).name || '');
+    setFormData(prev => ({
+      ...prev,
+      studentId: student.id,
+      studentName: student.fullName || (student as any).name || '',
+      className: '', // Reset class when student changes
+    }));
+    setShowSuggestions(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -361,28 +432,93 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, onSubmit }) => {
             </div>
           </div>
 
-          <div>
+          {/* Student Autocomplete */}
+          <div ref={searchRef} className="relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">Tên học sinh *</label>
             <input
               type="text"
               required
-              value={formData.studentName}
-              onChange={(e) => setFormData({ ...formData, studentName: e.target.value })}
+              value={studentSearch}
+              onChange={(e) => {
+                setStudentSearch(e.target.value);
+                setShowSuggestions(true);
+                if (!e.target.value) {
+                  setSelectedStudent(null);
+                  setFormData(prev => ({ ...prev, studentId: '', studentName: '', className: '' }));
+                }
+              }}
+              onFocus={() => setShowSuggestions(true)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              placeholder="Nguyễn Văn A"
+              placeholder="Gõ tên học sinh để tìm..."
+              autoComplete="off"
             />
+            
+            {/* Suggestions Dropdown */}
+            {showSuggestions && filteredStudents.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                {filteredStudents.map((student) => (
+                  <button
+                    key={student.id}
+                    type="button"
+                    onClick={() => handleSelectStudent(student)}
+                    className="w-full px-4 py-2 text-left hover:bg-indigo-50 flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="font-medium text-gray-900">
+                        {student.fullName || (student as any).name}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {student.code} • {student.class || (student as any).className || 'Chưa có lớp'}
+                      </p>
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      student.status === 'Đang học' ? 'bg-green-100 text-green-700' :
+                      student.status === 'Bảo lưu' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {student.status}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            
+            {showSuggestions && studentSearch && filteredStudents.length === 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-4 text-center text-gray-500 text-sm">
+                Không tìm thấy học sinh
+              </div>
+            )}
           </div>
 
+          {/* Class Dropdown - Only show when student is selected */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Lớp *</label>
-            <input
-              type="text"
-              required
-              value={formData.className}
-              onChange={(e) => setFormData({ ...formData, className: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              placeholder="Kindy 1A"
-            />
+            {selectedStudent ? (
+              studentClasses.length > 0 ? (
+                <select
+                  required
+                  value={formData.className}
+                  onChange={(e) => setFormData({ ...formData, className: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Chọn lớp --</option>
+                  {studentClasses.map((cls) => (
+                    <option key={cls.id} value={cls.name}>{cls.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500 text-sm">
+                  Học sinh chưa được gán vào lớp nào
+                </div>
+              )
+            ) : (
+              <input
+                type="text"
+                disabled
+                placeholder="Vui lòng chọn học sinh trước"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-400"
+              />
+            )}
           </div>
 
           {formData.type === 'Call' ? (
@@ -407,7 +543,18 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, onSubmit }) => {
               </div>
             </>
           ) : (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Giáo viên</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={formData.teacherScore}
+                  onChange={(e) => setFormData({ ...formData, teacherScore: parseInt(e.target.value) || 0 })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chương trình</label>
                 <input
@@ -420,7 +567,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, onSubmit }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Chăm sóc</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chăm sóc KH</label>
                 <input
                   type="number"
                   min={1}
@@ -431,7 +578,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, onSubmit }) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cơ sở VC</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cơ sở vật chất</label>
                 <input
                   type="number"
                   min={1}

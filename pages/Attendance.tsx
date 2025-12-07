@@ -2,15 +2,24 @@
  * Attendance Page
  * Điểm danh với 4 trạng thái: Có mặt, Vắng, Bảo lưu, Đã bồi
  * Logic: Vắng → Auto tạo record bồi bài
+ * + Tab Rà soát điểm danh cho lễ tân
  */
 
-import React, { useState, useEffect } from 'react';
-import { Calendar, Save, CheckCircle, AlertCircle, Clock, BookOpen, Users } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Calendar, Save, CheckCircle, AlertCircle, Clock, BookOpen, Users, Plus, ClipboardCheck, XCircle, AlertTriangle, Search } from 'lucide-react';
 import { AttendanceStatus, AttendanceRecord } from '../types';
 import { useClasses } from '../src/hooks/useClasses';
 import { useStudents } from '../src/hooks/useStudents';
 import { useAttendance } from '../src/hooks/useAttendance';
 import { useAuth } from '../src/hooks/useAuth';
+import { usePermissions } from '../src/hooks/usePermissions';
+import { useSessions } from '../src/hooks/useSessions';
+import { ClassSession } from '../src/services/sessionService';
+import { formatSchedule } from '../src/utils/scheduleUtils';
+import { collection, query, where, getDocs, addDoc } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
+import { useHolidays } from '../src/hooks/useHolidays';
+import { Holiday } from '../types';
 
 interface StudentAttendanceState {
   studentId: string;
@@ -20,26 +29,183 @@ interface StudentAttendanceState {
   note: string;
 }
 
+// Interface cho rà soát điểm danh
+interface UnmarkedStudent {
+  id: string;
+  sessionId: string;
+  sessionDate: string;
+  sessionNumber: number;
+  classId: string;
+  className: string;
+  studentId: string;
+  studentName: string;
+}
+
+interface SessionWithUnmarked {
+  sessionId: string;
+  sessionDate: string;
+  sessionNumber: number;
+  classId: string;
+  className: string;
+  unmarkedStudents: UnmarkedStudent[];
+}
+
 export const Attendance: React.FC = () => {
-  const { user } = useAuth();
-  const { classes, loading: classLoading } = useClasses();
+  const { user, staffData } = useAuth();
+  const { shouldShowOnlyOwnClasses, staffId } = usePermissions();
+  const onlyOwnClasses = shouldShowOnlyOwnClasses('attendance');
+
+  const { classes: allClasses, loading: classLoading } = useClasses();
   const { students: allStudents, loading: studentLoading } = useStudents();
   const { checkExisting, loadStudentAttendance, studentAttendance, saveAttendance } = useAttendance();
+  const { holidays } = useHolidays();
+
+  // Helper: Check if a date is a holiday for a specific class
+  const getHolidayForDate = (dateStr: string, classId?: string): Holiday | null => {
+    if (!holidays.length) return null;
+    
+    for (const holiday of holidays) {
+      if (holiday.status !== 'Đã áp dụng') continue;
+      
+      // Check if date falls within holiday range
+      const start = holiday.startDate;
+      const end = holiday.endDate || holiday.startDate;
+      if (dateStr < start || dateStr > end) continue;
+      
+      // Check apply type
+      if (holiday.applyType === 'all_classes' || holiday.applyType === 'all_branches') {
+        return holiday;
+      }
+      
+      if (holiday.applyType === 'specific_classes' && classId) {
+        if (holiday.classIds?.includes(classId)) {
+          return holiday;
+        }
+      }
+      
+      // For specific_branch, we'd need branch info from class - skip for now
+    }
+    
+    return null;
+  };
+
+  // Check if selected date is a holiday (for tab 1)
+  const selectedDateHoliday = useMemo(() => {
+    return getHolidayForDate(attendanceDate, selectedClassId);
+  }, [attendanceDate, selectedClassId, holidays]);
+
+  // Check if review date is a global holiday (for tab 2)
+  const reviewDateHoliday = useMemo(() => {
+    return getHolidayForDate(reviewDate);
+  }, [reviewDate, holidays]);
+
+  // Filter classes for teachers (onlyOwnClasses)
+  const classes = useMemo(() => {
+    if (!onlyOwnClasses || !staffData) return allClasses;
+    const myName = staffData.name;
+    const myId = staffData.id || staffId;
+    return allClasses.filter(cls => 
+      cls.teacher === myName || 
+      cls.teacherId === myId ||
+      cls.assistant === myName ||
+      cls.assistantId === myId ||
+      cls.foreignTeacher === myName ||
+      cls.foreignTeacherId === myId
+    );
+  }, [allClasses, onlyOwnClasses, staffData, staffId]);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'attendance' | 'review'>('attendance');
 
   const [selectedClassId, setSelectedClassId] = useState('');
+  const [selectedSession, setSelectedSession] = useState<ClassSession | null>(null);
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceData, setAttendanceData] = useState<StudentAttendanceState[]>([]);
   const [existingRecord, setExistingRecord] = useState<AttendanceRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [useSessionMode, setUseSessionMode] = useState(true); // Default to session mode
+  const [showAddSessionModal, setShowAddSessionModal] = useState(false);
+
+  // Review tab state
+  const [reviewDate, setReviewDate] = useState<string>(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return yesterday.toISOString().split('T')[0];
+  });
+  const [reviewFilterClass, setReviewFilterClass] = useState<string>('');
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [sessionsWithUnmarked, setSessionsWithUnmarked] = useState<SessionWithUnmarked[]>([]);
+  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
+  const [confirmDialog, setConfirmDialog] = useState<{
+    show: boolean;
+    type: 'late' | 'absent';
+    student: UnmarkedStudent | null;
+    reason: string;
+  }>({ show: false, type: 'late', student: null, reason: '' });
+  const [processingReview, setProcessingReview] = useState(false);
+
+  // Sessions hook
+  const { upcomingSessions, loading: sessionsLoading, markSessionComplete, addMakeup } = useSessions({ 
+    classId: selectedClassId 
+  });
 
   // Get students for selected class
-  const classStudents = allStudents.filter(s => s.class === classes.find(c => c.id === selectedClassId)?.name);
+  const selectedClass = classes.find(c => c.id === selectedClassId);
+  const classStudents = allStudents.filter(s => 
+    s.classId === selectedClassId || 
+    s.class === selectedClass?.name ||
+    s.className === selectedClass?.name ||
+    (s.classIds && s.classIds.includes(selectedClassId))
+  );
+
+  // Check if selected date is valid for class schedule
+  const isValidScheduleDay = useMemo(() => {
+    if (!selectedClass?.schedule || !attendanceDate) return true; // Allow if no schedule defined
+    
+    const date = new Date(attendanceDate);
+    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
+    
+    const schedule = selectedClass.schedule.toLowerCase();
+    
+    // Map Vietnamese day names to day numbers
+    const dayMap: Record<string, number[]> = {
+      'chủ nhật': [0],
+      'thứ 2': [1], 'thứ hai': [1], 't2': [1],
+      'thứ 3': [2], 'thứ ba': [2], 't3': [2],
+      'thứ 4': [3], 'thứ tư': [3], 't4': [3],
+      'thứ 5': [4], 'thứ năm': [4], 't5': [4],
+      'thứ 6': [5], 'thứ sáu': [5], 't6': [5],
+      'thứ 7': [6], 'thứ bảy': [6], 't7': [6],
+    };
+    
+    // Find which days are in the schedule
+    const scheduleDays: number[] = [];
+    for (const [dayName, dayNums] of Object.entries(dayMap)) {
+      if (schedule.includes(dayName)) {
+        scheduleDays.push(...dayNums);
+      }
+    }
+    
+    // Also check for "2, 4, 6" or "3, 5, 7" format
+    if (schedule.match(/\b2\b/)) scheduleDays.push(1);
+    if (schedule.match(/\b3\b/)) scheduleDays.push(2);
+    if (schedule.match(/\b4\b/)) scheduleDays.push(3);
+    if (schedule.match(/\b5\b/)) scheduleDays.push(4);
+    if (schedule.match(/\b6\b/)) scheduleDays.push(5);
+    if (schedule.match(/\b7\b/)) scheduleDays.push(6);
+    
+    // If no days found, allow any day
+    if (scheduleDays.length === 0) return true;
+    
+    return scheduleDays.includes(dayOfWeek);
+  }, [selectedClass?.schedule, attendanceDate]);
 
   // Initialize attendance data when class/date changes
   useEffect(() => {
     if (!selectedClassId || classStudents.length === 0) {
       setAttendanceData([]);
+      setExistingRecord(null);
       return;
     }
 
@@ -56,8 +222,8 @@ export const Attendance: React.FC = () => {
         setAttendanceData(
           classStudents.map(s => ({
             studentId: s.id,
-            studentName: s.fullName,
-            studentCode: s.code,
+            studentName: s.fullName || (s as any).name || 'Unknown',
+            studentCode: s.code || s.id.slice(0, 6),
             status: AttendanceStatus.PRESENT,
             note: '',
           }))
@@ -76,8 +242,8 @@ export const Attendance: React.FC = () => {
           const existing = studentAttendance.find(sa => sa.studentId === s.id);
           return {
             studentId: s.id,
-            studentName: s.fullName,
-            studentCode: s.code,
+            studentName: s.fullName || (s as any).name || 'Unknown',
+            studentCode: s.code || s.id.slice(0, 6),
             status: existing?.status || AttendanceStatus.PRESENT,
             note: existing?.note || '',
           };
@@ -111,17 +277,21 @@ export const Attendance: React.FC = () => {
     const selectedClass = classes.find(c => c.id === selectedClassId);
     if (!selectedClass) return;
 
+    // Use session date if in session mode, otherwise use manual date
+    const dateToUse = selectedSession?.date || attendanceDate;
+
     try {
       setSaving(true);
       setMessage(null);
 
       const absentCount = attendanceData.filter(s => s.status === AttendanceStatus.ABSENT).length;
 
-      await saveAttendance(
+      const attendanceId = await saveAttendance(
         {
           classId: selectedClassId,
           className: selectedClass.name,
-          date: attendanceDate,
+          date: dateToUse,
+          sessionNumber: selectedSession?.sessionNumber,
           totalStudents: attendanceData.length,
           present: attendanceData.filter(s => s.status === AttendanceStatus.PRESENT).length,
           absent: absentCount,
@@ -133,17 +303,35 @@ export const Attendance: React.FC = () => {
         attendanceData
       );
 
+      // Mark session as complete if using session mode
+      if (selectedSession?.id && attendanceId) {
+        try {
+          await markSessionComplete(selectedSession.id, attendanceId);
+        } catch (err) {
+          console.warn('Could not mark session complete:', err);
+        }
+      }
+
       setMessage({
         type: 'success',
         text: absentCount > 0
           ? `Lưu thành công! Đã tạo ${absentCount} lịch bồi bài cho học sinh vắng.`
           : 'Lưu điểm danh thành công!',
       });
+
+      // Reset selection
+      setSelectedSession(null);
     } catch (error) {
       setMessage({ type: 'error', text: 'Không thể lưu điểm danh. Vui lòng thử lại.' });
     } finally {
       setSaving(false);
     }
+  };
+
+  // Handle session selection
+  const handleSelectSession = (session: ClassSession) => {
+    setSelectedSession(session);
+    setAttendanceDate(session.date);
   };
 
   const getStatusStyle = (status: AttendanceStatus, current: AttendanceStatus) => {
@@ -174,37 +362,450 @@ export const Attendance: React.FC = () => {
     tutored: attendanceData.filter(s => s.status === AttendanceStatus.TUTORED).length,
   };
 
+  // ========== REVIEW TAB FUNCTIONS ==========
+  
+  // Helper: Check if a class has schedule on given date
+  const classHasScheduleOnDate = (classInfo: any, dateStr: string): boolean => {
+    if (!classInfo?.schedule) return false;
+    
+    const date = new Date(dateStr + 'T12:00:00'); // Add time to avoid timezone issues
+    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday...
+    const schedule = classInfo.schedule.toLowerCase();
+    
+    // Map day numbers - more comprehensive patterns
+    const dayPatterns: Record<number, string[]> = {
+      0: ['chủ nhật', 'cn', 'sunday'],
+      1: ['thứ 2', 'thứ hai', 't2', 'th 2', 'monday'],
+      2: ['thứ 3', 'thứ ba', 't3', 'th 3', 'tuesday'],
+      3: ['thứ 4', 'thứ tư', 't4', 'th 4', 'wednesday'],
+      4: ['thứ 5', 'thứ năm', 't5', 'th 5', 'thursday'],
+      5: ['thứ 6', 'thứ sáu', 't6', 'th 6', 'friday'],
+      6: ['thứ 7', 'thứ bảy', 't7', 'th 7', 'saturday'],
+    };
+    
+    const patterns = dayPatterns[dayOfWeek] || [];
+    const hasSchedule = patterns.some(p => schedule.includes(p));
+    
+    // Also check for number patterns like "2, 4, 6" or "2-4-6"
+    const dayNumber = dayOfWeek === 0 ? 'cn' : String(dayOfWeek + 1); // Convert to Vietnamese day numbering (2-7, CN)
+    const numberPattern = new RegExp(`\\b${dayOfWeek === 0 ? '(cn|chủ nhật)' : (dayOfWeek + 1)}\\b`, 'i');
+    const hasNumberMatch = numberPattern.test(schedule);
+    
+    console.log('[Schedule Check]', classInfo.name, '| Date:', dateStr, '| DayOfWeek:', dayOfWeek, '| Schedule:', classInfo.schedule, '| Match:', hasSchedule || hasNumberMatch);
+    
+    return hasSchedule || hasNumberMatch;
+  };
+
+  // Load unmarked students for review tab - NEW LOGIC: Read from class schedule
+  const loadUnmarkedStudents = async () => {
+    if (allClasses.length === 0) return;
+    
+    setReviewLoading(true);
+    try {
+      // Debug: Show all classes and their schedules
+      console.log('[Review] All classes:', allClasses.length);
+      allClasses.forEach(c => {
+        console.log('[Review] Class:', c.name, '| Status:', c.status, '| Schedule:', c.schedule);
+      });
+      
+      // Step 1: Find all active classes that should have session on reviewDate
+      // Include more status variations: Active, Đang học, Chờ mở (exclude: Kết thúc, Đã hủy, Đã kết thúc)
+      const excludeStatuses = ['Kết thúc', 'Đã kết thúc', 'Đã hủy', 'Cancelled', 'Completed'];
+      const activeClasses = allClasses.filter(c => {
+        const isActive = !excludeStatuses.includes(c.status);
+        const hasSchedule = classHasScheduleOnDate(c, reviewDate);
+        console.log('[Review] Filter:', c.name, '| Status:', c.status, '| isActive:', isActive, '| hasSchedule:', hasSchedule);
+        return isActive && hasSchedule;
+      });
+      
+      console.log('[Review] Classes with schedule on', reviewDate, ':', activeClasses.map(c => c.name));
+      
+      // Step 2: Get existing sessions for this date
+      const sessionsSnap = await getDocs(
+        query(collection(db, 'classSessions'), where('date', '==', reviewDate))
+      );
+      const existingSessions = new Map<string, any>();
+      sessionsSnap.docs.forEach(doc => {
+        const data = doc.data();
+        existingSessions.set(data.classId, { id: doc.id, ...data });
+      });
+      
+      console.log('[Review] Existing sessions in DB:', existingSessions.size);
+      
+      const results: SessionWithUnmarked[] = [];
+      
+      // Step 3: Process each class that should have session
+      for (const classInfo of activeClasses) {
+        // Check if class is on holiday
+        const classHoliday = getHolidayForDate(reviewDate, classInfo.id);
+        if (classHoliday) {
+          console.log('[Review] Class:', classInfo.name, '- SKIPPED: Holiday -', classHoliday.name);
+          continue;
+        }
+        
+        const existingSession = existingSessions.get(classInfo.id);
+        const sessionId = existingSession?.id || `temp_${classInfo.id}_${reviewDate}`;
+        const sessionNumber = existingSession?.sessionNumber || 0;
+        
+        // Get students in this class - include more status variations
+        const excludeStudentStatuses = ['Nghỉ học', 'Đã nghỉ', 'Bảo lưu', 'Dropped', 'Reserved'];
+        const allClassStudents = allStudents.filter(s => 
+          s.classId === classInfo.id || s.class === classInfo.name || s.className === classInfo.name
+        );
+        const studentsInClass = allClassStudents.filter(s => 
+          !excludeStudentStatuses.includes(s.status)
+        );
+        
+        console.log('[Review] Class:', classInfo.name, '| All students:', allClassStudents.length, '| Active:', studentsInClass.length);
+        if (allClassStudents.length > 0) {
+          console.log('[Review] Student statuses:', [...new Set(allClassStudents.map(s => s.status))]);
+        }
+        
+        if (studentsInClass.length === 0) {
+          console.log('[Review] Class:', classInfo.name, '- SKIPPED: No active students');
+          continue;
+        }
+        
+        // Get attendance records - check by sessionId OR by classId+date
+        let markedStudentIds = new Set<string>();
+        
+        if (existingSession) {
+          const attendanceSnap = await getDocs(
+            query(collection(db, 'studentAttendance'), where('sessionId', '==', existingSession.id))
+          );
+          attendanceSnap.docs.forEach(doc => markedStudentIds.add(doc.data().studentId));
+        }
+        
+        // Also check by classId + date (for records without sessionId)
+        const attendanceByDateSnap = await getDocs(
+          query(
+            collection(db, 'studentAttendance'), 
+            where('classId', '==', classInfo.id),
+            where('date', '==', reviewDate)
+          )
+        );
+        attendanceByDateSnap.docs.forEach(doc => markedStudentIds.add(doc.data().studentId));
+        
+        console.log('[Review] Class:', classInfo.name, '- Students:', studentsInClass.length, '- Marked:', markedStudentIds.size, '- HasSession:', !!existingSession);
+        
+        // Find unmarked students
+        const unmarked: UnmarkedStudent[] = studentsInClass
+          .filter(s => !markedStudentIds.has(s.id))
+          .map(s => ({
+            id: `${sessionId}_${s.id}`,
+            sessionId,
+            sessionDate: reviewDate,
+            sessionNumber,
+            classId: classInfo.id,
+            className: classInfo.name,
+            studentId: s.id,
+            studentName: s.fullName || (s as any).name || 'Unknown'
+          }));
+        
+        if (unmarked.length > 0) {
+          results.push({
+            sessionId,
+            sessionDate: reviewDate,
+            sessionNumber,
+            classId: classInfo.id,
+            className: classInfo.name,
+            unmarkedStudents: unmarked
+          });
+        } else {
+          console.log('[Review] Class:', classInfo.name, '- SKIPPED: All students already marked');
+        }
+      }
+      
+      results.sort((a, b) => a.className.localeCompare(b.className));
+      setSessionsWithUnmarked(results);
+      
+    } catch (err) {
+      console.error('Error loading unmarked students:', err);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  // Load when review date changes or tab switches
+  useEffect(() => {
+    if (activeTab === 'review') {
+      loadUnmarkedStudents();
+    }
+  }, [reviewDate, activeTab, allClasses.length, allStudents.length]);
+
+  // Filter sessions by class
+  const filteredReviewSessions = useMemo(() => {
+    if (!reviewFilterClass) return sessionsWithUnmarked;
+    return sessionsWithUnmarked.filter(s => s.classId === reviewFilterClass);
+  }, [sessionsWithUnmarked, reviewFilterClass]);
+
+  // Total unmarked count
+  const totalUnmarked = useMemo(() => {
+    return filteredReviewSessions.reduce((sum, s) => sum + s.unmarkedStudents.length, 0);
+  }, [filteredReviewSessions]);
+
+  // Confirm attendance review
+  const handleReviewConfirm = async () => {
+    if (!confirmDialog.student) return;
+    
+    setProcessingReview(true);
+    try {
+      const student = confirmDialog.student;
+      const isLate = confirmDialog.type === 'late';
+      
+      let actualSessionId = student.sessionId;
+      
+      // If sessionId is temporary (starts with temp_), create a real session first
+      if (student.sessionId.startsWith('temp_')) {
+        const classInfo = allClasses.find(c => c.id === student.classId);
+        const sessionDoc = await addDoc(collection(db, 'classSessions'), {
+          classId: student.classId,
+          className: student.className,
+          date: student.sessionDate,
+          sessionNumber: 0, // Will be updated by Cloud Function or manually
+          status: 'Chưa học',
+          dayOfWeek: new Date(student.sessionDate).toLocaleDateString('vi-VN', { weekday: 'long' }),
+          time: classInfo?.time || '',
+          room: classInfo?.room || '',
+          createdAt: new Date().toISOString(),
+          createdBy: staffData?.name || 'Lễ tân',
+          note: 'Tạo tự động từ Rà soát điểm danh'
+        });
+        actualSessionId = sessionDoc.id;
+        console.log('[Review] Created new session:', actualSessionId);
+      }
+      
+      await addDoc(collection(db, 'studentAttendance'), {
+        sessionId: actualSessionId,
+        classId: student.classId,
+        className: student.className,
+        studentId: student.studentId,
+        studentName: student.studentName,
+        date: student.sessionDate,
+        sessionNumber: student.sessionNumber,
+        status: isLate ? 'Đi trễ' : 'Vắng',
+        note: confirmDialog.reason || (isLate ? 'Đến trễ - Rà soát điểm danh' : 'Nghỉ học - Rà soát điểm danh'),
+        checkedAt: new Date().toISOString(),
+        checkedBy: staffData?.name || 'Lễ tân',
+        isReviewed: true,
+        reviewedAt: new Date().toISOString()
+      });
+      
+      // Remove from list
+      setSessionsWithUnmarked(prev => prev.map(session => {
+        if (session.sessionId !== student.sessionId) return session;
+        return {
+          ...session,
+          unmarkedStudents: session.unmarkedStudents.filter(s => s.studentId !== student.studentId)
+        };
+      }).filter(s => s.unmarkedStudents.length > 0));
+      
+      // Clear reason
+      setReviewReasons(prev => {
+        const newReasons = { ...prev };
+        delete newReasons[student.id];
+        return newReasons;
+      });
+      
+      setConfirmDialog({ show: false, type: 'late', student: null, reason: '' });
+      
+    } catch (err) {
+      console.error('Error confirming attendance:', err);
+      alert('Có lỗi xảy ra khi xác nhận!');
+    } finally {
+      setProcessingReview(false);
+    }
+  };
+
+  const openReviewConfirmDialog = (type: 'late' | 'absent', student: UnmarkedStudent) => {
+    setConfirmDialog({
+      show: true,
+      type,
+      student,
+      reason: reviewReasons[student.id] || ''
+    });
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-        <div>
-          <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <Users className="text-indigo-600" size={24} />
-            Điểm danh lớp học
-          </h2>
-          <p className="text-sm text-gray-500">4 trạng thái: Có mặt, Vắng, Bảo lưu, Đã bồi</p>
-        </div>
-        <div className="flex flex-wrap gap-3 w-full md:w-auto">
-          <select
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[200px] focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={selectedClassId}
-            onChange={(e) => setSelectedClassId(e.target.value)}
-            disabled={classLoading}
+      {/* Header with Tabs */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        {/* Tab Header */}
+        <div className="flex border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab('attendance')}
+            className={`flex-1 px-6 py-4 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
+              activeTab === 'attendance'
+                ? 'bg-indigo-50 text-indigo-700 border-b-2 border-indigo-600'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
           >
-            <option value="">-- Chọn lớp --</option>
-            {classes.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <input
-            type="date"
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={attendanceDate}
-            onChange={(e) => setAttendanceDate(e.target.value)}
-          />
+            <Users size={18} />
+            Điểm danh
+          </button>
+          <button
+            onClick={() => setActiveTab('review')}
+            className={`flex-1 px-6 py-4 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
+              activeTab === 'review'
+                ? 'bg-amber-50 text-amber-700 border-b-2 border-amber-600'
+                : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <ClipboardCheck size={18} />
+            Rà soát điểm danh
+            {totalUnmarked > 0 && activeTab !== 'review' && (
+              <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">{totalUnmarked}</span>
+            )}
+          </button>
         </div>
+
+        {/* Attendance Tab Controls */}
+        {activeTab === 'attendance' && (
+          <div className="p-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-800">Điểm danh lớp học</h2>
+                <p className="text-sm text-gray-500">4 trạng thái: Có mặt, Vắng, Bảo lưu, Đã bồi</p>
+              </div>
+              <div className="flex flex-wrap gap-3 w-full md:w-auto">
+                <select
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[200px] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setSelectedSession(null);
+                  }}
+                  disabled={classLoading}
+                >
+                  <option value="">-- Chọn lớp --</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                
+                <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setUseSessionMode(true)}
+                    className={`px-3 py-1 text-xs font-medium rounded ${
+                      useSessionMode ? 'bg-white shadow text-indigo-600' : 'text-gray-600'
+                    }`}
+                  >
+                    Buổi học
+                  </button>
+                  <button
+                    onClick={() => setUseSessionMode(false)}
+                    className={`px-3 py-1 text-xs font-medium rounded ${
+                      !useSessionMode ? 'bg-white shadow text-indigo-600' : 'text-gray-600'
+                    }`}
+                  >
+                    Chọn ngày
+                  </button>
+                </div>
+
+                {useSessionMode ? (
+                  <select
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[200px] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={selectedSession?.id || ''}
+                    onChange={(e) => {
+                      const session = upcomingSessions.find(s => s.id === e.target.value);
+                      if (session) handleSelectSession(session);
+                    }}
+                    disabled={!selectedClassId || sessionsLoading}
+                  >
+                    <option value="">-- Chọn buổi học --</option>
+                    {upcomingSessions.map(s => (
+                      <option key={s.id} value={s.id}>
+                        Buổi {s.sessionNumber} - {new Date(s.date).toLocaleDateString('vi-VN')} ({s.dayOfWeek})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="date"
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={attendanceDate}
+                    onChange={(e) => {
+                      setAttendanceDate(e.target.value);
+                      setSelectedSession(null);
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Review Tab Controls */}
+        {activeTab === 'review' && (
+          <div className="p-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-800">Rà soát Điểm danh</h2>
+                <p className="text-sm text-gray-500">Kiểm tra học sinh chưa được điểm danh từ buổi học trước</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Ngày học</label>
+                  <input
+                    type="date"
+                    value={reviewDate}
+                    onChange={(e) => setReviewDate(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Lọc theo lớp</label>
+                  <select
+                    value={reviewFilterClass}
+                    onChange={(e) => setReviewFilterClass(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 min-w-[200px]"
+                  >
+                    <option value="">Tất cả lớp</option>
+                    {allClasses.filter(c => ['Đang học', 'Chờ mở'].includes(c.status)).map(cls => (
+                      <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ========== ATTENDANCE TAB CONTENT ========== */}
+      {activeTab === 'attendance' && (
+        <>
+      {/* Session info */}
+      {selectedSession && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 flex items-center gap-3">
+          <Calendar className="text-indigo-600" size={20} />
+          <div>
+            <p className="font-medium text-indigo-900">
+              Buổi {selectedSession.sessionNumber}: {selectedSession.dayOfWeek}, {new Date(selectedSession.date).toLocaleDateString('vi-VN')}
+            </p>
+            <p className="text-sm text-indigo-600">
+              {selectedSession.time && `Giờ: ${selectedSession.time}`}
+              {selectedSession.room && ` • Phòng: ${selectedSession.room}`}
+            </p>
+          </div>
+        </div>
+      )}
+      
+      {/* No sessions warning */}
+      {useSessionMode && selectedClassId && !sessionsLoading && upcomingSessions.length === 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-yellow-800">
+            <AlertCircle size={20} />
+            <span>Chưa có buổi học nào được tạo cho lớp này. Vui lòng tạo buổi học hoặc chuyển sang chế độ "Chọn ngày".</span>
+          </div>
+          <button
+            onClick={() => setShowAddSessionModal(true)}
+            className="flex items-center gap-1 px-3 py-1 bg-yellow-600 text-white rounded text-sm hover:bg-yellow-700"
+          >
+            <Plus size={14} /> Thêm buổi
+          </button>
+        </div>
+      )}
 
       {/* Message */}
       {message && (
@@ -216,14 +817,45 @@ export const Attendance: React.FC = () => {
         </div>
       )}
 
+      {/* Schedule Warning */}
+      {selectedClassId && !isValidScheduleDay && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 flex items-center gap-2 text-orange-800">
+          <AlertCircle size={20} />
+          <span>
+            <strong>Lưu ý:</strong> Ngày {new Date(attendanceDate).toLocaleDateString('vi-VN')} không nằm trong lịch học của lớp 
+            {selectedClass?.schedule && <> (Lịch: {formatSchedule(selectedClass.schedule)})</>}.
+            Bạn vẫn có thể điểm danh nếu cần.
+          </span>
+        </div>
+      )}
+
+      {/* Holiday Warning */}
+      {selectedDateHoliday && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-2 text-red-800">
+          <AlertTriangle size={20} />
+          <span>
+            <strong>NGÀY NGHỈ:</strong> {selectedDateHoliday.name} ({selectedDateHoliday.startDate} - {selectedDateHoliday.endDate}).
+            Lớp học được nghỉ vào ngày này. Bạn vẫn có thể điểm danh nếu có buổi học bù.
+          </span>
+        </div>
+      )}
+
       {/* Existing Record Notice */}
       {existingRecord && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center gap-2 text-yellow-800">
-          <Clock size={20} />
-          <span>
-            Đã có điểm danh cho lớp này vào ngày {new Date(existingRecord.date).toLocaleDateString('vi-VN')}.
-            Thay đổi sẽ cập nhật bản ghi hiện tại.
-          </span>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">
+          <div className="flex items-center gap-2">
+            <Clock size={20} />
+            <span>
+              Đã có điểm danh cho lớp này vào ngày {existingRecord.date}.
+              Thay đổi sẽ cập nhật bản ghi hiện tại.
+            </span>
+          </div>
+          <div className="mt-2 text-xs text-yellow-600 bg-yellow-100 p-2 rounded">
+            <strong>Debug:</strong> Record ID: {existingRecord.id} | 
+            ClassId: {existingRecord.classId} | 
+            ClassName: {existingRecord.className || 'MISSING'} |
+            Total: {existingRecord.totalStudents}
+          </div>
         </div>
       )}
 
@@ -393,6 +1025,340 @@ export const Attendance: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Add Session Modal */}
+      {showAddSessionModal && selectedClassId && (
+        <AddSessionModal
+          classId={selectedClassId}
+          className={selectedClass?.name || ''}
+          onClose={() => setShowAddSessionModal(false)}
+          onAdd={async (date, time, note) => {
+            try {
+              await addMakeup(date, time, note);
+              setShowAddSessionModal(false);
+              setMessage({ type: 'success', text: 'Đã thêm buổi học bù thành công!' });
+            } catch (err) {
+              setMessage({ type: 'error', text: 'Không thể thêm buổi học: ' + (err as Error).message });
+            }
+          }}
+        />
+      )}
+        </>
+      )}
+
+      {/* ========== REVIEW TAB CONTENT ========== */}
+      {activeTab === 'review' && (
+        <>
+          {/* Holiday Warning for Review */}
+          {reviewDateHoliday && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
+              <AlertTriangle className="text-red-500 flex-shrink-0" size={24} />
+              <div>
+                <p className="font-medium text-red-800">
+                  NGÀY NGHỈ: {reviewDateHoliday.name}
+                </p>
+                <p className="text-sm text-red-600">
+                  Ngày {reviewDate} là ngày nghỉ ({reviewDateHoliday.startDate} - {reviewDateHoliday.endDate}). Các lớp có thể không cần điểm danh.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Summary Warning */}
+          {totalUnmarked > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+              <AlertTriangle className="text-amber-500 flex-shrink-0" size={24} />
+              <div>
+                <p className="font-medium text-amber-800">
+                  Có {totalUnmarked} học sinh chưa được điểm danh ngày {reviewDate}
+                </p>
+                <p className="text-sm text-amber-600">
+                  Vui lòng rà soát và xác nhận trạng thái điểm danh cho từng học sinh
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Loading/Empty/Content */}
+          {reviewLoading ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <div className="animate-spin rounded-full h-10 w-10 border-4 border-amber-500 border-t-transparent mx-auto mb-4"></div>
+              <p className="text-gray-500">Đang tải dữ liệu...</p>
+            </div>
+          ) : filteredReviewSessions.length === 0 ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <CheckCircle className="mx-auto text-green-500 mb-4" size={48} />
+              <p className="text-gray-600 font-medium">Tất cả học sinh đã được điểm danh!</p>
+              <p className="text-sm text-gray-400 mt-1">Không có học sinh nào cần rà soát cho ngày {reviewDate}</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {filteredReviewSessions.map(session => (
+                <div key={session.sessionId} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                  {/* Session Header */}
+                  <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-4 py-3">
+                    <h3 className="text-white font-semibold">
+                      Buổi học: {session.sessionDate}
+                    </h3>
+                    <p className="text-amber-100 text-sm">
+                      Lớp: {session.className} - Buổi {session.sessionNumber}
+                    </p>
+                  </div>
+                  
+                  {/* Students Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider w-12">STT</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tên Học sinh</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider w-48">Thời gian/ Lý do</th>
+                          <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider w-40">Trạng thái</th>
+                          <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider w-56">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {session.unmarkedStudents.map((student, idx) => (
+                          <tr key={student.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-600">{idx + 1}</td>
+                            <td className="px-4 py-3">
+                              <span className="font-medium text-gray-800">{student.studentName}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="text"
+                                placeholder="Nhập lý do..."
+                                value={reviewReasons[student.id] || ''}
+                                onChange={(e) => setReviewReasons(prev => ({
+                                  ...prev,
+                                  [student.id]: e.target.value
+                                }))}
+                                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                              />
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                                <AlertTriangle size={12} />
+                                Chưa điểm danh
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => openReviewConfirmDialog('late', student)}
+                                  className="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 flex items-center gap-1"
+                                >
+                                  <CheckCircle size={14} />
+                                  Điểm danh đến trễ
+                                </button>
+                                <button
+                                  onClick={() => openReviewConfirmDialog('absent', student)}
+                                  className="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700 flex items-center gap-1"
+                                >
+                                  <XCircle size={14} />
+                                  Vắng/Nghỉ học
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Review Confirm Dialog */}
+      {confirmDialog.show && confirmDialog.student && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Xác nhận điểm danh</h3>
+            
+            <p className="text-gray-600 mb-4">
+              Bạn có chắc chắn muốn{' '}
+              {confirmDialog.type === 'late' ? (
+                <span className="text-green-600 font-medium">Xác nhận Điểm danh đến trễ</span>
+              ) : (
+                <span className="text-red-600 font-medium">Xác nhận Vắng/Nghỉ học</span>
+              )}{' '}
+              cho học sinh <span className="font-semibold">{confirmDialog.student.studentName}</span>?
+            </p>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú (tùy chọn)</label>
+              <input
+                type="text"
+                value={confirmDialog.reason}
+                onChange={(e) => setConfirmDialog(prev => ({ ...prev, reason: e.target.value }))}
+                placeholder={confirmDialog.type === 'late' ? 'VD: Đến muộn 15 phút' : 'VD: Có phép (ốm)'}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+              />
+            </div>
+            
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDialog({ show: false, type: 'late', student: null, reason: '' })}
+                disabled={processingReview}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleReviewConfirm}
+                disabled={processingReview}
+                className={`px-4 py-2 text-white rounded-lg font-medium flex items-center gap-2 ${
+                  confirmDialog.type === 'late' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+                } disabled:opacity-50`}
+              >
+                {processingReview ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Đang xử lý...
+                  </>
+                ) : (
+                  'Xác nhận'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Add Session Modal Component
+interface AddSessionModalProps {
+  classId: string;
+  className: string;
+  onClose: () => void;
+  onAdd: (date: string, time?: string, note?: string) => Promise<void>;
+}
+
+const AddSessionModal: React.FC<AddSessionModalProps> = ({ classId, className, onClose, onAdd }) => {
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [time, setTime] = useState('');
+  const [note, setNote] = useState('Buổi học bù');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!date) {
+      alert('Vui lòng chọn ngày');
+      return;
+    }
+    setLoading(true);
+    try {
+      await onAdd(date, time || undefined, note || undefined);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const dayOfWeek = new Date(date).toLocaleDateString('vi-VN', { weekday: 'long' });
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50 rounded-t-xl">
+          <div>
+            <h3 className="text-lg font-bold text-gray-800">Thêm buổi học</h3>
+            <p className="text-sm text-indigo-600">{className}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <span className="text-2xl">&times;</span>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+            <strong>💡 Lưu ý:</strong> Buổi học này sẽ được đánh dấu là "Học bù" và thêm vào danh sách buổi học của lớp.
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ngày học *</label>
+            <input
+              type="date"
+              required
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            />
+            {date && (
+              <p className="text-sm text-gray-500 mt-1">{dayOfWeek}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Giờ học</label>
+            <div className="flex gap-2">
+              <input
+                type="time"
+                value={time.split('-')[0] || ''}
+                onChange={(e) => {
+                  const end = time.split('-')[1] || '';
+                  setTime(e.target.value + (end ? '-' + end : ''));
+                }}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                placeholder="Bắt đầu"
+              />
+              <span className="flex items-center text-gray-400">-</span>
+              <input
+                type="time"
+                value={time.split('-')[1] || ''}
+                onChange={(e) => {
+                  const start = time.split('-')[0] || '';
+                  setTime((start ? start + '-' : '') + e.target.value);
+                }}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                placeholder="Kết thúc"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+              placeholder="Lý do học bù..."
+            />
+          </div>
+
+          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              disabled={loading}
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Đang thêm...
+                </>
+              ) : (
+                <>
+                  <Plus size={16} /> Thêm buổi học
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 };

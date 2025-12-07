@@ -66,9 +66,30 @@ export const TrainingReport: React.FC = () => {
       const attendance = attendanceSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const tutoring = tutoringSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // Calculate summary
-      const activeClasses = classes.filter((c: any) => c.status === 'Active' || c.status === 'Đang học').length;
-      const activeStudents = students.filter((s: any) => s.status === 'Active' || s.status === 'Đang học').length;
+      // Calculate summary - Normalize status (Vietnamese)
+      const normalizeClassStatus = (status: string) => {
+        if (!status) return '';
+        const lower = status.toLowerCase();
+        if (lower === 'active' || lower === 'studying' || lower.includes('đang học')) return 'Đang học';
+        if (lower === 'finished' || lower === 'completed' || lower.includes('kết thúc')) return 'Kết thúc';
+        if (lower === 'paused' || lower.includes('tạm dừng')) return 'Tạm dừng';
+        if (lower === 'pending' || lower.includes('chờ mở')) return 'Chờ mở';
+        return status;
+      };
+
+      const normalizeStudentStatus = (status: string) => {
+        if (!status) return '';
+        const lower = status.toLowerCase();
+        if (lower === 'active' || lower.includes('đang học')) return 'Đang học';
+        if (lower === 'debt' || lower.includes('nợ')) return 'Nợ phí';
+        if (lower === 'reserved' || lower.includes('bảo lưu')) return 'Bảo lưu';
+        if (lower === 'dropped' || lower === 'inactive' || lower.includes('nghỉ')) return 'Nghỉ học';
+        if (lower === 'trial' || lower.includes('học thử')) return 'Học thử';
+        return status;
+      };
+
+      const activeClasses = classes.filter((c: any) => normalizeClassStatus(c.status) === 'Đang học').length;
+      const activeStudents = students.filter((s: any) => normalizeStudentStatus(s.status) === 'Đang học').length;
       
       // Attendance rate calculation
       let totalPresent = 0;
@@ -118,10 +139,10 @@ export const TrainingReport: React.FC = () => {
         return {
           id: c.id,
           name: c.name || 'N/A',
-          studentCount: c.currentStudents || 0,
+          studentCount: c.currentStudents || c.studentsCount || 0,
           sessionCount: classAttendance.length,
           attendanceRate: total > 0 ? (present / total) * 100 : 0,
-          status: c.status || 'N/A',
+          status: normalizeClassStatus(c.status) || 'N/A',
         };
       });
 
@@ -281,9 +302,11 @@ export const TrainingReport: React.FC = () => {
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      cls.status === 'Active' || cls.status === 'Đang học'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-600'
+                      cls.status === 'Đang học' ? 'bg-green-100 text-green-700' :
+                      cls.status === 'Kết thúc' ? 'bg-gray-100 text-gray-600' :
+                      cls.status === 'Tạm dừng' ? 'bg-yellow-100 text-yellow-700' :
+                      cls.status === 'Chờ mở' ? 'bg-blue-100 text-blue-700' :
+                      'bg-gray-100 text-gray-600'
                     }`}>
                       {cls.status}
                     </span>

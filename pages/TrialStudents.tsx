@@ -3,7 +3,9 @@ import { Search, Plus, Phone, FileText, X, Calendar, User, Clock, PhoneCall } fr
 import { Student, StudentStatus } from '../types';
 import { useStudents } from '../src/hooks/useStudents';
 import { useClasses } from '../src/hooks/useClasses';
+import { useStaff } from '../src/hooks/useStaff';
 import { useNavigate } from 'react-router-dom';
+import { formatSchedule } from '../src/utils/scheduleUtils';
 
 // Extended student type for trial students
 interface TrialStudent extends Student {
@@ -55,9 +57,10 @@ export const TrialStudents: React.FC = () => {
 
   const { students, loading, createStudent, updateStudent } = useStudents({ status: StudentStatus.TRIAL });
   const { classes } = useClasses({});
+  const { staff } = useStaff();
 
-  // Mock consultants list (should come from staff)
-  const consultants = ['Mai Nguyễn', 'Linh Nguyễn', 'Hương Trần', 'Lan Phạm'];
+  // Get consultants from staff (all staff can be consultants)
+  const consultants = useMemo(() => staff.map(s => s.fullName), [staff]);
   const sources = ['Facebook', 'Zalo', 'Giới thiệu', 'Website', 'Khác'];
 
   // Filter students
@@ -499,9 +502,9 @@ export const TrialStudents: React.FC = () => {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="">-- Chọn lớp --</option>
-                  {classes.filter(c => c.status === 'Đang học').map(cls => (
+                  {classes.filter(c => c.status === 'Đang học' || c.status === 'Active').map(cls => (
                     <option key={cls.id} value={cls.id}>
-                      {cls.name} - {cls.teacher} ({cls.schedule})
+                      {cls.name} - {cls.teacher} ({formatSchedule(cls.schedule)})
                     </option>
                   ))}
                 </select>

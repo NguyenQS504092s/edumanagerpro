@@ -1,8 +1,10 @@
 /**
- * useLeads Hook
+ * useLeads Hook - Realtime listener version
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { db } from '../config/firebase';
 import * as leadService from '../services/leadService';
 import { Lead, LeadStatus, LeadSource } from '../services/leadService';
 
@@ -21,62 +23,86 @@ interface UseLeadsReturn {
   updateStatus: (id: string, status: LeadStatus) => Promise<void>;
   deleteLead: (id: string) => Promise<void>;
   assignLeads: (ids: string[], assignedTo: string, name: string) => Promise<void>;
-  refresh: () => Promise<void>;
+  refresh: () => void;
 }
 
+const DEFAULT_STATS: Record<LeadStatus, number> = {
+  'Mới': 0, 'Đang liên hệ': 0, 'Quan tâm': 0, 'Hẹn test': 0, 'Đã test': 0, 'Đăng ký': 0, 'Từ chối': 0,
+};
+
 export const useLeads = (props?: UseLeadsProps): UseLeadsReturn => {
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [stats, setStats] = useState<Record<LeadStatus, number>>({
-    'Mới': 0, 'Đang liên hệ': 0, 'Quan tâm': 0, 'Hẹn test': 0, 'Đã test': 0, 'Đăng ký': 0, 'Từ chối': 0,
-  });
+  const [allLeads, setAllLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchLeads = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [data, statsData] = await Promise.all([
-        leadService.getLeads({ status: props?.status, source: props?.source }),
-        leadService.getLeadStats(),
-      ]);
-      setLeads(data);
-      setStats(statsData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Realtime listener
   useEffect(() => {
-    fetchLeads();
-  }, [props?.status, props?.source]);
+    setLoading(true);
+    setError(null);
+
+    const q = query(collection(db, 'leads'), orderBy('createdAt', 'desc'));
+    
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        } as Lead));
+        setAllLeads(data);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error listening to leads:', err);
+        setError(err.message || 'Không thể tải danh sách khách hàng');
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Filter leads based on props
+  const leads = useMemo(() => {
+    let filtered = allLeads;
+    if (props?.status) {
+      filtered = filtered.filter(l => l.status === props.status);
+    }
+    if (props?.source) {
+      filtered = filtered.filter(l => l.source === props.source);
+    }
+    return filtered;
+  }, [allLeads, props?.status, props?.source]);
+
+  // Calculate stats from all leads
+  const stats = useMemo(() => {
+    const result = { ...DEFAULT_STATS };
+    allLeads.forEach(lead => {
+      if (result[lead.status] !== undefined) {
+        result[lead.status]++;
+      }
+    });
+    return result;
+  }, [allLeads]);
 
   const createLead = async (data: Omit<Lead, 'id'>): Promise<string> => {
-    const id = await leadService.createLead(data);
-    await fetchLeads();
-    return id;
+    return await leadService.createLead(data);
   };
 
   const updateLead = async (id: string, data: Partial<Lead>): Promise<void> => {
     await leadService.updateLead(id, data);
-    await fetchLeads();
   };
 
   const updateStatus = async (id: string, status: LeadStatus): Promise<void> => {
     await leadService.updateLeadStatus(id, status);
-    await fetchLeads();
   };
 
   const deleteLead = async (id: string): Promise<void> => {
     await leadService.deleteLead(id);
-    await fetchLeads();
   };
 
   const assignLeads = async (ids: string[], assignedTo: string, name: string): Promise<void> => {
     await leadService.assignLeads(ids, assignedTo, name);
-    await fetchLeads();
   };
 
   return {
@@ -89,6 +115,6 @@ export const useLeads = (props?: UseLeadsProps): UseLeadsReturn => {
     updateStatus,
     deleteLead,
     assignLeads,
-    refresh: fetchLeads,
+    refresh: () => {}, // No-op, realtime updates automatically
   };
 };

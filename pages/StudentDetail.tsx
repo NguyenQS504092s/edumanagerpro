@@ -1,20 +1,48 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, User, Phone, Mail, MapPin, Calendar, BookOpen, DollarSign, Clock, MessageSquare, FileText, X } from 'lucide-react';
-import { MOCK_FEEDBACKS } from '../mockData';
+import { ChevronLeft, User, Phone, Mail, MapPin, Calendar, BookOpen, DollarSign, Clock, MessageSquare, FileText, X, GraduationCap, CheckCircle2, CalendarCheck, Circle } from 'lucide-react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
 import { useClasses } from '../src/hooks/useClasses';
 import { useStudents } from '../src/hooks/useStudents';
+import { useFeedback } from '../src/hooks/useFeedback';
+import { useTutoring } from '../src/hooks/useTutoring';
+import { formatSchedule } from '../src/utils/scheduleUtils';
+import { createEnrollment } from '../src/services/enrollmentService';
+import { useAuth } from '../src/hooks/useAuth';
+import { Plus, Minus } from 'lucide-react';
 
 export const StudentDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'finance' | 'feedback'>('info');
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [showManualEnrollModal, setShowManualEnrollModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const { classes } = useClasses({});
-  const { students, loading } = useStudents({});
+  const { students, loading, updateStudent } = useStudents({});
+  const [enrolling, setEnrolling] = useState(false);
+  
+  // Manual enrollment state
+  const [manualEnrollForm, setManualEnrollForm] = useState({
+    action: 'add' as 'add' | 'subtract',
+    sessions: 1,
+    reason: '',
+  });
+  const [processingManual, setProcessingManual] = useState(false);
+  
+  // Get feedback data for this student from Firebase
+  const { callFeedbacks, formFeedbacks, loading: feedbackLoading } = useFeedback({ studentId: id });
+
+  // Get tutoring history for this student
+  const { tutoringList, loading: tutoringLoading } = useTutoring({});
+  const studentTutoring = useMemo(() => {
+    if (!id) return [];
+    return tutoringList.filter(t => t.studentId === id);
+  }, [tutoringList, id]);
 
   // Find student by ID from Firebase data
   const student = students.find(s => s.id === id);
@@ -55,11 +83,88 @@ export const StudentDetail: React.FC = () => {
     startDate: new Date().toISOString().split('T')[0],
     sessions: 48,
     notes: '',
+    startSessionNumber: 1, // Buổi học bắt đầu
   });
-  
-  // Filter feedbacks for this student (mock logic)
-  const callFeedbacks = MOCK_FEEDBACKS.filter(f => f.type === 'Call');
-  const formFeedbacks = MOCK_FEEDBACKS.filter(f => f.type === 'Form');
+  const [nextSessionInfo, setNextSessionInfo] = useState<{
+    sessionNumber: number;
+    date: string;
+    completedSessions: number;
+    totalSessions: number;
+  } | null>(null);
+  const [loadingNextSession, setLoadingNextSession] = useState(false);
+
+  // Function to get next available session for a class
+  const fetchNextSession = async (classId: string) => {
+    if (!classId) {
+      setNextSessionInfo(null);
+      return;
+    }
+    
+    setLoadingNextSession(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Get all sessions for this class
+      const sessionsQuery = query(
+        collection(db, 'classSessions'),
+        where('classId', '==', classId)
+      );
+      const sessionsSnap = await getDocs(sessionsQuery);
+      // Sort by sessionNumber locally (Firestore index not available)
+      const sessions = sessionsSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })).sort((a: any, b: any) => a.sessionNumber - b.sessionNumber) as any[];
+
+      // Count completed sessions (status = 'Đã học' or date < today)
+      const completedSessions = sessions.filter(s => 
+        s.status === 'Đã học' || s.date < today
+      ).length;
+
+      // Find next upcoming session (date >= today and status != 'Đã học')
+      const nextSession = sessions.find(s => 
+        s.date >= today && s.status !== 'Đã học'
+      );
+
+      const actualTotalSessions = sessions.length;
+      
+      if (nextSession) {
+        setNextSessionInfo({
+          sessionNumber: nextSession.sessionNumber,
+          date: nextSession.date,
+          completedSessions,
+          totalSessions: actualTotalSessions
+        });
+        
+        // Auto-fill the form with actual session data
+        setEnrollForm(prev => ({
+          ...prev,
+          startDate: nextSession.date,
+          startSessionNumber: nextSession.sessionNumber,
+          sessions: prev.sessions === 0 ? actualTotalSessions : prev.sessions // Update if not set
+        }));
+      } else {
+        // No upcoming sessions - class might be finished
+        setNextSessionInfo({
+          sessionNumber: actualTotalSessions + 1,
+          date: today,
+          completedSessions,
+          totalSessions: actualTotalSessions
+        });
+        
+        // Update sessions count
+        setEnrollForm(prev => ({
+          ...prev,
+          sessions: prev.sessions === 0 ? actualTotalSessions : prev.sessions
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching next session:', error);
+      setNextSessionInfo(null);
+    } finally {
+      setLoadingNextSession(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -118,6 +223,13 @@ export const StudentDetail: React.FC = () => {
                       className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors shadow-sm"
                     >
                        Đăng ký lớp mới
+                    </button>
+                    <button 
+                      onClick={() => setShowManualEnrollModal(true)}
+                      className="px-4 py-2 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 transition-colors shadow-sm flex items-center gap-1"
+                    >
+                      <Plus size={16} />
+                      Ghi danh thủ công
                     </button>
                  </div>
               </div>
@@ -256,26 +368,142 @@ export const StudentDetail: React.FC = () => {
                         </tr>
                      </thead>
                      <tbody className="divide-y divide-gray-100">
-                        <tr className="hover:bg-gray-50">
-                           <td className="px-4 py-3 font-medium text-indigo-600">Tiếng Anh Giao Tiếp K12</td>
-                           <td className="px-4 py-3">Cambridge Movers</td>
-                           <td className="px-4 py-3">01/09/2023 - Nay</td>
-                           <td className="px-4 py-3">--</td>
-                           <td className="px-4 py-3 text-center">
-                              <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Đang học</span>
-                           </td>
-                        </tr>
-                        <tr className="hover:bg-gray-50">
-                           <td className="px-4 py-3 font-medium text-indigo-600">Tiếng Anh Mầm Non Bee 1</td>
-                           <td className="px-4 py-3">Super Safari 1</td>
-                           <td className="px-4 py-3">01/01/2023 - 30/08/2023</td>
-                           <td className="px-4 py-3 font-medium">Giỏi (9.0)</td>
-                           <td className="px-4 py-3 text-center">
-                              <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs font-bold">Hoàn thành</span>
-                           </td>
-                        </tr>
+                        {(() => {
+                           // Get all classes this student is enrolled in
+                           const studentClassIds = student.classIds || (student.classId ? [student.classId] : []);
+                           const studentClassName = student.class || student.className;
+                           
+                           // Find matching classes
+                           const enrolledClasses = classes.filter(cls => 
+                              studentClassIds.includes(cls.id) || 
+                              cls.name === studentClassName ||
+                              cls.id === student.classId
+                           );
+
+                           if (enrolledClasses.length === 0) {
+                              return (
+                                 <tr>
+                                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                                       Chưa có lớp học nào
+                                    </td>
+                                 </tr>
+                              );
+                           }
+
+                           return enrolledClasses.map(cls => {
+                              const getStatusBadge = (status: string) => {
+                                 const s = status?.toLowerCase() || '';
+                                 if (s.includes('đang học') || s === 'active') return { bg: 'bg-green-100', text: 'text-green-700', label: 'Đang học' };
+                                 if (s.includes('hoàn thành') || s === 'completed') return { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Hoàn thành' };
+                                 if (s.includes('bảo lưu') || s === 'reserved') return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Bảo lưu' };
+                                 if (s.includes('nghỉ') || s === 'inactive') return { bg: 'bg-red-100', text: 'text-red-700', label: 'Nghỉ học' };
+                                 return { bg: 'bg-gray-100', text: 'text-gray-600', label: status || '--' };
+                              };
+                              const badge = getStatusBadge(student.status);
+                              
+                              return (
+                                 <tr key={cls.id} className="hover:bg-gray-50">
+                                    <td className="px-4 py-3 font-medium text-indigo-600">{cls.name}</td>
+                                    <td className="px-4 py-3">{cls.curriculum || '--'}</td>
+                                    <td className="px-4 py-3">
+                                       {cls.startDate ? new Date(cls.startDate).toLocaleDateString('vi-VN') : '--'}
+                                       {' - '}
+                                       {cls.endDate ? new Date(cls.endDate).toLocaleDateString('vi-VN') : 'Nay'}
+                                    </td>
+                                    <td className="px-4 py-3">--</td>
+                                    <td className="px-4 py-3 text-center">
+                                       <span className={`${badge.bg} ${badge.text} px-2 py-1 rounded text-xs font-bold`}>
+                                          {badge.label}
+                                       </span>
+                                    </td>
+                                 </tr>
+                              );
+                           });
+                        })()}
                      </tbody>
                   </table>
+               </div>
+
+               {/* Tutoring History Section */}
+               <div className="mt-8">
+                  <div className="flex items-center gap-2 mb-4">
+                     <div className="p-2 bg-violet-100 rounded-lg">
+                        <GraduationCap className="text-violet-600" size={20} />
+                     </div>
+                     <h3 className="font-bold text-gray-800">Lịch sử bồi bài</h3>
+                     <span className="text-xs bg-violet-100 text-violet-700 px-2 py-1 rounded-full font-bold">
+                        {studentTutoring.length}
+                     </span>
+                  </div>
+
+                  {tutoringLoading ? (
+                     <div className="text-center py-6">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-600 mx-auto mb-2"></div>
+                        <p className="text-sm text-gray-500">Đang tải...</p>
+                     </div>
+                  ) : studentTutoring.length === 0 ? (
+                     <div className="bg-gray-50 rounded-xl p-6 text-center">
+                        <GraduationCap size={32} className="mx-auto text-gray-300 mb-2" />
+                        <p className="text-gray-400 text-sm">Chưa có lịch sử bồi bài</p>
+                     </div>
+                  ) : (
+                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {studentTutoring.map((session) => {
+                           const getStatusStyle = (status: string) => {
+                              switch(status) {
+                                 case 'Chưa bồi': return { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-600', icon: Circle };
+                                 case 'Đã hẹn': return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', icon: CalendarCheck };
+                                 case 'Đã bồi': return { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', icon: CheckCircle2 };
+                                 default: return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-600', icon: Circle };
+                              }
+                           };
+                           const style = getStatusStyle(session.status);
+                           const StatusIcon = style.icon;
+
+                           return (
+                              <div 
+                                 key={session.id} 
+                                 className={`${style.bg} ${style.border} border rounded-xl p-4 transition-all hover:shadow-md`}
+                              >
+                                 <div className="flex items-center justify-between mb-2">
+                                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${style.text}`}>
+                                       <StatusIcon size={14} />
+                                       {session.status === 'Đã bồi' ? 'Hoàn thành' : session.status}
+                                    </span>
+                                    {session.scheduledDate && (
+                                       <span className="text-xs text-gray-500">
+                                          {new Date(session.scheduledDate).toLocaleDateString('vi-VN')}
+                                       </span>
+                                    )}
+                                 </div>
+                                 
+                                 <p className="text-sm font-medium text-gray-800 mb-1">{session.className}</p>
+                                 
+                                 <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+                                    {session.scheduledTime && (
+                                       <span className="flex items-center gap-1">
+                                          <Clock size={10} />
+                                          {session.scheduledTime}
+                                       </span>
+                                    )}
+                                    {session.tutorName && (
+                                       <span className="flex items-center gap-1 text-violet-600">
+                                          <User size={10} />
+                                          {session.tutorName}
+                                       </span>
+                                    )}
+                                 </div>
+                                 
+                                 {session.note && (
+                                    <p className="mt-2 text-xs text-gray-400 italic truncate" title={session.note}>
+                                       {session.note}
+                                    </p>
+                                 )}
+                              </div>
+                           );
+                        })}
+                     </div>
+                  )}
                </div>
             </div>
          )}
@@ -291,99 +519,148 @@ export const StudentDetail: React.FC = () => {
 
          {activeTab === 'feedback' && (
             <div className="space-y-8">
-               {/* Call Feedback Section */}
-               <div>
-                  <div className="flex items-center justify-between mb-3 px-1">
-                      <h3 className="bg-green-500 text-white px-3 py-1 text-sm font-bold uppercase inline-block">
-                         Phản hồi từ Khách hàng liên hệ qua điện thoại
-                      </h3>
-                      <button 
-                        onClick={() => setShowReportModal(true)}
-                        className="text-xs text-blue-600 hover:underline font-medium"
-                      >
-                        Xem báo cáo
-                      </button>
+               {feedbackLoading ? (
+                  <div className="text-center py-10">
+                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto mb-3"></div>
+                     <p className="text-gray-500">Đang tải dữ liệu phản hồi...</p>
                   </div>
-                  <div className="overflow-x-auto border border-gray-200">
-                      <table className="w-full text-sm text-left border-collapse">
-                          <thead>
-                              <tr className="bg-green-500 text-white font-bold text-xs">
-                                  <th className="p-2 border-r border-green-400 text-center w-10">STT</th>
-                                  <th className="p-2 border-r border-green-400">Phụ Huynh</th>
-                                  <th className="p-2 border-r border-green-400">Học viên</th>
-                                  <th className="p-2 border-r border-green-400 w-16">Trạng thái</th>
-                                  <th className="p-2 border-r border-green-400">Giáo Viên</th>
-                                  <th className="p-2 border-r border-green-400">Chương trình học</th>
-                                  <th className="p-2 border-r border-green-400">Chăm sóc khách hàng</th>
-                                  <th className="p-2 border-r border-green-400">Cơ sở vật chất</th>
-                                  <th className="p-2 border-r border-green-400 w-16">Điểm TB</th>
-                                  <th className="p-2 border-r border-green-400">Người gọi</th>
-                              </tr>
-                          </thead>
-                          <tbody>
-                              {callFeedbacks.map((fb, idx) => (
-                                  <tr key={fb.id} className="border-b border-gray-200">
-                                      <td className="p-2 border-r border-gray-200 text-center">{idx + 1}</td>
-                                      <td className="p-2 border-r border-gray-200 font-bold">{student.parentName} <br/><span className="font-normal text-xs">{student.phone}</span></td>
-                                      <td className="p-2 border-r border-gray-200">{fb.studentName} <br/><span className="text-xs text-gray-500">{fb.className}</span></td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.status}</td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.teacher || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.curriculumScore || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200">
-                                          {fb.content} <br/> 
-                                          {fb.careScore && <span className="font-bold">{fb.careScore}</span>}
-                                      </td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.facilitiesScore || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200 text-center font-bold">{fb.averageScore || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200">{fb.caller}</td>
-                                  </tr>
-                              ))}
-                          </tbody>
-                      </table>
-                  </div>
-               </div>
+               ) : (
+                  <>
+                     {/* Call Feedback Section */}
+                     <div>
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            <h3 className="bg-green-500 text-white px-3 py-1 text-sm font-bold uppercase inline-block">
+                               Phản hồi từ Khách hàng liên hệ qua điện thoại
+                            </h3>
+                            <button 
+                              onClick={() => setShowReportModal(true)}
+                              className="text-xs text-blue-600 hover:underline font-medium"
+                            >
+                              Xem báo cáo
+                            </button>
+                        </div>
+                        <div className="overflow-x-auto border border-gray-200">
+                            <table className="w-full text-sm text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-green-500 text-white font-bold text-xs">
+                                        <th className="p-2 border-r border-green-400 text-center w-10">STT</th>
+                                        <th className="p-2 border-r border-green-400">Phụ Huynh</th>
+                                        <th className="p-2 border-r border-green-400">Học viên</th>
+                                        <th className="p-2 border-r border-green-400 w-16">Trạng thái</th>
+                                        <th className="p-2 border-r border-green-400">Giáo Viên</th>
+                                        <th className="p-2 border-r border-green-400 text-center">Chương trình học</th>
+                                        <th className="p-2 border-r border-green-400">Chăm sóc khách hàng</th>
+                                        <th className="p-2 border-r border-green-400 text-center">Cơ sở vật chất</th>
+                                        <th className="p-2 border-r border-green-400 text-center w-16">Điểm TB</th>
+                                        <th className="p-2">Người gọi</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {callFeedbacks.length === 0 ? (
+                                       <tr>
+                                          <td colSpan={10} className="p-4 text-center text-gray-400">
+                                             Chưa có phản hồi qua điện thoại
+                                          </td>
+                                       </tr>
+                                    ) : callFeedbacks.map((fb, idx) => (
+                                        <tr key={fb.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                            <td className="p-2 border-r border-gray-200 text-center">{idx + 1}</td>
+                                            <td className="p-2 border-r border-gray-200">
+                                               <span className="font-bold">{fb.parentName || student.parentName}</span>
+                                               <br/><span className="text-xs text-gray-500">{fb.parentPhone || student.phone}</span>
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200">
+                                               {fb.studentName || student.fullName}
+                                               <br/><span className="text-xs text-gray-500">{fb.className}</span>
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200 text-center">
+                                               <span className={`px-2 py-0.5 rounded text-xs ${
+                                                  fb.status === 'Đã gọi' ? 'bg-blue-100 text-blue-700' :
+                                                  fb.status === 'Hoàn thành' ? 'bg-green-100 text-green-700' :
+                                                  'bg-yellow-100 text-yellow-700'
+                                               }`}>{fb.status}</span>
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200">
+                                               {fb.teacher && <span>{fb.teacher}</span>}
+                                               {fb.teacherScore && <span className="font-bold"> ({fb.teacherScore})</span>}
+                                               {!fb.teacher && !fb.teacherScore && '---'}
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200 text-center">{fb.curriculumScore || '---'}</td>
+                                            <td className="p-2 border-r border-gray-200">
+                                                {fb.content && <span>{fb.content}</span>}
+                                                {fb.careScore && <><br/><span className="font-bold">{fb.careScore}</span></>}
+                                                {!fb.content && !fb.careScore && '---'}
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200 text-center">{fb.facilitiesScore || '---'}</td>
+                                            <td className="p-2 border-r border-gray-200 text-center font-bold">{fb.averageScore?.toFixed(2) || '---'}</td>
+                                            <td className="p-2">{fb.caller || '---'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                     </div>
 
-               {/* Form Feedback Section */}
-               <div>
-                  <div className="flex items-center justify-between mb-3 px-1">
-                      <h3 className="bg-green-500 text-white px-3 py-1 text-sm font-bold uppercase inline-block">
-                         Phản hồi từ Khách hàng điền qua FORM
-                      </h3>
-                  </div>
-                  <div className="overflow-x-auto border border-gray-200">
-                      <table className="w-full text-sm text-left border-collapse">
-                          <thead>
-                              <tr className="bg-green-500 text-white font-bold text-xs">
-                                  <th className="p-2 border-r border-green-400 text-center w-10">STT</th>
-                                  <th className="p-2 border-r border-green-400">Phụ Huynh</th>
-                                  <th className="p-2 border-r border-green-400">Học viên</th>
-                                  <th className="p-2 border-r border-green-400">Giáo Viên</th>
-                                  <th className="p-2 border-r border-green-400">Chương trình học</th>
-                                  <th className="p-2 border-r border-green-400">Chăm sóc khách hàng</th>
-                                  <th className="p-2 border-r border-green-400">Cơ sở vật chất</th>
-                                  <th className="p-2 border-r border-green-400 w-16">Điểm TB</th>
-                              </tr>
-                          </thead>
-                          <tbody>
-                               {formFeedbacks.map((fb, idx) => (
-                                  <tr key={fb.id} className="border-b border-gray-200">
-                                      <td className="p-2 border-r border-gray-200 text-center">{idx + 1}</td>
-                                      <td className="p-2 border-r border-gray-200 font-bold">{student.parentName} <br/><span className="font-normal text-xs">{student.phone}</span></td>
-                                      <td className="p-2 border-r border-gray-200">{fb.studentName} <br/><span className="text-xs text-gray-500">{fb.className}</span></td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.teacher || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.curriculumScore || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200">
-                                          {fb.content} <br/> 
-                                          {fb.careScore && <span className="font-bold">{fb.careScore}</span>}
-                                      </td>
-                                      <td className="p-2 border-r border-gray-200 text-center">{fb.facilitiesScore || '---'}</td>
-                                      <td className="p-2 border-r border-gray-200 text-center font-bold">{fb.averageScore || '---'}</td>
-                                  </tr>
-                              ))}
-                          </tbody>
-                      </table>
-                  </div>
-               </div>
+                     {/* Form Feedback Section */}
+                     <div>
+                        <div className="flex items-center justify-between mb-3 px-1">
+                            <h3 className="bg-green-500 text-white px-3 py-1 text-sm font-bold uppercase inline-block">
+                               Phản hồi từ Khách hàng điền qua FORM
+                            </h3>
+                        </div>
+                        <div className="overflow-x-auto border border-gray-200">
+                            <table className="w-full text-sm text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-green-500 text-white font-bold text-xs">
+                                        <th className="p-2 border-r border-green-400 text-center w-10">STT</th>
+                                        <th className="p-2 border-r border-green-400">Phụ Huynh</th>
+                                        <th className="p-2 border-r border-green-400">Học viên</th>
+                                        <th className="p-2 border-r border-green-400">Giáo Viên</th>
+                                        <th className="p-2 border-r border-green-400 text-center">Chương trình học</th>
+                                        <th className="p-2 border-r border-green-400">Chăm sóc khách hàng</th>
+                                        <th className="p-2 border-r border-green-400 text-center">Cơ sở vật chất</th>
+                                        <th className="p-2 text-center w-16">Điểm TB</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                     {formFeedbacks.length === 0 ? (
+                                        <tr>
+                                           <td colSpan={8} className="p-4 text-center text-gray-400">
+                                              Chưa có phản hồi qua Form
+                                           </td>
+                                        </tr>
+                                     ) : formFeedbacks.map((fb, idx) => (
+                                        <tr key={fb.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                            <td className="p-2 border-r border-gray-200 text-center">{idx + 1}</td>
+                                            <td className="p-2 border-r border-gray-200">
+                                               <span className="font-bold">{fb.parentName || student.parentName}</span>
+                                               <br/><span className="text-xs text-gray-500">{fb.parentPhone || student.phone}</span>
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200">
+                                               {fb.studentName || student.fullName}
+                                               <br/><span className="text-xs text-gray-500">{fb.className}</span>
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200">
+                                               {fb.teacher && <span>{fb.teacher}</span>}
+                                               {fb.teacherScore && <span className="font-bold"> ({fb.teacherScore})</span>}
+                                               {!fb.teacher && !fb.teacherScore && '---'}
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200 text-center">{fb.curriculumScore || '---'}</td>
+                                            <td className="p-2 border-r border-gray-200">
+                                                {fb.content && <span>{fb.content}</span>}
+                                                {fb.careScore && <><br/><span className="font-bold">{fb.careScore}</span></>}
+                                                {!fb.content && !fb.careScore && '---'}
+                                            </td>
+                                            <td className="p-2 border-r border-gray-200 text-center">{fb.facilitiesScore || '---'}</td>
+                                            <td className="p-2 text-center font-bold">{fb.averageScore?.toFixed(2) || '---'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                     </div>
+                  </>
+               )}
             </div>
          )}
       </div>
@@ -552,26 +829,55 @@ export const StudentDetail: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chọn lớp học *</label>
                 <select
                   value={enrollForm.classId}
-                  onChange={(e) => setEnrollForm({...enrollForm, classId: e.target.value})}
+                  onChange={(e) => {
+                    const selectedClass = classes.find(c => c.id === e.target.value);
+                    setEnrollForm({
+                      ...enrollForm, 
+                      classId: e.target.value,
+                      // Temporarily set to class's totalSessions (will be updated after fetching actual sessions)
+                      sessions: selectedClass?.totalSessions || 0
+                    });
+                    setNextSessionInfo(null); // Reset để tránh hiển thị số cũ
+                    // Fetch next available session for this class (will update sessions count)
+                    fetchNextSession(e.target.value);
+                  }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="">-- Chọn lớp --</option>
-                  {classes.filter(c => c.status === 'Đang học').map(cls => (
-                    <option key={cls.id} value={cls.id}>
-                      {cls.name} - {cls.teacher} ({cls.schedule})
-                    </option>
-                  ))}
+                  {classes
+                    .filter(c => c.status === 'Đang học' || c.status === 'Chờ mở' || c.status === 'Active' || c.status === 'Pending')
+                    .map(cls => (
+                      <option key={cls.id} value={cls.id}>
+                        {cls.name} - {cls.teacher} ({formatSchedule(cls.schedule)}) {cls.totalSessions ? `[${cls.totalSessions} buổi]` : ''}
+                      </option>
+                    ))}
                 </select>
+                {loadingNextSession && (
+                  <p className="text-xs text-gray-500 mt-1">Đang tải thông tin buổi học...</p>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Ngày bắt đầu</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Ngày bắt đầu
+                  {nextSessionInfo && (
+                    <span className="text-xs text-green-600 font-normal ml-1">(Buổi {nextSessionInfo.sessionNumber})</span>
+                  )}
+                </label>
                 <input
                   type="date"
                   value={enrollForm.startDate}
                   onChange={(e) => setEnrollForm({...enrollForm, startDate: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                 />
+                {nextSessionInfo && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Tiến độ lớp: {nextSessionInfo.completedSessions}/{nextSessionInfo.totalSessions} buổi đã học
+                    {nextSessionInfo.completedSessions > 0 && (
+                      <span className="text-orange-600"> - Học viên sẽ bắt đầu từ buổi {nextSessionInfo.sessionNumber}</span>
+                    )}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -579,7 +885,7 @@ export const StudentDetail: React.FC = () => {
                 <input
                   type="number"
                   value={enrollForm.sessions}
-                  onChange={(e) => setEnrollForm({...enrollForm, sessions: parseInt(e.target.value)})}
+                  onChange={(e) => setEnrollForm({...enrollForm, sessions: parseInt(e.target.value) || 1})}
                   min={1}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                 />
@@ -604,6 +910,19 @@ export const StudentDetail: React.FC = () => {
                   <p className="text-sm text-blue-600">
                     Giáo viên: {classes.find(c => c.id === enrollForm.classId)?.teacher}
                   </p>
+                  {nextSessionInfo && (
+                    <p className="text-sm text-green-600 mt-1">
+                      Tổng số buổi: <strong>{nextSessionInfo.totalSessions}</strong> buổi 
+                      {nextSessionInfo.completedSessions > 0 && (
+                        <span> (Đã học: {nextSessionInfo.completedSessions} buổi)</span>
+                      )}
+                    </p>
+                  )}
+                  {nextSessionInfo && nextSessionInfo.totalSessions === 0 && (
+                    <p className="text-sm text-orange-600 mt-1">
+                      ⚠️ Lớp chưa có buổi học. Vui lòng tạo buổi học trước khi đăng ký.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -616,17 +935,54 @@ export const StudentDetail: React.FC = () => {
                 Hủy
               </button>
               <button
-                onClick={() => { 
+                onClick={async () => { 
                   if (!enrollForm.classId) {
                     alert('Vui lòng chọn lớp học!');
                     return;
                   }
-                  alert('Đã đăng ký lớp thành công!'); 
-                  setShowEnrollModal(false); 
+                  
+                  setEnrolling(true);
+                  try {
+                    const selectedClass = classes.find(c => c.id === enrollForm.classId);
+                    if (!selectedClass) {
+                      alert('Không tìm thấy lớp học!');
+                      return;
+                    }
+                    
+                    // Update student with new class
+                    await updateStudent(id!, {
+                      classId: enrollForm.classId,
+                      class: selectedClass.name,
+                      status: 'Đang học', // Update status to active
+                      enrollmentDate: enrollForm.startDate,
+                      registeredSessions: enrollForm.sessions, // Số buổi đăng ký (để track nợ phí)
+                      attendedSessions: 0, // Reset attended sessions
+                      startSessionNumber: nextSessionInfo?.sessionNumber || 1, // Buổi bắt đầu học
+                      enrollmentNotes: enrollForm.notes,
+                    });
+                    
+                    alert('Đã đăng ký lớp thành công!'); 
+                    setShowEnrollModal(false);
+                    setNextSessionInfo(null);
+                    // Reset form
+                    setEnrollForm({
+                      classId: '',
+                      startDate: new Date().toISOString().split('T')[0],
+                      sessions: 48,
+                      notes: '',
+                      startSessionNumber: 1,
+                    });
+                  } catch (err) {
+                    console.error('Error enrolling student:', err);
+                    alert('Có lỗi khi đăng ký lớp. Vui lòng thử lại!');
+                  } finally {
+                    setEnrolling(false);
+                  }
                 }}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                disabled={enrolling}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
-                Xác nhận đăng ký
+                {enrolling ? 'Đang xử lý...' : 'Xác nhận đăng ký'}
               </button>
             </div>
           </div>
@@ -737,6 +1093,168 @@ export const StudentDetail: React.FC = () => {
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
                 Xuất PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Enrollment Modal - Ghi danh thủ công */}
+      {showManualEnrollModal && student && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-amber-50 to-orange-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Ghi danh thủ công</h3>
+                <p className="text-sm text-amber-600">Học viên: {student.fullName}</p>
+              </div>
+              <button onClick={() => setShowManualEnrollModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Current sessions info */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <p className="text-sm text-gray-600">Số buổi hiện tại:</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {student.registeredSessions || 0} buổi
+                </p>
+                {student.className && (
+                  <p className="text-sm text-gray-500 mt-1">Lớp: {student.className}</p>
+                )}
+              </div>
+
+              {/* Action type */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Loại thao tác</label>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setManualEnrollForm(prev => ({ ...prev, action: 'add' }))}
+                    className={`flex-1 py-3 px-4 rounded-lg border-2 flex items-center justify-center gap-2 font-medium transition-colors ${
+                      manualEnrollForm.action === 'add' 
+                        ? 'border-green-500 bg-green-50 text-green-700' 
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Plus size={18} />
+                    Thêm buổi
+                  </button>
+                  <button
+                    onClick={() => setManualEnrollForm(prev => ({ ...prev, action: 'subtract' }))}
+                    className={`flex-1 py-3 px-4 rounded-lg border-2 flex items-center justify-center gap-2 font-medium transition-colors ${
+                      manualEnrollForm.action === 'subtract' 
+                        ? 'border-red-500 bg-red-50 text-red-700' 
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Minus size={18} />
+                    Trừ buổi
+                  </button>
+                </div>
+              </div>
+
+              {/* Sessions count */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Số buổi</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={manualEnrollForm.sessions}
+                  onChange={(e) => setManualEnrollForm(prev => ({ ...prev, sessions: parseInt(e.target.value) || 1 }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Reason */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Lý do *</label>
+                <textarea
+                  value={manualEnrollForm.reason}
+                  onChange={(e) => setManualEnrollForm(prev => ({ ...prev, reason: e.target.value }))}
+                  placeholder="Nhập lý do ghi danh thủ công..."
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Preview */}
+              <div className={`p-3 rounded-lg ${manualEnrollForm.action === 'add' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                <p className="text-sm">
+                  <span className="text-gray-600">Số buổi sau thay đổi: </span>
+                  <span className={`font-bold ${manualEnrollForm.action === 'add' ? 'text-green-700' : 'text-red-700'}`}>
+                    {manualEnrollForm.action === 'add' 
+                      ? (student.registeredSessions || 0) + manualEnrollForm.sessions
+                      : Math.max(0, (student.registeredSessions || 0) - manualEnrollForm.sessions)
+                    } buổi
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+              <button
+                onClick={() => {
+                  setShowManualEnrollModal(false);
+                  setManualEnrollForm({ action: 'add', sessions: 1, reason: '' });
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={async () => {
+                  if (!manualEnrollForm.reason.trim()) {
+                    alert('Vui lòng nhập lý do!');
+                    return;
+                  }
+                  
+                  setProcessingManual(true);
+                  try {
+                    const currentSessions = student.registeredSessions || 0;
+                    const newSessions = manualEnrollForm.action === 'add'
+                      ? currentSessions + manualEnrollForm.sessions
+                      : Math.max(0, currentSessions - manualEnrollForm.sessions);
+                    
+                    // Update student sessions
+                    await updateStudent(id!, {
+                      registeredSessions: newSessions,
+                    });
+                    
+                    // Create enrollment record
+                    await createEnrollment({
+                      studentId: student.id,
+                      studentName: student.fullName || '',
+                      sessions: manualEnrollForm.action === 'add' ? manualEnrollForm.sessions : -manualEnrollForm.sessions,
+                      type: 'Ghi danh thủ công',
+                      contractCode: '',
+                      finalAmount: 0,
+                      createdDate: new Date().toLocaleDateString('vi-VN'),
+                      createdBy: user?.displayName || user?.email || 'Unknown',
+                      note: `${manualEnrollForm.action === 'add' ? 'Thêm' : 'Trừ'} ${manualEnrollForm.sessions} buổi - ${manualEnrollForm.reason}`,
+                      courseName: student.className || '',
+                      classId: student.classId || '',
+                      className: student.className || '',
+                    });
+                    
+                    alert(`Đã ${manualEnrollForm.action === 'add' ? 'thêm' : 'trừ'} ${manualEnrollForm.sessions} buổi thành công!`);
+                    setShowManualEnrollModal(false);
+                    setManualEnrollForm({ action: 'add', sessions: 1, reason: '' });
+                  } catch (err) {
+                    console.error('Error manual enrollment:', err);
+                    alert('Có lỗi xảy ra. Vui lòng thử lại!');
+                  } finally {
+                    setProcessingManual(false);
+                  }
+                }}
+                disabled={processingManual || !manualEnrollForm.reason.trim()}
+                className={`px-4 py-2 text-white rounded-lg disabled:opacity-50 ${
+                  manualEnrollForm.action === 'add' 
+                    ? 'bg-green-600 hover:bg-green-700' 
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                {processingManual ? 'Đang xử lý...' : 'Xác nhận'}
               </button>
             </div>
           </div>

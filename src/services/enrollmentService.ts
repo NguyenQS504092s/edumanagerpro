@@ -87,3 +87,40 @@ export const deleteEnrollment = async (id: string): Promise<void> => {
     throw error;
   }
 };
+
+/**
+ * Check if enrollment exists for a contract
+ */
+export const getEnrollmentByContractCode = async (contractCode: string): Promise<EnrollmentRecord | null> => {
+  try {
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('contractCode', '==', contractCode)
+    );
+    const snapshot = await getDocs(q);
+    
+    if (snapshot.empty) return null;
+    
+    return {
+      id: snapshot.docs[0].id,
+      ...snapshot.docs[0].data()
+    } as EnrollmentRecord;
+  } catch (error) {
+    console.error('Error finding enrollment by contract:', error);
+    return null;
+  }
+};
+
+/**
+ * Delete enrollment by contract code (for cascade delete)
+ */
+export const deleteEnrollmentByContractCode = async (contractCode: string): Promise<void> => {
+  try {
+    const enrollment = await getEnrollmentByContractCode(contractCode);
+    if (enrollment) {
+      await deleteEnrollment(enrollment.id);
+    }
+  } catch (error) {
+    console.error('Error deleting enrollment by contract:', error);
+  }
+};

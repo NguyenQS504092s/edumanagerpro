@@ -4,10 +4,11 @@
  */
 
 import React, { useState } from 'react';
-import { FileText, Plus, Search, X, Trash2, CheckCircle, XCircle, Printer } from 'lucide-react';
+import { FileText, Plus, Search, X, Trash2, CheckCircle, XCircle, Printer, AlertTriangle } from 'lucide-react';
 import { useInvoices } from '../src/hooks/useInvoices';
 import { Invoice, InvoiceItem, InvoiceStatus } from '../src/services/invoiceService';
 import { formatCurrency } from '../src/utils/currencyUtils';
+import { usePermissions } from '../src/hooks/usePermissions';
 
 const STATUS_COLORS: Record<InvoiceStatus, string> = {
   'Chờ thanh toán': 'bg-yellow-100 text-yellow-700',
@@ -18,9 +19,16 @@ const STATUS_COLORS: Record<InvoiceStatus, string> = {
 export const InvoiceManager: React.FC = () => {
   const { invoices, loading, error, totalRevenue, pendingCount, createInvoice, markAsPaid, cancelInvoice, deleteInvoice } = useInvoices();
   
+  // Permissions
+  const { canCreate, canDelete, requiresApproval, isAdmin } = usePermissions();
+  const canCreateInvoice = canCreate('invoices');
+  const canDeleteInvoice = canDelete('invoices');
+  const needsApprovalToDelete = requiresApproval('invoices');
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | ''>('');
   const [showModal, setShowModal] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const handleMarkPaid = async (id: string) => {
     try {
@@ -40,6 +48,13 @@ export const InvoiceManager: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    // CSKH needs admin approval to delete
+    if (needsApprovalToDelete && !isAdmin) {
+      setPendingDeleteId(id);
+      alert('Yêu cầu xóa hóa đơn đã được gửi. Cần Admin duyệt để hoàn tất.');
+      return;
+    }
+    
     if (!confirm('Xóa hóa đơn này?')) return;
     try {
       await deleteInvoice(id);
@@ -82,12 +97,14 @@ export const InvoiceManager: React.FC = () => {
             <span className="text-sm bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full font-medium">
               Chờ TT: {pendingCount}
             </span>
-            <button
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium"
-            >
-              <Plus size={16} /> Tạo hóa đơn
-            </button>
+            {canCreateInvoice && (
+              <button
+                onClick={() => setShowModal(true)}
+                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium"
+              >
+                <Plus size={16} /> Tạo hóa đơn
+              </button>
+            )}
           </div>
         </div>
 
@@ -206,13 +223,15 @@ export const InvoiceManager: React.FC = () => {
                           </button>
                         </>
                       )}
-                      <button
-                        onClick={() => invoice.id && handleDelete(invoice.id)}
-                        className="p-1 text-gray-400 hover:text-red-600 rounded"
-                        title="Xóa"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      {(canDeleteInvoice || needsApprovalToDelete) && (
+                        <button
+                          onClick={() => invoice.id && handleDelete(invoice.id)}
+                          className={`p-1 rounded ${needsApprovalToDelete && !isAdmin ? 'text-yellow-500 hover:text-yellow-600' : 'text-gray-400 hover:text-red-600'}`}
+                          title={needsApprovalToDelete && !isAdmin ? "Xóa (cần Admin duyệt)" : "Xóa"}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
