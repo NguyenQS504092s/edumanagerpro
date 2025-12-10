@@ -19,4 +19,5 @@ export * from './triggers/sessionTriggers';
 export * from './triggers/holidayTriggers';
 export * from './triggers/homeworkTriggers';
 export * from './triggers/attendanceTriggers';
+export * from './triggers/studentAttendanceTriggers';
 export * from './triggers/contractTriggers';

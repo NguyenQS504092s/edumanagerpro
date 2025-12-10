@@ -16,7 +16,6 @@ import {
 import { useAuth } from '../src/hooks/useAuth';
 import { useStudents } from '../src/hooks/useStudents';
 import { useContracts } from '../src/hooks/useContracts';
-import { createEnrollment } from '../src/services/enrollmentService';
 import { useCurriculums } from '../src/hooks/useCurriculums';
 import { useProducts } from '../src/hooks/useProducts';
 import { 
@@ -249,19 +248,25 @@ export const ContractCreation: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [showContractPreview, setShowContractPreview] = useState(false);
   const [createdContract, setCreatedContract] = useState<Partial<Contract> | null>(null);
+  const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
+  const [partialPaidAmount, setPartialPaidAmount] = useState<number>(0);
 
   // Convert curriculums to course format for contract
-  const availableCourses: Course[] = curriculums.map(c => ({
-    id: c.id || '',
-    code: c.code,
-    name: c.name,
-    totalSessions: c.totalSessions,
-    pricePerSession: Math.round(c.tuitionFee / c.totalSessions),
-    totalPrice: c.tuitionFee,
-    status: c.status,
-    createdAt: c.createdAt || '',
-    updatedAt: c.updatedAt || '',
-  }));
+  const availableCourses: Course[] = curriculums.map(c => {
+    const totalSessions = c.totalSessions || 1;
+    const tuitionFee = c.tuitionFee || 0;
+    return {
+      id: c.id || '',
+      code: c.code,
+      name: c.name,
+      totalSessions: totalSessions,
+      pricePerSession: totalSessions > 0 ? Math.round(tuitionFee / totalSessions) : 0,
+      totalPrice: tuitionFee,
+      status: c.status,
+      createdAt: c.createdAt || '',
+      updatedAt: c.updatedAt || '',
+    };
+  });
 
   // Convert products to expected format
   const availableProducts: Product[] = products.map(p => ({
@@ -275,40 +280,49 @@ export const ContractCreation: React.FC = () => {
 
   // Calculate totals
   const calculations = useMemo(() => {
-    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
-    const totalDiscount = items.reduce((sum, item) => sum + (item.subtotal - item.finalPrice), 0);
-    const totalAmount = items.reduce((sum, item) => sum + item.finalPrice, 0);
-    const totalAmountInWords = numberToWords(totalAmount);
+    const subtotal = items.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+    const totalDiscount = items.reduce((sum, item) => sum + ((item.subtotal || 0) - (item.finalPrice || 0)), 0);
+    const totalAmount = items.reduce((sum, item) => sum + (item.finalPrice || 0), 0);
+    const totalAmountInWords = numberToWords(totalAmount || 0);
 
-    return { subtotal, totalDiscount, totalAmount, totalAmountInWords };
+    return { 
+      subtotal: subtotal || 0, 
+      totalDiscount: totalDiscount || 0, 
+      totalAmount: totalAmount || 0, 
+      totalAmountInWords: totalAmountInWords || '0 đồng' 
+    };
   }, [items]);
 
   // Add course item
   const addCourseItem = (course: Course) => {
+    const unitPrice = course.pricePerSession || 0;
+    const quantity = course.totalSessions || 1;
+    const subtotal = unitPrice * quantity;
     const newItem: ContractItem = {
       type: 'course',
       id: course.id,
       name: course.name,
-      unitPrice: course.pricePerSession,
-      quantity: course.totalSessions,
-      subtotal: course.totalPrice,
+      unitPrice: unitPrice,
+      quantity: quantity,
+      subtotal: subtotal,
       discount: 0,
-      finalPrice: course.totalPrice,
+      finalPrice: subtotal,
     };
     setItems([...items, newItem]);
   };
 
   // Add product item
   const addProductItem = (product: Product) => {
+    const unitPrice = product.price || 0;
     const newItem: ContractItem = {
       type: 'product',
       id: product.id,
       name: product.name,
-      unitPrice: product.price,
+      unitPrice: unitPrice,
       quantity: 1,
-      subtotal: product.price,
+      subtotal: unitPrice,
       discount: 0,
-      finalPrice: product.price,
+      finalPrice: unitPrice,
     };
     setItems([...items, newItem]);
   };
@@ -319,12 +333,14 @@ export const ContractCreation: React.FC = () => {
     const item = { ...newItems[index] };
     
     if (field === 'quantity' || field === 'unitPrice') {
-      item[field] = value;
-      item.subtotal = item.quantity * item.unitPrice;
-      item.finalPrice = calculateDiscount(item.subtotal, item.discount);
+      const numValue = Number(value) || 0;
+      item[field] = numValue;
+      item.subtotal = (item.quantity || 0) * (item.unitPrice || 0);
+      item.finalPrice = calculateDiscount(item.subtotal || 0, item.discount || 0);
     } else if (field === 'discount') {
-      item.discount = value;
-      item.finalPrice = calculateDiscount(item.subtotal, value);
+      const numValue = Number(value) || 0;
+      item.discount = numValue;
+      item.finalPrice = calculateDiscount(item.subtotal || 0, numValue);
     } else {
       (item as any)[field] = value;
     }
@@ -358,6 +374,18 @@ export const ContractCreation: React.FC = () => {
     try {
       setLoading(true);
 
+      // Calculate paid amount based on status
+      let paidAmount = 0;
+      let remainingAmount = calculations.totalAmount;
+      
+      if (status === ContractStatus.PAID) {
+        paidAmount = calculations.totalAmount;
+        remainingAmount = 0;
+      } else if (status === ContractStatus.PARTIAL) {
+        paidAmount = partialPaidAmount;
+        remainingAmount = calculations.totalAmount - partialPaidAmount;
+      }
+
       const contractData: Partial<Contract> = {
         type: contractType,
         category: contractCategory,
@@ -372,8 +400,8 @@ export const ContractCreation: React.FC = () => {
         totalAmount: calculations.totalAmount,
         totalAmountInWords: calculations.totalAmountInWords,
         paymentMethod,
-        paidAmount: status === ContractStatus.PAID ? calculations.totalAmount : 0,
-        remainingAmount: status === ContractStatus.PAID ? 0 : calculations.totalAmount,
+        paidAmount,
+        remainingAmount,
         contractDate: new Date().toISOString(),
         status,
         notes,
@@ -383,47 +411,21 @@ export const ContractCreation: React.FC = () => {
       const contractId = await createContract(contractData);
       const contractCode = contractId ? `Brisky${String(Date.now()).slice(-3)}` : 'Brisky001';
       
-      // Create enrollment record for each course item when contract is PAID
-      if (status === ContractStatus.PAID && selectedStudent) {
-        // Map contract category to enrollment type
-        const enrollmentType = contractCategory === ContractCategory.RENEWAL 
-          ? 'Hợp đồng tái phí' 
-          : contractCategory === ContractCategory.MIGRATION
-          ? 'Hợp đồng liên kết' as any
-          : 'Hợp đồng mới';
-        
-        for (const item of items) {
-          if (item.type === 'course') {
-            try {
-              await createEnrollment({
-                studentId: selectedStudent.id,
-                studentName: selectedStudent.fullName || selectedStudent.name || '',
-                sessions: item.quantity || item.sessions || 0,
-                type: enrollmentType,
-                contractCode: contractCode,
-                finalAmount: item.finalPrice,
-                createdDate: new Date().toLocaleDateString('vi-VN'),
-                createdBy: user.displayName || user.email || 'Unknown',
-                note: `Ghi danh từ hợp đồng ${contractCode} - ${item.name}`,
-                courseName: item.name,
-                classId: item.classId || '',
-                className: item.className || '',
-              });
-            } catch (err) {
-              console.error('Error creating enrollment:', err);
-            }
-          }
-        }
-      }
+      // NOTE: Enrollment record is created by Firestore trigger (contractTriggers.ts)
+      // to ensure data integrity and avoid duplicate records
+      // Trigger will check if enrollment already exists before creating
       
-      if (status === ContractStatus.PAID) {
-        // Show preview only for paid contracts
+      if (status === ContractStatus.PAID || status === ContractStatus.PARTIAL) {
+        // Show preview for paid/partial contracts
         setCreatedContract({
           ...contractData,
           id: contractId,
           code: contractCode,
         });
         setShowContractPreview(true);
+        // Reset partial payment modal
+        setShowPartialPaymentModal(false);
+        setPartialPaidAmount(0);
       } else {
         // Draft: just show success and redirect
         alert('Đã lưu hợp đồng nháp thành công!');
@@ -653,8 +655,15 @@ export const ContractCreation: React.FC = () => {
                       </span>
                       <p className="font-medium">{item.name}</p>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      {formatCurrency(item.unitPrice)}
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value={item.unitPrice || 0}
+                        onChange={(e) => updateItem(index, 'unitPrice', parseInt(e.target.value) || 0)}
+                        className="w-28 px-2 py-1 border border-gray-300 rounded text-right"
+                      />
                     </td>
                     <td className="px-4 py-3">
                       <input
@@ -777,6 +786,17 @@ export const ContractCreation: React.FC = () => {
             Lưu nháp
           </button>
           <button
+            onClick={() => {
+              setPartialPaidAmount(0);
+              setShowPartialPaymentModal(true);
+            }}
+            disabled={loading || items.length === 0}
+            className="px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors disabled:opacity-50 flex items-center gap-2"
+          >
+            <DollarSign size={18} />
+            Nợ hợp đồng
+          </button>
+          <button
             onClick={() => handleSubmit(ContractStatus.PAID)}
             disabled={loading || items.length === 0}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2"
@@ -786,6 +806,51 @@ export const ContractCreation: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Partial Payment Modal */}
+      {showPartialPaymentModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Nợ hợp đồng</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Tổng tiền hợp đồng: <span className="font-bold text-indigo-600">{formatCurrency(calculations.totalAmount)}</span>
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Số tiền đã thanh toán
+              </label>
+              <input
+                type="number"
+                min="0"
+                max={calculations.totalAmount}
+                step="10000"
+                value={partialPaidAmount}
+                onChange={(e) => setPartialPaidAmount(parseInt(e.target.value) || 0)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                placeholder="Nhập số tiền đã nhận..."
+              />
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Còn nợ: <span className="font-bold text-red-600">{formatCurrency(calculations.totalAmount - partialPaidAmount)}</span>
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowPartialPaymentModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => handleSubmit(ContractStatus.PARTIAL)}
+                disabled={loading || partialPaidAmount <= 0 || partialPaidAmount >= calculations.totalAmount}
+                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {loading ? 'Đang xử lý...' : 'Xác nhận'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Contract Preview Modal */}
       {showContractPreview && createdContract && (

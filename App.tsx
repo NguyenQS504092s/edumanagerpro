@@ -28,7 +28,7 @@ import { ContractCreation } from './pages/ContractCreation';
 import { ContractList } from './pages/ContractList';
 import { FeedbackManager } from './pages/FeedbackManager';
 import { RevenueReport } from './pages/RevenueReport';
-import { DebtManager } from './pages/DebtManager';
+import { DebtManagement } from './pages/DebtManagement';
 import { CustomerDatabase } from './pages/CustomerDatabase';
 import { CampaignManager } from './pages/CampaignManager';
 import { TrainingReport } from './pages/TrainingReport';
@@ -36,6 +36,7 @@ import { InvoiceManager } from './pages/InvoiceManager';
 import { CenterSettings } from './pages/CenterSettings';
 import { CurriculumManager } from './pages/CurriculumManager';
 import { HomeworkManager } from './pages/HomeworkManager';
+import { MonthlyReport } from './pages/MonthlyReport';
 import { Login } from './pages/Login';
 import { StudentStatus } from './types';
 import { useAuth } from './src/hooks/useAuth';
@@ -100,63 +101,64 @@ const App: React.FC = () => {
       <Routes>
         {/* Public Route */}
         <Route path="/login" element={<Login />} />
-        
+
         {/* Protected Routes */}
         <Route path="/*" element={
           <ProtectedRoute>
             <Layout>
               <Routes>
                 <Route path="/" element={<Dashboard />} />
-          
-          {/* Training Routes */}
-          <Route path="/training/classes" element={<ClassManager />} />
-          <Route path="/training/schedule" element={<Schedule />} />
-          <Route path="/training/holidays" element={<HolidayManager />} />
-          <Route path="/training/attendance" element={<Attendance />} />
-          <Route path="/training/tutoring" element={<TutoringManager />} />
-          <Route path="/training/homework" element={<HomeworkManager />} />
-          <Route path="/training/attendance-history" element={<AttendanceHistory />} />
-          <Route path="/training/enrollment" element={<EnrollmentHistory />} />
-          
-          {/* Customer Routes */}
-          <Route path="/customers/students" element={<StudentManager key="all-students" title="Danh sách học viên" />} />
-          <Route path="/customers/student-detail/:id" element={<StudentDetail />} />
-          <Route path="/customers/parents" element={<ParentManager />} />
-          <Route path="/customers/dropped" element={<StudentManager key="dropped-students" initialStatusFilter={StudentStatus.DROPPED} title="Danh sách học viên đã nghỉ" />} />
-          <Route path="/customers/reserved" element={<StudentManager key="reserved-students" initialStatusFilter={StudentStatus.RESERVED} title="Danh sách học viên bảo lưu" />} />
-          <Route path="/customers/trial" element={<TrialStudents />} />
-          <Route path="/customers/feedback" element={<FeedbackManager />} />
-          
-          {/* Business Routes */}
-          <Route path="/business/leads" element={<CustomerDatabase />} />
-          <Route path="/business/campaigns" element={<CampaignManager />} />
-          
-          {/* HR Routes */}
-          <Route path="/hr/staff" element={<StaffManager />} />
-          <Route path="/hr/salary" element={<SalaryConfig />} />
-          <Route path="/hr/work-confirmation" element={<WorkConfirmation />} />
-          <Route path="/hr/salary-teacher" element={<SalaryReportTeacher />} />
-          <Route path="/hr/salary-staff" element={<SalaryReportStaff />} />
-          
-          {/* Finance Routes */}
-          <Route path="/finance/contracts" element={<ContractList />} />
-          <Route path="/finance/contracts/create" element={<ContractCreation />} />
-          <Route path="/finance/invoices" element={<InvoiceManager />} />
-          <Route path="/finance/revenue" element={<RevenueReport />} />
-          <Route path="/finance/debt" element={<DebtManager />} />
-          
-          {/* Report Routes */}
-          <Route path="/reports/training" element={<TrainingReport />} />
-          <Route path="/reports/finance" element={<RevenueReport />} />
-          
-          {/* Settings Routes */}
-          <Route path="/settings/staff" element={<StaffManager />} />
-          <Route path="/settings/products" element={<ProductManager />} />
-          <Route path="/settings/inventory" element={<InventoryManager />} />
-          <Route path="/settings/rooms" element={<RoomManager />} />
-          <Route path="/settings/center" element={<CenterSettings />} />
-          <Route path="/settings/curriculum" element={<CurriculumManager />} />
-          
+
+                {/* Training Routes */}
+                <Route path="/training/classes" element={<ClassManager />} />
+                <Route path="/training/schedule" element={<Schedule />} />
+                <Route path="/training/holidays" element={<HolidayManager />} />
+                <Route path="/training/attendance" element={<Attendance />} />
+                <Route path="/training/tutoring" element={<TutoringManager />} />
+                <Route path="/training/homework" element={<HomeworkManager />} />
+                <Route path="/training/attendance-history" element={<AttendanceHistory />} />
+                <Route path="/training/enrollment" element={<EnrollmentHistory />} />
+
+                {/* Customer Routes */}
+                <Route path="/customers/students" element={<StudentManager key="all-students" title="Danh sách học viên" />} />
+                <Route path="/customers/student-detail/:id" element={<StudentDetail />} />
+                <Route path="/customers/parents" element={<ParentManager />} />
+                <Route path="/customers/dropped" element={<StudentManager key="dropped-students" initialStatusFilter={StudentStatus.DROPPED} title="Danh sách học viên đã nghỉ" />} />
+                <Route path="/customers/reserved" element={<StudentManager key="reserved-students" initialStatusFilter={StudentStatus.RESERVED} title="Danh sách học viên bảo lưu" />} />
+                <Route path="/customers/trial" element={<TrialStudents />} />
+                <Route path="/customers/feedback" element={<FeedbackManager />} />
+
+                {/* Business Routes */}
+                <Route path="/business/leads" element={<CustomerDatabase />} />
+                <Route path="/business/campaigns" element={<CampaignManager />} />
+
+                {/* HR Routes */}
+                <Route path="/hr/staff" element={<StaffManager />} />
+                <Route path="/hr/salary" element={<SalaryConfig />} />
+                <Route path="/hr/work-confirmation" element={<WorkConfirmation />} />
+                <Route path="/hr/salary-teacher" element={<SalaryReportTeacher />} />
+                <Route path="/hr/salary-staff" element={<SalaryReportStaff />} />
+
+                {/* Finance Routes */}
+                <Route path="/finance/contracts" element={<ContractList />} />
+                <Route path="/finance/contracts/create" element={<ContractCreation />} />
+                <Route path="/finance/invoices" element={<InvoiceManager />} />
+                <Route path="/finance/revenue" element={<RevenueReport />} />
+                <Route path="/finance/debt" element={<DebtManagement />} />
+
+                {/* Report Routes */}
+                <Route path="/reports/training" element={<TrainingReport />} />
+                <Route path="/reports/finance" element={<RevenueReport />} />
+                <Route path="/reports/monthly" element={<MonthlyReport />} />
+
+                {/* Settings Routes */}
+                <Route path="/settings/staff" element={<StaffManager />} />
+                <Route path="/settings/products" element={<ProductManager />} />
+                <Route path="/settings/inventory" element={<InventoryManager />} />
+                <Route path="/settings/rooms" element={<RoomManager />} />
+                <Route path="/settings/center" element={<CenterSettings />} />
+                <Route path="/settings/curriculum" element={<CurriculumManager />} />
+
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>

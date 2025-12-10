@@ -27,6 +27,13 @@ interface StudentAttendanceState {
   studentCode: string;
   status: AttendanceStatus;
   note: string;
+  // Thông tin điểm số
+  homeworkCompletion?: number;  // % BTVN (0-100)
+  testName?: string;            // Tên bài KT
+  score?: number;               // Điểm (0-10)
+  bonusPoints?: number;         // Điểm thưởng
+  // Thông tin đi học
+  punctuality?: 'onTime' | 'late' | '';  // Đúng giờ / Trễ giờ
 }
 
 // Interface cho rà soát điểm danh
@@ -89,16 +96,6 @@ export const Attendance: React.FC = () => {
     return null;
   };
 
-  // Check if selected date is a holiday (for tab 1)
-  const selectedDateHoliday = useMemo(() => {
-    return getHolidayForDate(attendanceDate, selectedClassId);
-  }, [attendanceDate, selectedClassId, holidays]);
-
-  // Check if review date is a global holiday (for tab 2)
-  const reviewDateHoliday = useMemo(() => {
-    return getHolidayForDate(reviewDate);
-  }, [reviewDate, holidays]);
-
   // Filter classes for teachers (onlyOwnClasses)
   const classes = useMemo(() => {
     if (!onlyOwnClasses || !staffData) return allClasses;
@@ -126,6 +123,7 @@ export const Attendance: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [useSessionMode, setUseSessionMode] = useState(true); // Default to session mode
   const [showAddSessionModal, setShowAddSessionModal] = useState(false);
+  const [showGradeFields, setShowGradeFields] = useState(false); // Toggle hiển thị điểm số
 
   // Review tab state
   const [reviewDate, setReviewDate] = useState<string>(() => {
@@ -144,6 +142,16 @@ export const Attendance: React.FC = () => {
     reason: string;
   }>({ show: false, type: 'late', student: null, reason: '' });
   const [processingReview, setProcessingReview] = useState(false);
+
+  // Check if selected date is a holiday (for tab 1)
+  const selectedDateHoliday = useMemo(() => {
+    return getHolidayForDate(attendanceDate, selectedClassId);
+  }, [attendanceDate, selectedClassId, holidays]);
+
+  // Check if review date is a global holiday (for tab 2)
+  const reviewDateHoliday = useMemo(() => {
+    return getHolidayForDate(reviewDate);
+  }, [reviewDate, holidays]);
 
   // Sessions hook
   const { upcomingSessions, loading: sessionsLoading, markSessionComplete, addMakeup } = useSessions({ 
@@ -224,8 +232,13 @@ export const Attendance: React.FC = () => {
             studentId: s.id,
             studentName: s.fullName || (s as any).name || 'Unknown',
             studentCode: s.code || s.id.slice(0, 6),
-            status: AttendanceStatus.PRESENT,
+            status: AttendanceStatus.PENDING,
             note: '',
+            homeworkCompletion: undefined,
+            testName: '',
+            score: undefined,
+            bonusPoints: undefined,
+            punctuality: '',
           }))
         );
       }
@@ -244,8 +257,13 @@ export const Attendance: React.FC = () => {
             studentId: s.id,
             studentName: s.fullName || (s as any).name || 'Unknown',
             studentCode: s.code || s.id.slice(0, 6),
-            status: existing?.status || AttendanceStatus.PRESENT,
+            status: existing?.status || AttendanceStatus.PENDING,
             note: existing?.note || '',
+            homeworkCompletion: existing?.homeworkCompletion,
+            testName: existing?.testName || '',
+            score: existing?.score,
+            bonusPoints: existing?.bonusPoints,
+            punctuality: existing?.punctuality || '',
           };
         })
       );
@@ -261,6 +279,12 @@ export const Attendance: React.FC = () => {
   const handleNoteChange = (studentId: string, note: string) => {
     setAttendanceData(prev =>
       prev.map(s => (s.studentId === studentId ? { ...s, note } : s))
+    );
+  };
+
+  const handleGradeChange = (studentId: string, field: keyof StudentAttendanceState, value: any) => {
+    setAttendanceData(prev =>
+      prev.map(s => (s.studentId === studentId ? { ...s, [field]: value } : s))
     );
   };
 
@@ -292,6 +316,7 @@ export const Attendance: React.FC = () => {
           className: selectedClass.name,
           date: dateToUse,
           sessionNumber: selectedSession?.sessionNumber,
+          sessionId: selectedSession?.id,
           totalStudents: attendanceData.length,
           present: attendanceData.filter(s => s.status === AttendanceStatus.PRESENT).length,
           absent: absentCount,
@@ -300,7 +325,19 @@ export const Attendance: React.FC = () => {
           status: 'Đã điểm danh',
           createdBy: user?.uid,
         },
-        attendanceData
+        attendanceData.map(s => ({
+          studentId: s.studentId,
+          studentName: s.studentName,
+          studentCode: s.studentCode,
+          status: s.status,
+          note: s.note,
+          homeworkCompletion: s.homeworkCompletion,
+          testName: s.testName,
+          score: s.score,
+          bonusPoints: s.bonusPoints,
+          punctuality: s.punctuality,
+          isLate: s.punctuality === 'late',
+        }))
       );
 
       // Mark session as complete if using session mode
@@ -335,8 +372,9 @@ export const Attendance: React.FC = () => {
   };
 
   const getStatusStyle = (status: AttendanceStatus, current: AttendanceStatus) => {
-    const isActive = status === current;
+    const isActive = status === current && status !== AttendanceStatus.PENDING;
     const styles: Record<AttendanceStatus, string> = {
+      [AttendanceStatus.PENDING]: 'bg-white text-gray-400 border-gray-200',
       [AttendanceStatus.PRESENT]: isActive
         ? 'bg-green-600 text-white border-green-600'
         : 'bg-white text-green-600 border-green-300 hover:bg-green-50',
@@ -356,6 +394,7 @@ export const Attendance: React.FC = () => {
   // Stats
   const stats = {
     total: attendanceData.length,
+    pending: attendanceData.filter(s => s.status === AttendanceStatus.PENDING || !s.status).length,
     present: attendanceData.filter(s => s.status === AttendanceStatus.PRESENT).length,
     absent: attendanceData.filter(s => s.status === AttendanceStatus.ABSENT).length,
     reserved: attendanceData.filter(s => s.status === AttendanceStatus.RESERVED).length,
@@ -877,10 +916,14 @@ export const Attendance: React.FC = () => {
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           {/* Stats Header */}
-          <div className="grid grid-cols-5 border-b border-gray-100 divide-x divide-gray-100">
+          <div className="grid grid-cols-6 border-b border-gray-100 divide-x divide-gray-100">
             <div className="p-4 text-center">
               <p className="text-xs text-gray-500 uppercase font-bold">Tổng số</p>
               <p className="text-xl font-bold text-gray-800">{stats.total}</p>
+            </div>
+            <div className="p-4 text-center bg-gray-50">
+              <p className="text-xs text-gray-500 uppercase font-bold">Chưa điểm danh</p>
+              <p className="text-xl font-bold text-gray-600">{stats.pending}</p>
             </div>
             <div className="p-4 text-center bg-green-50">
               <p className="text-xs text-green-600 uppercase font-bold">Có mặt</p>
@@ -901,72 +944,178 @@ export const Attendance: React.FC = () => {
           </div>
 
           {/* Bulk Actions */}
-          <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center gap-3">
-            <span className="text-sm font-medium text-gray-600">Điểm danh nhanh:</span>
+          <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-600">Điểm danh nhanh:</span>
+              <button
+                onClick={() => handleBulkStatus(AttendanceStatus.PRESENT)}
+                className="px-3 py-1 text-xs font-medium rounded bg-green-100 text-green-700 hover:bg-green-200"
+              >
+                Tất cả có mặt
+              </button>
+              <button
+                onClick={() => handleBulkStatus(AttendanceStatus.ABSENT)}
+                className="px-3 py-1 text-xs font-medium rounded bg-red-100 text-red-700 hover:bg-red-200"
+              >
+                Tất cả vắng
+              </button>
+            </div>
             <button
-              onClick={() => handleBulkStatus(AttendanceStatus.PRESENT)}
-              className="px-3 py-1 text-xs font-medium rounded bg-green-100 text-green-700 hover:bg-green-200"
+              onClick={() => setShowGradeFields(!showGradeFields)}
+              className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${
+                showGradeFields 
+                  ? 'bg-indigo-100 text-indigo-700 border-indigo-300' 
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+              }`}
             >
-              Tất cả có mặt
-            </button>
-            <button
-              onClick={() => handleBulkStatus(AttendanceStatus.ABSENT)}
-              className="px-3 py-1 text-xs font-medium rounded bg-red-100 text-red-700 hover:bg-red-200"
-            >
-              Tất cả vắng
+              {showGradeFields ? '✓ Nhập điểm số' : '+ Nhập điểm số'}
             </button>
           </div>
 
           {/* Table */}
+          <div className="overflow-x-auto">
           <table className="w-full text-left text-sm text-gray-600">
             <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
               <tr>
-                <th className="px-6 py-4 w-16">STT</th>
-                <th className="px-6 py-4">Học viên</th>
-                <th className="px-6 py-4 text-center">Trạng thái</th>
-                <th className="px-6 py-4">Ghi chú</th>
+                <th className="px-4 py-4 w-12">STT</th>
+                <th className="px-4 py-4">Học viên</th>
+                <th className="px-4 py-4 text-center">Trạng thái</th>
+                <th className="px-4 py-4 text-center">Đúng giờ/Trễ</th>
+                {showGradeFields && (
+                  <>
+                    <th className="px-4 py-4 text-center w-20">% BTVN</th>
+                    <th className="px-4 py-4 w-28">Tên bài KT</th>
+                    <th className="px-4 py-4 text-center w-20">Điểm</th>
+                    <th className="px-4 py-4 text-center w-24">Điểm thưởng</th>
+                  </>
+                )}
+                <th className="px-4 py-4">Ghi chú</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {attendanceData.map((student, index) => (
                 <tr key={student.studentId} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">{index + 1}</td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-3">{index + 1}</td>
+                  <td className="px-4 py-3">
                     <div>
                       <p className="font-bold text-gray-900">{student.studentName}</p>
                       <p className="text-xs text-gray-500">{student.studentCode}</p>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex justify-center gap-2 flex-wrap">
+                  <td className="px-4 py-3">
+                    <div className="flex justify-center gap-1 flex-wrap">
                       <button
                         onClick={() => handleStatusChange(student.studentId, AttendanceStatus.PRESENT)}
-                        className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.PRESENT, student.status)}`}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.PRESENT, student.status)}`}
                       >
                         Có mặt
                       </button>
                       <button
                         onClick={() => handleStatusChange(student.studentId, AttendanceStatus.ABSENT)}
-                        className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.ABSENT, student.status)}`}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.ABSENT, student.status)}`}
                         title="Vắng sẽ tự động tạo lịch bồi bài"
                       >
                         Vắng
                       </button>
                       <button
                         onClick={() => handleStatusChange(student.studentId, AttendanceStatus.RESERVED)}
-                        className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.RESERVED, student.status)}`}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.RESERVED, student.status)}`}
                       >
                         Bảo lưu
                       </button>
                       <button
                         onClick={() => handleStatusChange(student.studentId, AttendanceStatus.TUTORED)}
-                        className={`px-3 py-1.5 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.TUTORED, student.status)}`}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.TUTORED, student.status)}`}
                       >
                         Đã bồi
                       </button>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-3">
+                    <div className="flex justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Auto set status to PRESENT when clicking punctuality
+                          if (student.status !== AttendanceStatus.PRESENT) {
+                            handleStatusChange(student.studentId, AttendanceStatus.PRESENT);
+                          }
+                          handleGradeChange(student.studentId, 'punctuality', student.punctuality === 'onTime' ? '' : 'onTime');
+                        }}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${
+                          student.punctuality === 'onTime'
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50'
+                        }`}
+                      >
+                        Đúng giờ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Auto set status to PRESENT when clicking punctuality
+                          if (student.status !== AttendanceStatus.PRESENT) {
+                            handleStatusChange(student.studentId, AttendanceStatus.PRESENT);
+                          }
+                          handleGradeChange(student.studentId, 'punctuality', student.punctuality === 'late' ? '' : 'late');
+                        }}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${
+                          student.punctuality === 'late'
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-white text-amber-600 border-amber-300 hover:bg-amber-50'
+                        }`}
+                      >
+                        Trễ giờ
+                      </button>
+                    </div>
+                  </td>
+                  {showGradeFields && (
+                    <>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          placeholder="%"
+                          value={student.homeworkCompletion ?? ''}
+                          onChange={(e) => handleGradeChange(student.studentId, 'homeworkCompletion', e.target.value ? Number(e.target.value) : undefined)}
+                          className="w-16 px-2 py-1 border border-gray-200 rounded text-center text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          placeholder="Bài KT..."
+                          value={student.testName || ''}
+                          onChange={(e) => handleGradeChange(student.studentId, 'testName', e.target.value)}
+                          className="w-24 px-2 py-1 border border-gray-200 rounded text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          min="0"
+                          max="10"
+                          step="0.5"
+                          placeholder="0-10"
+                          value={student.score ?? ''}
+                          onChange={(e) => handleGradeChange(student.studentId, 'score', e.target.value ? Number(e.target.value) : undefined)}
+                          className="w-16 px-2 py-1 border border-gray-200 rounded text-center text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={student.bonusPoints ?? ''}
+                          onChange={(e) => handleGradeChange(student.studentId, 'bonusPoints', e.target.value ? Number(e.target.value) : undefined)}
+                          className="w-16 px-2 py-1 border border-gray-200 rounded text-center text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
+                    </>
+                  )}
+                  <td className="px-4 py-3">
                     <input
                       type="text"
                       placeholder="Ghi chú..."
@@ -979,6 +1128,7 @@ export const Attendance: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
 
           {/* Footer Actions */}
           <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center sticky bottom-0">
@@ -997,8 +1147,9 @@ export const Attendance: React.FC = () => {
                     studentId: s.id,
                     studentName: s.fullName,
                     studentCode: s.code,
-                    status: AttendanceStatus.PRESENT,
+                    status: AttendanceStatus.PENDING,
                     note: '',
+                    punctuality: '',
                   }))
                 )}
                 className="px-6 py-2 border border-gray-300 bg-white rounded-lg text-gray-700 font-medium hover:bg-gray-50"

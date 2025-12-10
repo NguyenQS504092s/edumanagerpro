@@ -154,6 +154,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     
+    match /actualSalaries/{docId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+    
     match /salaryRanges/{rangeId} {
       allow read: if isStaff();
       allow write: if isAdmin();
@@ -179,6 +184,18 @@ service cloud.firestore {
     
     // Homework Records collection
     match /homeworkRecords/{recordId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Monthly Comments collection (nhận xét cuối tháng)
+    match /monthlyComments/{commentId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Birthday Gifts collection (tracking quà sinh nhật)
+    match /birthdayGifts/{giftId} {
       allow read: if isStaff();
       allow write: if isStaff();
     }

@@ -163,6 +163,7 @@ export const getContract = async (id: string): Promise<Contract | null> => {
 
 /**
  * Get all contracts with filters
+ * Note: Filters are applied client-side to avoid Firestore composite index requirements
  */
 export const getContracts = async (filters?: {
   studentId?: string;
@@ -172,16 +173,9 @@ export const getContracts = async (filters?: {
   try {
     const constraints: QueryConstraint[] = [];
     
+    // Only filter by studentId server-side (single field, no index needed)
     if (filters?.studentId) {
       constraints.push(where('studentId', '==', filters.studentId));
-    }
-    
-    if (filters?.status) {
-      constraints.push(where('status', '==', filters.status));
-    }
-    
-    if (filters?.type) {
-      constraints.push(where('type', '==', filters.type));
     }
     
     constraints.push(orderBy('createdAt', 'desc'));
@@ -189,10 +183,21 @@ export const getContracts = async (filters?: {
     const q = query(collection(db, CONTRACTS_COLLECTION), ...constraints);
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => ({
+    let contracts = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
     } as Contract));
+    
+    // Apply status and type filters client-side
+    if (filters?.status) {
+      contracts = contracts.filter(c => c.status === filters.status);
+    }
+    
+    if (filters?.type) {
+      contracts = contracts.filter(c => c.type === filters.type);
+    }
+    
+    return contracts;
   } catch (error) {
     console.error('Error getting contracts:', error);
     throw new Error('Không thể tải danh sách hợp đồng');

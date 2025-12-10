@@ -25,8 +25,10 @@ interface ContractData {
     quantity: number;
     finalPrice: number;
   }[];
-  status: 'Nháp' | 'Đã thanh toán' | 'Nợ phí' | 'Đã hủy';
+  status: 'Nháp' | 'Đã thanh toán' | 'Nợ hợp đồng' | 'Nợ phí' | 'Đã hủy';
   totalAmount: number;
+  paidAmount?: number;
+  remainingAmount?: number;
   createdBy: string;
 }
 
@@ -48,9 +50,10 @@ export const onContractUpdate = functions
     console.log(`[onContractUpdate] Contract updated: ${contractId}`);
     console.log(`[onContractUpdate] Status: ${before.status} → ${after.status}`);
 
-    // Only process if status changed to PAID
-    if (before.status === after.status || after.status !== 'Đã thanh toán') {
-      console.log('[onContractUpdate] Status not changed to PAID, skipping');
+    // Only process if status changed to PAID or PARTIAL (Nợ hợp đồng)
+    const isPaidOrPartial = after.status === 'Đã thanh toán' || after.status === 'Nợ hợp đồng';
+    if (before.status === after.status || !isPaidOrPartial) {
+      console.log('[onContractUpdate] Status not changed to PAID/PARTIAL, skipping');
       return null;
     }
 
@@ -70,7 +73,16 @@ export const onContractUpdate = functions
       return null;
     }
 
-    console.log(`[onContractUpdate] Total sessions: ${totalSessions}`);
+    // Calculate PAID sessions based on payment ratio
+    // For PARTIAL contracts, only count sessions proportional to paid amount
+    const paidAmount = after.paidAmount || 0;
+    const totalAmount = after.totalAmount || 1;
+    const paidSessions = after.status === 'Nợ hợp đồng' 
+      ? Math.floor(totalSessions * (paidAmount / totalAmount))
+      : totalSessions;
+
+    console.log(`[onContractUpdate] Total sessions: ${totalSessions}, Paid sessions: ${paidSessions}`);
+    console.log(`[onContractUpdate] Payment: ${paidAmount}/${totalAmount} = ${Math.round(paidAmount/totalAmount*100)}%`);
     console.log(`[onContractUpdate] Contract category: ${after.category}`);
 
     // Get student data
@@ -86,21 +98,22 @@ export const onContractUpdate = functions
     const currentSessions = studentData?.registeredSessions || 0;
 
     // Handle based on contract category
+    // Use paidSessions (not totalSessions) to reflect actual paid amount
     let newSessions = currentSessions;
     
     if (after.category === 'Hợp đồng tái phí' || after.category === 'Hợp đồng liên kết') {
-      // Add sessions to existing
-      newSessions = currentSessions + totalSessions;
-      console.log(`[onContractUpdate] Adding ${totalSessions} sessions. New total: ${newSessions}`);
+      // Add paid sessions to existing
+      newSessions = currentSessions + paidSessions;
+      console.log(`[onContractUpdate] Adding ${paidSessions} paid sessions. New total: ${newSessions}`);
     } else {
       // New contract - set sessions if not already set
       if (currentSessions === 0) {
-        newSessions = totalSessions;
-        console.log(`[onContractUpdate] Setting initial sessions: ${newSessions}`);
+        newSessions = paidSessions;
+        console.log(`[onContractUpdate] Setting initial paid sessions: ${newSessions}`);
       } else {
-        // Student already has sessions, add more
-        newSessions = currentSessions + totalSessions;
-        console.log(`[onContractUpdate] Student has ${currentSessions} sessions, adding ${totalSessions}. New: ${newSessions}`);
+        // Student already has sessions, add more paid sessions
+        newSessions = currentSessions + paidSessions;
+        console.log(`[onContractUpdate] Student has ${currentSessions} sessions, adding ${paidSessions} paid. New: ${newSessions}`);
       }
     }
 
@@ -110,14 +123,53 @@ export const onContractUpdate = functions
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    // If new contract and student was in TRIAL status, update to ACTIVE
-    if (after.category === 'Hợp đồng mới' && studentData?.status === 'Học thử') {
+    // Update student status based on contract status
+    if (after.status === 'Nợ hợp đồng') {
+      // Set student status to CONTRACT_DEBT
+      updateData.status = 'Nợ hợp đồng';
+      updateData.contractDebt = after.remainingAmount || 0;
+      console.log(`[onContractUpdate] Updating student status to Nợ hợp đồng (${after.remainingAmount}đ)`);
+    } else if (after.category === 'Hợp đồng mới' && studentData?.status === 'Học thử') {
+      // If new contract and student was in TRIAL status, update to ACTIVE
       updateData.status = 'Đang học';
       console.log('[onContractUpdate] Updating student status from Học thử to Đang học');
     }
 
     await studentRef.update(updateData);
     console.log(`[onContractUpdate] Updated student ${after.studentId} with ${newSessions} sessions`);
+
+    // Check if enrollment already exists for this contract (avoid duplicate)
+    const existingEnrollment = await db.collection('enrollments')
+      .where('contractCode', '==', contractId)
+      .limit(1)
+      .get();
+    
+    if (existingEnrollment.empty) {
+      // Create enrollment record with PAID sessions (not total)
+      const enrollmentData = {
+        studentId: after.studentId,
+        studentName: after.studentName || '',
+        classId: after.items[0]?.id || '',
+        className: after.items[0]?.name || '',
+        sessions: paidSessions, // Use paidSessions, not totalSessions
+        type: after.category || 'Hợp đồng mới',
+        contractCode: contractId,
+        contractId: contractId,
+        originalAmount: after.totalAmount,
+        finalAmount: after.paidAmount || after.totalAmount,
+        createdDate: new Date().toLocaleDateString('vi-VN'),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdBy: after.createdBy || 'System',
+        note: after.status === 'Nợ hợp đồng'
+          ? `HĐ ${contractId} - Thanh toán ${Math.round((paidAmount/totalAmount)*100)}% (${paidSessions}/${totalSessions} buổi)`
+          : `HĐ ${contractId} - ${after.category || 'Hợp đồng mới'}`,
+      };
+      
+      await db.collection('enrollments').add(enrollmentData);
+      console.log(`[onContractUpdate] Created enrollment: ${paidSessions} sessions`);
+    } else {
+      console.log(`[onContractUpdate] Enrollment already exists for ${contractId}, skipping`);
+    }
 
     return null;
   });
@@ -135,9 +187,10 @@ export const onContractCreate = functions
 
     console.log(`[onContractCreate] Contract created: ${contractId}`);
 
-    // Only process if already PAID
-    if (contract.status !== 'Đã thanh toán') {
-      console.log('[onContractCreate] Not PAID status, skipping');
+    // Only process if already PAID or PARTIAL
+    const isPaidOrPartial = contract.status === 'Đã thanh toán' || contract.status === 'Nợ hợp đồng';
+    if (!isPaidOrPartial) {
+      console.log('[onContractCreate] Not PAID/PARTIAL status, skipping');
       return null;
     }
 
@@ -154,6 +207,15 @@ export const onContractCreate = functions
       return null;
     }
 
+    // Calculate PAID sessions based on payment ratio
+    const paidAmount = contract.paidAmount || 0;
+    const totalAmount = contract.totalAmount || 1;
+    const paidSessions = contract.status === 'Nợ hợp đồng'
+      ? Math.floor(totalSessions * (paidAmount / totalAmount))
+      : totalSessions;
+
+    console.log(`[onContractCreate] Total: ${totalSessions}, Paid: ${paidSessions} (${Math.round(paidAmount/totalAmount*100)}%)`);
+
     const studentRef = db.collection('students').doc(contract.studentId);
     const studentSnap = await studentRef.get();
 
@@ -164,11 +226,12 @@ export const onContractCreate = functions
     const studentData = studentSnap.data();
     const currentSessions = studentData?.registeredSessions || 0;
     
+    // Use paidSessions (not totalSessions) to reflect actual paid amount
     let newSessions = currentSessions;
     if (contract.category === 'Hợp đồng tái phí' || contract.category === 'Hợp đồng liên kết') {
-      newSessions = currentSessions + totalSessions;
+      newSessions = currentSessions + paidSessions;
     } else {
-      newSessions = currentSessions === 0 ? totalSessions : currentSessions + totalSessions;
+      newSessions = currentSessions === 0 ? paidSessions : currentSessions + paidSessions;
     }
 
     const updateData: any = {
@@ -176,12 +239,50 @@ export const onContractCreate = functions
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
-    if (contract.category === 'Hợp đồng mới' && studentData?.status === 'Học thử') {
+    // Update student status based on contract status
+    if (contract.status === 'Nợ hợp đồng') {
+      updateData.status = 'Nợ hợp đồng';
+      updateData.contractDebt = contract.remainingAmount || 0;
+      console.log(`[onContractCreate] Setting student status to Nợ hợp đồng (${contract.remainingAmount}đ)`);
+    } else if (contract.category === 'Hợp đồng mới' && studentData?.status === 'Học thử') {
       updateData.status = 'Đang học';
     }
 
     await studentRef.update(updateData);
     console.log(`[onContractCreate] Updated student ${contract.studentId} with ${newSessions} sessions`);
+
+    // Check if enrollment already exists (avoid duplicate)
+    const existingEnrollment = await db.collection('enrollments')
+      .where('contractCode', '==', contractId)
+      .limit(1)
+      .get();
+    
+    if (existingEnrollment.empty) {
+      // Create enrollment record with PAID sessions
+      const enrollmentData = {
+        studentId: contract.studentId,
+        studentName: contract.studentName || '',
+        classId: contract.items[0]?.id || '',
+        className: contract.items[0]?.name || '',
+        sessions: paidSessions,
+        type: contract.category || 'Hợp đồng mới',
+        contractCode: contractId,
+        contractId: contractId,
+        originalAmount: contract.totalAmount,
+        finalAmount: contract.paidAmount || contract.totalAmount,
+        createdDate: new Date().toLocaleDateString('vi-VN'),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdBy: contract.createdBy || 'System',
+        note: contract.status === 'Nợ hợp đồng'
+          ? `HĐ ${contractId} - Thanh toán ${Math.round((paidAmount/totalAmount)*100)}% (${paidSessions}/${totalSessions} buổi)`
+          : `HĐ ${contractId} - ${contract.category || 'Hợp đồng mới'}`,
+      };
+      
+      await db.collection('enrollments').add(enrollmentData);
+      console.log(`[onContractCreate] Created enrollment: ${paidSessions} sessions`);
+    } else {
+      console.log(`[onContractCreate] Enrollment already exists for ${contractId}, skipping`);
+    }
 
     return null;
   });
