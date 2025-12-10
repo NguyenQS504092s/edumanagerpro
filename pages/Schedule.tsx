@@ -336,7 +336,7 @@ export const Schedule: React.FC = () => {
           'bg-gradient-to-r from-amber-500 to-amber-600'
         } text-white text-center py-3 text-xl font-bold flex items-center justify-center gap-3`}>
           <div className="w-4 h-4 rounded-full bg-white/30"></div>
-          {selectedBranch} (Ô 40 - LK4)
+          {selectedBranch}
         </div>
 
         <div className="overflow-x-auto print:overflow-visible">

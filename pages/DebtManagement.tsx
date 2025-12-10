@@ -1,0 +1,442 @@
+/**
+ * Debt Management Page
+ * Hiển thị danh sách học viên:
+ * 1. Chuẩn bị hết phí (còn <= 6 buổi)
+ * 2. Đang nợ phí (học vượt số buổi đăng ký)
+ * 3. Nợ hợp đồng (thanh toán trả góp)
+ */
+
+import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, Clock, CreditCard, Phone, Calendar, ChevronDown, ChevronUp, User, BookOpen } from 'lucide-react';
+import { useStudents } from '../src/hooks/useStudents';
+import { useClasses } from '../src/hooks/useClasses';
+import { formatCurrency } from '../src/utils/currencyUtils';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
+
+const SESSIONS_WARNING_THRESHOLD = 6; // Cảnh báo khi còn <= 6 buổi
+
+export const DebtManagement: React.FC = () => {
+  const navigate = useNavigate();
+  const { students, loading } = useStudents();
+  const { classes } = useClasses({});
+  
+  const [expandedSections, setExpandedSections] = useState({
+    almostOut: true,
+    debt: true,
+    contractDebt: true,
+  });
+  
+  const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
+  const [paymentDateValue, setPaymentDateValue] = useState('');
+
+  // 1. Học viên chuẩn bị hết phí (còn <= 6 buổi, đang học)
+  const almostOutStudents = useMemo(() => {
+    return students.filter(s => {
+      const remaining = (s.registeredSessions || 0) - (s.attendedSessions || 0);
+      return remaining > 0 && remaining <= SESSIONS_WARNING_THRESHOLD && s.status === 'Đang học';
+    }).sort((a, b) => {
+      const remainA = (a.registeredSessions || 0) - (a.attendedSessions || 0);
+      const remainB = (b.registeredSessions || 0) - (b.attendedSessions || 0);
+      return remainA - remainB; // Ít buổi hơn lên trước
+    });
+  }, [students]);
+
+  // 2. Học viên đang nợ phí (học vượt số buổi đăng ký)
+  const debtStudents = useMemo(() => {
+    return students.filter(s => {
+      const exceeded = (s.attendedSessions || 0) - (s.registeredSessions || 0);
+      return exceeded > 0 && s.status === 'Nợ phí';
+    }).sort((a, b) => {
+      const exceedA = (a.attendedSessions || 0) - (a.registeredSessions || 0);
+      const exceedB = (b.attendedSessions || 0) - (b.registeredSessions || 0);
+      return exceedB - exceedA; // Nợ nhiều hơn lên trước
+    });
+  }, [students]);
+
+  // 3. Học viên nợ hợp đồng (trả góp chưa thanh toán hết)
+  const contractDebtStudents = useMemo(() => {
+    return students.filter(s => 
+      s.status === 'Nợ hợp đồng' && (s.contractDebt || 0) > 0
+    ).sort((a, b) => (b.contractDebt || 0) - (a.contractDebt || 0));
+  }, [students]);
+
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const getClassName = (classId?: string) => {
+    if (!classId) return '---';
+    const cls = classes.find(c => c.id === classId);
+    return cls?.name || '---';
+  };
+
+  const handleSavePaymentDate = async (studentId: string) => {
+    if (!paymentDateValue) return;
+    try {
+      await updateDoc(doc(db, 'students', studentId), {
+        nextPaymentDate: paymentDateValue,
+      });
+      setEditingPaymentDate(null);
+      setPaymentDateValue('');
+    } catch (err) {
+      console.error('Error saving payment date:', err);
+      alert('Không thể lưu ngày hẹn thanh toán');
+    }
+  };
+
+  const SectionHeader = ({ 
+    title, 
+    icon: Icon, 
+    count, 
+    color, 
+    expanded, 
+    onToggle 
+  }: { 
+    title: string; 
+    icon: React.ElementType; 
+    count: number; 
+    color: string; 
+    expanded: boolean; 
+    onToggle: () => void;
+  }) => (
+    <button
+      onClick={onToggle}
+      className={`w-full flex items-center justify-between p-4 rounded-t-xl ${color} text-white font-semibold`}
+    >
+      <div className="flex items-center gap-3">
+        <Icon size={20} />
+        <span>{title}</span>
+        <span className="bg-white/20 px-2 py-0.5 rounded-full text-sm">{count}</span>
+      </div>
+      {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+    </button>
+  );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+          <CreditCard className="text-red-500" size={24} />
+          Quản lý công nợ
+        </h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Theo dõi học viên chuẩn bị hết phí, đang nợ phí và nợ hợp đồng
+        </p>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 text-white">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock size={20} />
+            <span className="font-medium">Chuẩn bị hết phí</span>
+          </div>
+          <p className="text-3xl font-bold">{almostOutStudents.length}</p>
+          <p className="text-sm opacity-80">Còn ≤ {SESSIONS_WARNING_THRESHOLD} buổi</p>
+        </div>
+        
+        <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 text-white">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={20} />
+            <span className="font-medium">Đang nợ phí</span>
+          </div>
+          <p className="text-3xl font-bold">{debtStudents.length}</p>
+          <p className="text-sm opacity-80">
+            {formatCurrency(debtStudents.reduce((sum, s) => {
+              const exceeded = (s.attendedSessions || 0) - (s.registeredSessions || 0);
+              return sum + exceeded * 150000;
+            }, 0))}
+          </p>
+        </div>
+        
+        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 text-white">
+          <div className="flex items-center gap-2 mb-2">
+            <CreditCard size={20} />
+            <span className="font-medium">Nợ hợp đồng</span>
+          </div>
+          <p className="text-3xl font-bold">{contractDebtStudents.length}</p>
+          <p className="text-sm opacity-80">
+            {formatCurrency(contractDebtStudents.reduce((sum, s) => sum + (s.contractDebt || 0), 0))}
+          </p>
+        </div>
+      </div>
+
+      {/* Section 1: Chuẩn bị hết phí */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <SectionHeader
+          title="Danh sách học viên chuẩn bị hết phí"
+          icon={Clock}
+          count={almostOutStudents.length}
+          color="bg-orange-500"
+          expanded={expandedSections.almostOut}
+          onToggle={() => toggleSection('almostOut')}
+        />
+        
+        {expandedSections.almostOut && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Học viên</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Lớp</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Đã học</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Đăng ký</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Còn lại</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Phụ huynh</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Hành động</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {almostOutStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                      Không có học viên nào chuẩn bị hết phí
+                    </td>
+                  </tr>
+                ) : almostOutStudents.map(student => {
+                  const remaining = (student.registeredSessions || 0) - (student.attendedSessions || 0);
+                  return (
+                    <tr key={student.id} className="hover:bg-orange-50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <User size={16} className="text-gray-400" />
+                          <span className="font-medium">{student.fullName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">{getClassName(student.classId)}</td>
+                      <td className="px-4 py-3 text-center">{student.attendedSessions || 0}</td>
+                      <td className="px-4 py-3 text-center">{student.registeredSessions || 0}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                          remaining <= 3 ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'
+                        }`}>
+                          {remaining} buổi
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1 text-gray-600">
+                          <Phone size={14} />
+                          <span>{student.parentPhone || '---'}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => navigate(`/customers/student-detail/${student.id}?tab=finance`)}
+                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                        >
+                          Xem chi tiết
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Section 2: Đang nợ phí */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <SectionHeader
+          title="Danh sách học viên đang nợ phí"
+          icon={AlertTriangle}
+          count={debtStudents.length}
+          color="bg-red-500"
+          expanded={expandedSections.debt}
+          onToggle={() => toggleSection('debt')}
+        />
+        
+        {expandedSections.debt && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Học viên</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Lớp</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Đã học</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Đăng ký</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Vượt</th>
+                  <th className="px-4 py-3 text-right font-semibold text-gray-700">Số tiền nợ</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Phụ huynh</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Hành động</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {debtStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
+                      Không có học viên nào đang nợ phí
+                    </td>
+                  </tr>
+                ) : debtStudents.map(student => {
+                  const exceeded = (student.attendedSessions || 0) - (student.registeredSessions || 0);
+                  const debtAmount = exceeded * 150000;
+                  return (
+                    <tr key={student.id} className="hover:bg-red-50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <User size={16} className="text-gray-400" />
+                          <span className="font-medium">{student.fullName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">{getClassName(student.classId)}</td>
+                      <td className="px-4 py-3 text-center">{student.attendedSessions || 0}</td>
+                      <td className="px-4 py-3 text-center">{student.registeredSessions || 0}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="px-2 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700">
+                          +{exceeded} buổi
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-red-600">
+                        {formatCurrency(debtAmount)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1 text-gray-600">
+                          <Phone size={14} />
+                          <span>{student.parentPhone || '---'}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => navigate(`/customers/student-detail/${student.id}?tab=finance`)}
+                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                        >
+                          Xem chi tiết
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Nợ hợp đồng */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <SectionHeader
+          title="Danh sách học viên nợ hợp đồng"
+          icon={CreditCard}
+          count={contractDebtStudents.length}
+          color="bg-purple-500"
+          expanded={expandedSections.contractDebt}
+          onToggle={() => toggleSection('contractDebt')}
+        />
+        
+        {expandedSections.contractDebt && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Học viên</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Lớp</th>
+                  <th className="px-4 py-3 text-right font-semibold text-gray-700">Số tiền nợ HĐ</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Ngày hẹn TT</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Phụ huynh</th>
+                  <th className="px-4 py-3 text-center font-semibold text-gray-700">Hành động</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {contractDebtStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                      Không có học viên nào nợ hợp đồng
+                    </td>
+                  </tr>
+                ) : contractDebtStudents.map(student => (
+                  <tr key={student.id} className="hover:bg-purple-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <User size={16} className="text-gray-400" />
+                        <span className="font-medium">{student.fullName}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">{getClassName(student.classId)}</td>
+                    <td className="px-4 py-3 text-right font-bold text-purple-600">
+                      {formatCurrency(student.contractDebt || 0)}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {editingPaymentDate === student.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="date"
+                            value={paymentDateValue}
+                            onChange={(e) => setPaymentDateValue(e.target.value)}
+                            className="px-2 py-1 border rounded text-xs"
+                          />
+                          <button
+                            onClick={() => handleSavePaymentDate(student.id)}
+                            className="text-green-600 hover:text-green-800 text-xs"
+                          >
+                            Lưu
+                          </button>
+                          <button
+                            onClick={() => setEditingPaymentDate(null)}
+                            className="text-gray-400 hover:text-gray-600 text-xs"
+                          >
+                            Hủy
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center gap-1">
+                          {student.nextPaymentDate ? (
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              new Date(student.nextPaymentDate) < new Date() 
+                                ? 'bg-red-100 text-red-700' 
+                                : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {new Date(student.nextPaymentDate).toLocaleDateString('vi-VN')}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">Chưa hẹn</span>
+                          )}
+                          <button
+                            onClick={() => {
+                              setEditingPaymentDate(student.id);
+                              setPaymentDateValue(student.nextPaymentDate || '');
+                            }}
+                            className="text-indigo-600 hover:text-indigo-800"
+                            title="Đặt ngày hẹn"
+                          >
+                            <Calendar size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 text-gray-600">
+                        <Phone size={14} />
+                        <span>{student.parentPhone || '---'}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        onClick={() => navigate(`/customers/student-detail/${student.id}?tab=finance`)}
+                        className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                      >
+                        Xem chi tiết
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

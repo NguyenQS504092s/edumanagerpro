@@ -1,12 +1,24 @@
 /**
  * Salary Report Teacher Page
  * Báo cáo lương GV/TG với Firebase integration
+ * Hỗ trợ điều chỉnh lương thực tế khi GV dạy thay tiết cho nhau
  */
 
-import React, { useState } from 'react';
-import { Info, DollarSign, Users, X } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Info, DollarSign, Users, X, Edit2, Save, Check } from 'lucide-react';
 import { useSalaryReport } from '../src/hooks/useSalaryReport';
 import { formatCurrency } from '../src/utils/currencyUtils';
+import { doc, setDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
+
+interface ActualSalary {
+  staffId: string;
+  month: number;
+  year: number;
+  actualSalary: number;
+  note?: string;
+  updatedAt: string;
+}
 
 export const SalaryReportTeacher: React.FC = () => {
   const now = new Date();
@@ -14,22 +26,103 @@ export const SalaryReportTeacher: React.FC = () => {
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedStaffIdx, setSelectedStaffIdx] = useState(0);
   const [editingSession, setEditingSession] = useState<any>(null);
+  
+  // State for actual salary editing
+  const [actualSalaries, setActualSalaries] = useState<Record<string, number>>({});
+  const [editingActualSalary, setEditingActualSalary] = useState<string | null>(null);
+  const [tempActualSalary, setTempActualSalary] = useState<number>(0);
+  const [savingActual, setSavingActual] = useState(false);
 
-  const { summaries, loading, error, totalSalary } = useSalaryReport(selectedMonth, selectedYear);
+  const { summaries, loading, error, totalSalary, refresh } = useSalaryReport(selectedMonth, selectedYear);
+
+  // Load actual salaries from Firebase
+  useEffect(() => {
+    const loadActualSalaries = async () => {
+      try {
+        const q = query(
+          collection(db, 'actualSalaries'),
+          where('month', '==', selectedMonth),
+          where('year', '==', selectedYear)
+        );
+        const snapshot = await getDocs(q);
+        const salaries: Record<string, number> = {};
+        snapshot.forEach((doc) => {
+          const data = doc.data() as ActualSalary;
+          salaries[data.staffId] = data.actualSalary;
+        });
+        setActualSalaries(salaries);
+      } catch (err) {
+        console.error('Error loading actual salaries:', err);
+      }
+    };
+    loadActualSalaries();
+  }, [selectedMonth, selectedYear]);
+
+  // Start editing actual salary
+  const startEditActual = (staffId: string, currentValue: number) => {
+    setEditingActualSalary(staffId);
+    setTempActualSalary(currentValue);
+  };
+
+  // Save actual salary to Firebase
+  const saveActualSalary = async (staffId: string) => {
+    setSavingActual(true);
+    try {
+      const docId = `${staffId}_${selectedMonth}_${selectedYear}`;
+      await setDoc(doc(db, 'actualSalaries', docId), {
+        staffId,
+        month: selectedMonth,
+        year: selectedYear,
+        actualSalary: tempActualSalary,
+        updatedAt: new Date().toISOString(),
+      });
+      
+      setActualSalaries(prev => ({
+        ...prev,
+        [staffId]: tempActualSalary,
+      }));
+      setEditingActualSalary(null);
+    } catch (err) {
+      console.error('Error saving actual salary:', err);
+      alert('Không thể lưu. Vui lòng thử lại.');
+    } finally {
+      setSavingActual(false);
+    }
+  };
 
   const handleEditSession = (item: any) => {
     setEditingSession({ ...item });
   };
 
-  const handleSaveEdit = () => {
-    // TODO: Save to Firebase
-    console.log('Saving:', editingSession);
-    setEditingSession(null);
+  const handleSaveEdit = async () => {
+    if (!editingSession) return;
+    
+    try {
+      // Save to Firebase
+      const docRef = doc(db, 'workDetails', editingSession.id);
+      await setDoc(docRef, {
+        ...editingSession,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      
+      // Refresh data
+      await refresh(selectedMonth, selectedYear);
+      setEditingSession(null);
+    } catch (err) {
+      console.error('Error saving:', err);
+      alert('Không thể lưu. Vui lòng thử lại.');
+    }
   };
 
   const selectedStaff = summaries[selectedStaffIdx];
   const salaryDetails = selectedStaff?.workDetails || [];
   const totalDetailSalary = salaryDetails.reduce((sum, item) => sum + item.salary, 0);
+
+  // Calculate total actual salary
+  const totalActualSalary = summaries.reduce((sum, staff) => {
+    const actual = actualSalaries[staff.staffId];
+    return sum + (actual !== undefined ? actual : staff.estimatedSalary);
+  }, 0);
 
   // Generate month options
   const monthOptions = [];
@@ -63,7 +156,7 @@ export const SalaryReportTeacher: React.FC = () => {
             </span>
             <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-medium flex items-center gap-1">
               <DollarSign size={14} />
-              Tổng: {formatCurrency(totalSalary)}
+              Tổng: {formatCurrency(totalActualSalary)}
             </span>
           </div>
         </div>
@@ -83,7 +176,7 @@ export const SalaryReportTeacher: React.FC = () => {
 
       <div className="flex flex-col xl:flex-row gap-6">
         {/* LEFT: Summary Table */}
-        <div className="w-full xl:w-5/12 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-fit">
+        <div className="w-full xl:w-7/12 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-fit">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-gray-800 border-collapse">
               <thead className="bg-white border-b-2 border-gray-900 font-bold text-xs uppercase">
@@ -94,13 +187,16 @@ export const SalaryReportTeacher: React.FC = () => {
                   <th className="px-3 py-3 border-r border-gray-300 text-center">Số ca</th>
                   <th className="px-3 py-3 border-r border-gray-300 text-right">Lương tạm tính</th>
                   <th className="px-3 py-3 border-r border-gray-300 text-right">Thưởng KPI</th>
+                  <th className="px-3 py-3 border-r border-gray-300 text-right">
+                    <span className="text-green-700">Lương thực tế</span>
+                  </th>
                   <th className="px-3 py-3 text-center">Chi tiết</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-gray-500">
+                    <td colSpan={8} className="text-center py-8 text-gray-500">
                       <div className="flex items-center justify-center gap-2">
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
                         Đang tải...
@@ -109,57 +205,123 @@ export const SalaryReportTeacher: React.FC = () => {
                   </tr>
                 ) : error ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-red-500">Lỗi: {error}</td>
+                    <td colSpan={8} className="text-center py-8 text-red-500">Lỗi: {error}</td>
                   </tr>
                 ) : summaries.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-gray-400">
+                    <td colSpan={8} className="text-center py-8 text-gray-400">
                       <DollarSign size={48} className="mx-auto mb-2 opacity-20" />
                       Chưa có dữ liệu công đã xác nhận trong tháng này
                     </td>
                   </tr>
-                ) : summaries.map((staff, idx) => (
-                  <tr 
-                    key={staff.staffId} 
-                    className={`hover:bg-green-50 cursor-pointer transition-colors ${selectedStaffIdx === idx ? 'bg-green-100' : ''}`}
-                    onClick={() => setSelectedStaffIdx(idx)}
-                  >
-                    <td className="px-3 py-3 border-r border-gray-200 text-center">{idx + 1}</td>
-                    <td className="px-3 py-3 border-r border-gray-200">
-                      <div className="font-bold">{staff.staffName}</div>
-                    </td>
-                    <td className="px-3 py-3 border-r border-gray-200 text-center">
-                      <span className={`px-2 py-0.5 rounded text-xs ${
-                        staff.position === 'Giáo viên Việt' ? 'bg-blue-100 text-blue-700' :
-                        staff.position === 'Giáo viên Nước ngoài' ? 'bg-purple-100 text-purple-700' :
-                        'bg-green-100 text-green-700'
-                      }`}>
-                        {staff.position}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 border-r border-gray-200 text-center font-medium">
-                      {staff.confirmedSessions}
-                    </td>
-                    <td className="px-3 py-3 border-r border-gray-200 text-right font-bold text-indigo-600">
-                      {formatCurrency(staff.estimatedSalary)}
-                    </td>
-                    <td className="px-3 py-3 border-r border-gray-200 text-right font-medium text-orange-600">
-                      {formatCurrency(staff.kpiBonus || 0)}
-                    </td>
-                    <td className="px-3 py-3 text-center">
-                      <button className="text-gray-500 hover:text-green-600">
-                        <Info size={18} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                ) : summaries.map((staff, idx) => {
+                  const actualValue = actualSalaries[staff.staffId] ?? staff.estimatedSalary;
+                  const isEditing = editingActualSalary === staff.staffId;
+                  
+                  return (
+                    <tr 
+                      key={staff.staffId} 
+                      className={`hover:bg-green-50 cursor-pointer transition-colors ${selectedStaffIdx === idx ? 'bg-green-100' : ''}`}
+                      onClick={() => !isEditing && setSelectedStaffIdx(idx)}
+                    >
+                      <td className="px-3 py-3 border-r border-gray-200 text-center">{idx + 1}</td>
+                      <td className="px-3 py-3 border-r border-gray-200">
+                        <div className="font-bold">{staff.staffName}</div>
+                      </td>
+                      <td className="px-3 py-3 border-r border-gray-200 text-center">
+                        <span className={`px-2 py-0.5 rounded text-xs ${
+                          staff.position === 'Giáo viên Việt' || staff.position === 'Giáo Viên Việt' ? 'bg-blue-100 text-blue-700' :
+                          staff.position === 'Giáo viên Nước ngoài' || staff.position === 'Giáo Viên Nước Ngoài' ? 'bg-purple-100 text-purple-700' :
+                          'bg-green-100 text-green-700'
+                        }`}>
+                          {staff.position}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 border-r border-gray-200 text-center font-medium">
+                        {staff.confirmedSessions}
+                      </td>
+                      <td className="px-3 py-3 border-r border-gray-200 text-right font-bold text-indigo-600">
+                        {formatCurrency(staff.estimatedSalary)}
+                      </td>
+                      <td className="px-3 py-3 border-r border-gray-200 text-right font-medium text-orange-600">
+                        {formatCurrency(staff.kpiBonus || 0)}
+                      </td>
+                      <td className="px-3 py-3 border-r border-gray-200 text-right" onClick={(e) => e.stopPropagation()}>
+                        {isEditing ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <input
+                              type="number"
+                              value={tempActualSalary}
+                              onChange={(e) => setTempActualSalary(parseInt(e.target.value) || 0)}
+                              className="w-28 px-2 py-1 border border-gray-300 rounded text-right text-sm"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveActualSalary(staff.staffId);
+                                if (e.key === 'Escape') setEditingActualSalary(null);
+                              }}
+                            />
+                            <button
+                              onClick={() => saveActualSalary(staff.staffId)}
+                              disabled={savingActual}
+                              className="p-1 text-green-600 hover:bg-green-100 rounded"
+                            >
+                              <Check size={16} />
+                            </button>
+                            <button
+                              onClick={() => setEditingActualSalary(null)}
+                              className="p-1 text-gray-500 hover:bg-gray-100 rounded"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1">
+                            <span className={`font-bold ${actualValue !== staff.estimatedSalary ? 'text-green-600' : 'text-gray-600'}`}>
+                              {formatCurrency(actualValue)}
+                            </span>
+                            <button
+                              onClick={() => startEditActual(staff.staffId, actualValue)}
+                              className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                              title="Chỉnh sửa lương thực tế"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <button className="text-gray-500 hover:text-green-600">
+                          <Info size={18} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
+              {/* Footer with totals */}
+              {summaries.length > 0 && (
+                <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                  <tr className="font-bold">
+                    <td colSpan={4} className="px-3 py-3 text-right">TỔNG CỘNG:</td>
+                    <td className="px-3 py-3 border-r border-gray-200 text-right text-indigo-700">
+                      {formatCurrency(totalSalary)}
+                    </td>
+                    <td className="px-3 py-3 border-r border-gray-200 text-right text-orange-600">
+                      {formatCurrency(summaries.reduce((sum, s) => sum + (s.kpiBonus || 0), 0))}
+                    </td>
+                    <td className="px-3 py-3 border-r border-gray-200 text-right text-green-700">
+                      {formatCurrency(totalActualSalary)}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
 
         {/* RIGHT: Detail View */}
-        <div className="w-full xl:w-7/12 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="w-full xl:w-5/12 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           {selectedStaff ? (
             <>
               <div className="bg-green-400 px-4 py-2 flex justify-between items-center text-black font-bold text-sm">
@@ -174,19 +336,19 @@ export const SalaryReportTeacher: React.FC = () => {
                 <table className="w-full text-sm text-center border-collapse border border-gray-300">
                   <thead>
                     <tr className="bg-orange-100 text-gray-900 font-bold text-xs uppercase">
-                      <th className="border border-gray-400 px-2 py-2 w-16">Ngày</th>
+                      <th className="border border-gray-400 px-2 py-2 w-20">Ngày</th>
                       <th className="border border-gray-400 px-2 py-2">Giờ</th>
                       <th className="border border-gray-400 px-2 py-2">Lớp</th>
                       <th className="border border-gray-400 px-2 py-2">Kiểu công</th>
                       <th className="border border-gray-400 px-2 py-2">Lương</th>
-                      <th className="border border-gray-400 px-2 py-2">Hành động</th>
+                      <th className="border border-gray-400 px-2 py-2 w-16">Sửa</th>
                     </tr>
                   </thead>
                   <tbody>
                     {salaryDetails.length > 0 ? salaryDetails.map((item) => (
                       <tr key={item.id} className="hover:bg-gray-50">
                         <td className="border border-gray-300 px-2 py-2">{item.date}</td>
-                        <td className="border border-gray-300 px-2 py-2">{item.time}</td>
+                        <td className="border border-gray-300 px-2 py-2">{item.time || '-'}</td>
                         <td className="border border-gray-300 px-2 py-2">{item.className}</td>
                         <td className="border border-gray-300 px-2 py-2">
                           <span className={`px-2 py-0.5 rounded text-xs ${
@@ -194,6 +356,7 @@ export const SalaryReportTeacher: React.FC = () => {
                             item.type === 'Trợ giảng' ? 'bg-purple-100 text-purple-700' :
                             item.type === 'Nhận xét' ? 'bg-orange-100 text-orange-700' :
                             item.type === 'Bồi bài' ? 'bg-yellow-100 text-yellow-700' :
+                            item.type === 'Dạy thay' ? 'bg-red-100 text-red-700' :
                             'bg-gray-100 text-gray-700'
                           }`}>
                             {item.type}
@@ -218,17 +381,24 @@ export const SalaryReportTeacher: React.FC = () => {
                     )}
                   </tbody>
                   <tfoot>
-                    <tr>
+                    <tr className="bg-gray-50">
                       <td colSpan={4} className="text-right px-4 py-2">
-                        <span className="bg-green-500 text-white px-2 py-1 font-bold text-xs uppercase">Tổng lương</span>
+                        <span className="bg-green-500 text-white px-2 py-1 font-bold text-xs uppercase rounded">Tổng lương</span>
                       </td>
-                      <td className="border border-gray-300 px-2 py-2 font-bold text-gray-900 bg-gray-50">
+                      <td className="border border-gray-300 px-2 py-2 font-bold text-gray-900">
                         {formatCurrency(totalDetailSalary)}
                       </td>
                       <td className="border border-gray-300"></td>
                     </tr>
                   </tfoot>
                 </table>
+              </div>
+              
+              {/* Note about actual salary adjustment */}
+              <div className="px-4 pb-4">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                  <strong>Lưu ý:</strong> Nếu GV dạy thay tiết cho nhau, có thể điều chỉnh cột "Lương thực tế" ở bảng bên trái.
+                </div>
               </div>
             </>
           ) : (
@@ -242,7 +412,7 @@ export const SalaryReportTeacher: React.FC = () => {
         </div>
       </div>
 
-      {/* Edit Modal */}
+      {/* Edit Session Modal */}
       {editingSession && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl w-full max-w-md shadow-xl">
@@ -253,23 +423,26 @@ export const SalaryReportTeacher: React.FC = () => {
               </button>
             </div>
             <div className="p-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Ngày</label>
-                <input
-                  type="text"
-                  value={editingSession.date}
-                  onChange={(e) => setEditingSession({ ...editingSession, date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Giờ</label>
-                <input
-                  type="text"
-                  value={editingSession.time}
-                  onChange={(e) => setEditingSession({ ...editingSession, time: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ngày</label>
+                  <input
+                    type="text"
+                    value={editingSession.date}
+                    onChange={(e) => setEditingSession({ ...editingSession, date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Giờ</label>
+                  <input
+                    type="text"
+                    value={editingSession.time || ''}
+                    onChange={(e) => setEditingSession({ ...editingSession, time: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    placeholder="08:00 - 09:30"
+                  />
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Lớp</label>
@@ -295,12 +468,13 @@ export const SalaryReportTeacher: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Lương</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Lương (đ)</label>
                 <input
                   type="number"
                   value={editingSession.salary}
                   onChange={(e) => setEditingSession({ ...editingSession, salary: parseInt(e.target.value) || 0 })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  step={10000}
                 />
               </div>
             </div>
@@ -313,8 +487,9 @@ export const SalaryReportTeacher: React.FC = () => {
               </button>
               <button 
                 onClick={handleSaveEdit}
-                className="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600"
+                className="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center gap-2"
               >
+                <Save size={16} />
                 Lưu thay đổi
               </button>
             </div>

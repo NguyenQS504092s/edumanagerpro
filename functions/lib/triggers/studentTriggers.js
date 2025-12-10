@@ -89,6 +89,37 @@ exports.onStudentUpdate = functions
             updates.push(updateClassStudentCounts(after.classId));
         }
     }
+    // 3. Auto-calculate bad debt when student status changes to "Nghỉ học"
+    if (statusChanged && after.status === 'Nghỉ học') {
+        const registeredSessions = after.registeredSessions || 0;
+        const attendedSessions = after.attendedSessions || 0;
+        // If student attended more than registered, they owe money
+        if (attendedSessions > registeredSessions) {
+            const badDebtSessions = attendedSessions - registeredSessions;
+            const badDebtAmount = badDebtSessions * 150000; // 150k per session
+            console.log(`[onStudentUpdate] Student ${after.fullName} has bad debt: ${badDebtSessions} sessions = ${badDebtAmount}đ`);
+            // Update student with bad debt info
+            await db.collection('students').doc(studentId).update({
+                badDebt: true,
+                badDebtSessions: badDebtSessions,
+                badDebtAmount: badDebtAmount,
+                badDebtDate: new Date().toLocaleDateString('vi-VN'),
+                badDebtNote: `Nghỉ học khi còn nợ ${badDebtSessions} buổi`,
+            });
+        }
+    }
+    // 4. Clear bad debt if student pays and comes back
+    if (statusChanged && before.status === 'Nghỉ học' && after.status === 'Đang học') {
+        if (before.badDebt) {
+            console.log(`[onStudentUpdate] Student ${after.fullName} returned - clearing bad debt flag`);
+            await db.collection('students').doc(studentId).update({
+                badDebt: false,
+                badDebtSessions: 0,
+                badDebtAmount: 0,
+                badDebtNote: `Đã quay lại học - ${new Date().toLocaleDateString('vi-VN')}`,
+            });
+        }
+    }
     await Promise.all(updates);
     return null;
 });

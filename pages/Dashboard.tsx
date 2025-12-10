@@ -41,7 +41,7 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, limit, doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 import { formatCurrency } from '../src/utils/currencyUtils';
 import { getRevenueSummary, RevenueByCategory } from '../src/services/financialReportService';
@@ -91,12 +91,14 @@ interface DashboardStats {
   debtStats: { noPhi: number; noHocPhi: number };
   totalRevenue: number;
   totalDebt: number;
+  totalBadDebt: number; // Nợ xấu (học sinh nghỉ học còn nợ)
+  badDebtStudents: number; // Số học sinh nợ xấu
   salaryForecast: { position: string; amount: number }[];
   salaryPercent: number;
   businessHealth: { metric: string; value: number; status: string }[];
   lowStockProducts: { name: string; quantity: number }[];
   upcomingBirthdays: { name: string; position: string; date: string }[];
-  studentBirthdays: { name: string; position: string; date: string }[];
+  studentBirthdays: { id: string; name: string; position: string; date: string; dayOfMonth: number }[];
   classStats: { name: string; count: number }[];
 }
 
@@ -110,6 +112,8 @@ export const Dashboard: React.FC = () => {
     debtStats: { noPhi: 0, noHocPhi: 0 },
     totalRevenue: 0,
     totalDebt: 0,
+    totalBadDebt: 0,
+    badDebtStudents: 0,
     salaryForecast: [],
     salaryPercent: 0,
     businessHealth: [],
@@ -137,6 +141,7 @@ export const Dashboard: React.FC = () => {
   // State cho bảng sinh nhật
   const [birthdayFilter, setBirthdayFilter] = useState<'month' | 'week' | 'today'>('month');
   const [birthdayType, setBirthdayType] = useState<'staff' | 'student'>('staff');
+  const [birthdayGifts, setBirthdayGifts] = useState<Record<string, { giftPrepared: boolean; giftGiven: boolean }>>({});
   
   // State cho bảng vật phẩm kho
   const [stockFilter, setStockFilter] = useState<'low' | 'all'>('low');
@@ -202,6 +207,48 @@ export const Dashboard: React.FC = () => {
     fetchDashboardData();
   }, []);
 
+  // Load birthday gifts for current month/year
+  useEffect(() => {
+    const thisYear = new Date().getFullYear();
+    const thisMonth = new Date().getMonth() + 1;
+    
+    const unsubscribe = onSnapshot(
+      query(collection(db, 'birthdayGifts'), where('year', '==', thisYear), where('month', '==', thisMonth)),
+      (snapshot) => {
+        const gifts: Record<string, { giftPrepared: boolean; giftGiven: boolean }> = {};
+        snapshot.docs.forEach(doc => {
+          const data = doc.data();
+          gifts[data.studentId] = {
+            giftPrepared: data.giftPrepared || false,
+            giftGiven: data.giftGiven || false,
+          };
+        });
+        setBirthdayGifts(gifts);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // Toggle gift status
+  const toggleGiftStatus = async (studentId: string, studentName: string, field: 'giftPrepared' | 'giftGiven') => {
+    const thisYear = new Date().getFullYear();
+    const thisMonth = new Date().getMonth() + 1;
+    const docId = `${studentId}_${thisYear}_${thisMonth}`;
+    const docRef = doc(db, 'birthdayGifts', docId);
+    
+    const currentStatus = birthdayGifts[studentId]?.[field] || false;
+    const newStatus = !currentStatus;
+    
+    await setDoc(docRef, {
+      studentId,
+      studentName,
+      year: thisYear,
+      month: thisMonth,
+      [field]: newStatus,
+      [`${field === 'giftPrepared' ? 'preparedAt' : 'givenAt'}`]: newStatus ? new Date().toISOString() : null,
+    }, { merge: true });
+  };
+
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
@@ -252,6 +299,11 @@ export const Dashboard: React.FC = () => {
       
       const totalRevenue = paidContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0);
       const totalDebt = debtContracts.reduce((sum, c) => sum + (c.finalTotal || c.totalAmount || 0), 0);
+      
+      // Calculate bad debt from students who dropped out with debt
+      const badDebtStudentsList = students.filter((s: any) => s.badDebt === true);
+      const totalBadDebt = badDebtStudentsList.reduce((sum: number, s: any) => sum + (s.badDebtAmount || 0), 0);
+      const badDebtStudents = badDebtStudentsList.length;
       
       // Fetch financial report data for pie chart
       try {
@@ -348,6 +400,7 @@ export const Dashboard: React.FC = () => {
           const bdayStr = s['sinh nhật'] || s['ngày sinh'] || s.birthDate || s.dob || s.dateOfBirth;
           const bday = bdayStr.toDate ? bdayStr.toDate() : new Date(bdayStr);
           return {
+            id: s.id,
             name: s.name || s.fullName,
             position: 'Học viên',
             date: `${String(bday.getDate()).padStart(2, '0')}/${String(bday.getMonth() + 1).padStart(2, '0')}/${bday.getFullYear()}`,
@@ -454,6 +507,8 @@ export const Dashboard: React.FC = () => {
         },
         totalRevenue,
         totalDebt,
+        totalBadDebt,
+        badDebtStudents,
         salaryForecast,
         salaryPercent,
         businessHealth,
@@ -481,6 +536,8 @@ export const Dashboard: React.FC = () => {
         debtStats: { noPhi: 0, noHocPhi: 0 },
         totalRevenue: 0,
         totalDebt: 0,
+        totalBadDebt: 0,
+        badDebtStudents: 0,
         salaryForecast: [],
         salaryPercent: 0,
         businessHealth: [],
@@ -848,7 +905,7 @@ export const Dashboard: React.FC = () => {
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-100">
+              <div className="flex flex-wrap justify-between items-center mt-4 pt-4 border-t border-gray-100 gap-2">
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
                   <span className="text-sm text-gray-600">Đã thu:</span>
@@ -856,8 +913,13 @@ export const Dashboard: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-amber-500"></div>
-                  <span className="text-sm text-gray-600">Nợ:</span>
+                  <span className="text-sm text-gray-600">Nợ phí:</span>
                   <span className="font-semibold text-amber-600">{formatCurrency(stats.totalDebt)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                  <span className="text-sm text-gray-600">Nợ xấu:</span>
+                  <span className="font-semibold text-red-600">{formatCurrency(stats.totalBadDebt)} ({stats.badDebtStudents} HV)</span>
                 </div>
               </div>
             </div>
@@ -1214,8 +1276,13 @@ export const Dashboard: React.FC = () => {
                   <thead className="bg-pink-50/50 border-b-2 border-pink-100">
                     <tr>
                       <th className="text-left py-2.5 px-3 font-medium text-gray-600">{birthdayType === 'staff' ? 'Tên nhân sự' : 'Tên học viên'}</th>
-                      <th className="text-center py-2.5 px-3 font-medium text-gray-600">Vị trí</th>
-                      <th className="text-right py-2.5 px-3 font-medium text-gray-600">Ngày SN</th>
+                      <th className="text-center py-2.5 px-3 font-medium text-gray-600">Ngày SN</th>
+                      {birthdayType === 'student' && (
+                        <>
+                          <th className="text-center py-2.5 px-2 font-medium text-gray-600 whitespace-nowrap">Chuẩn bị</th>
+                          <th className="text-center py-2.5 px-2 font-medium text-gray-600 whitespace-nowrap">Đã tặng</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -1227,7 +1294,7 @@ export const Dashboard: React.FC = () => {
                       
                       const birthdayData = birthdayType === 'staff' ? stats.upcomingBirthdays : stats.studentBirthdays;
                       
-                      const filteredBirthdays = birthdayData.filter(item => {
+                      const filteredBirthdays = birthdayData.filter((item: any) => {
                         const [day, month] = item.date.split('/').map(Number);
                         
                         if (birthdayFilter === 'today') {
@@ -1242,18 +1309,45 @@ export const Dashboard: React.FC = () => {
                       });
                       
                       return filteredBirthdays.length > 0 ? (
-                        filteredBirthdays.map((item, idx) => (
+                        filteredBirthdays.map((item: any, idx: number) => (
                           <tr key={idx} className="border-b border-gray-100 hover:bg-pink-50/30 transition-colors">
                             <td className="py-2.5 px-3 text-gray-700">{item.name}</td>
-                            <td className="py-2.5 px-3 text-center">
-                              <span className="px-2 py-1 bg-pink-100 text-pink-700 rounded-full text-xs">{item.position}</span>
-                            </td>
-                            <td className="py-2.5 px-3 text-right font-medium text-pink-600">{item.date}</td>
+                            <td className="py-2.5 px-3 text-center font-medium text-pink-600">{item.date}</td>
+                            {birthdayType === 'student' && (
+                              <>
+                                <td className="py-2.5 px-2 text-center">
+                                  <button
+                                    onClick={() => toggleGiftStatus(item.id, item.name, 'giftPrepared')}
+                                    className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                                      birthdayGifts[item.id]?.giftPrepared
+                                        ? 'bg-emerald-500 border-emerald-500 text-white'
+                                        : 'border-gray-300 hover:border-emerald-400'
+                                    }`}
+                                    title="Đã chuẩn bị quà"
+                                  >
+                                    {birthdayGifts[item.id]?.giftPrepared && <Gift size={14} />}
+                                  </button>
+                                </td>
+                                <td className="py-2.5 px-2 text-center">
+                                  <button
+                                    onClick={() => toggleGiftStatus(item.id, item.name, 'giftGiven')}
+                                    className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                                      birthdayGifts[item.id]?.giftGiven
+                                        ? 'bg-pink-500 border-pink-500 text-white'
+                                        : 'border-gray-300 hover:border-pink-400'
+                                    }`}
+                                    title="Đã tặng quà"
+                                  >
+                                    {birthdayGifts[item.id]?.giftGiven && <Heart size={14} />}
+                                  </button>
+                                </td>
+                              </>
+                            )}
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={3} className="py-6 text-center text-gray-400">
+                          <td colSpan={birthdayType === 'student' ? 4 : 2} className="py-6 text-center text-gray-400">
                             <Cake size={32} className="mx-auto mb-2 opacity-30" />
                             Không có sinh nhật {birthdayFilter === 'today' ? 'hôm nay' : birthdayFilter === 'week' ? 'tuần này' : 'tháng này'}
                           </td>

@@ -2445,15 +2445,16 @@ const ClassDetailModal: React.FC<ClassDetailModalProps> = ({
             )}
           </div>
 
-          {/* Training History */}
-          {classData.trainingHistory && classData.trainingHistory.length > 0 && (
-            <div className="bg-purple-50 rounded-lg p-4">
-              <h3 className="font-semibold text-purple-900 mb-3 flex items-center gap-2">
-                <Clock size={18} />
-                Lịch sử đào tạo ({classData.trainingHistory.length})
-              </h3>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {[...classData.trainingHistory]
+          {/* Training History - Always show */}
+          <div className="bg-purple-50 rounded-lg p-4">
+            <h3 className="font-semibold text-purple-900 mb-3 flex items-center gap-2">
+              <Clock size={18} />
+              Lịch sử đào tạo ({(classData.trainingHistory?.length || 0) + (classData.teacher ? 1 : 0)})
+            </h3>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {/* Show training history if exists */}
+              {classData.trainingHistory && classData.trainingHistory.length > 0 && 
+                [...classData.trainingHistory]
                   .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                   .map((entry) => (
                     <div key={entry.id} className="bg-white rounded-lg p-3 border border-purple-100">
@@ -2490,10 +2491,44 @@ const ClassDetailModal: React.FC<ClassDetailModalProps> = ({
                         <p className="text-xs text-gray-400 mt-1">Bởi: {entry.changedBy}</p>
                       )}
                     </div>
-                  ))}
-              </div>
+                  ))
+              }
+              
+              {/* Always show current teacher as the initial/current state */}
+              {classData.teacher && (
+                <div className="bg-white rounded-lg p-3 border border-purple-100">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                      Giáo viên
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {(() => {
+                        if (!classData.createdAt) return 'Ban đầu';
+                        // Handle Firestore Timestamp
+                        const date = classData.createdAt?.toDate ? classData.createdAt.toDate() : new Date(classData.createdAt);
+                        if (isNaN(date.getTime())) return 'Ban đầu';
+                        return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                      })()}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-800 font-medium">Thay đổi giáo viên chính</p>
+                  <div className="text-xs text-gray-600 mt-1">
+                    <span className="text-gray-400">Bắt đầu</span>
+                    <span className="mx-2">→</span>
+                    <span className="text-green-600 font-medium">{classData.teacher}</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Bởi: System</p>
+                </div>
+              )}
+              
+              {/* Show message if no teacher assigned */}
+              {!classData.teacher && (!classData.trainingHistory || classData.trainingHistory.length === 0) && (
+                <div className="text-center py-4 text-gray-500 text-sm">
+                  Chưa có thông tin đào tạo
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* Notes */}
           {classData.notes && (

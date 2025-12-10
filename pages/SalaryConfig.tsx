@@ -1,356 +1,94 @@
 /**
- * Salary Config Page
- * Cấu hình lương GV/TG với Firebase integration
+ * Salary Config Page - Redesigned
+ * Cấu hình lương GV theo ca/giờ, liên kết với lớp học
  */
 
-import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, X, DollarSign, Settings } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Plus, Trash2, X, DollarSign, Calendar, User, Building, Clock, Save } from 'lucide-react';
 import { useSalaryConfig } from '../src/hooks/useSalaryConfig';
 import { 
   SalaryRule, 
   SalaryRangeConfig, 
-  SalaryMethod, 
-  WorkMethod,
   RangeType 
 } from '../src/services/salaryConfigService';
 import { formatCurrency } from '../src/utils/currencyUtils';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
+
+interface StaffOption {
+  id: string;
+  name: string;
+  position: string;
+  department?: string;
+}
+
+interface ClassOption {
+  id: string;
+  name: string;
+  code: string;
+  teacherId?: string;
+  teacher?: string;
+  assistant?: string;
+  foreignTeacher?: string;
+  sessionDuration?: number; // in minutes
+}
+
+interface TeacherClassConfig {
+  id?: string;
+  staffId: string;
+  classId: string;
+  className: string;
+  classCode: string;
+  ratePerUnit: number;
+  unit: 'Giờ' | 'Ca'; // Giờ = 60 phút, Ca = 90 phút
+}
+
+interface TeacherSalaryConfig {
+  staffId: string;
+  staffName: string;
+  department: string;
+  salaryCycle: string; // "Tháng 12/2025"
+  note: string;
+  classConfigs: TeacherClassConfig[];
+  fixedSalary: number;
+  allowance: number;
+  kpiBonus: number;
+}
 
 export const SalaryConfig: React.FC = () => {
   const { 
     salaryRules, 
     teachingRanges, 
     feedbackRanges, 
-    loading, 
-    error,
+    loading: rulesLoading, 
     createRule,
-    updateRule,
     deleteRule,
     createRange,
-    updateRange,
     deleteRange,
   } = useSalaryConfig();
 
-  const [showRuleModal, setShowRuleModal] = useState(false);
-  const [showRangeModal, setShowRangeModal] = useState(false);
-  const [editingRule, setEditingRule] = useState<SalaryRule | null>(null);
-  const [editingRange, setEditingRange] = useState<SalaryRangeConfig | null>(null);
-  const [rangeType, setRangeType] = useState<RangeType>('Teaching');
-
-  const handleDeleteRule = async (id: string) => {
-    if (!confirm('Xóa cấu hình lương này?')) return;
-    try {
-      await deleteRule(id);
-    } catch (err) {
-      alert('Không thể xóa');
-    }
-  };
-
-  const handleDeleteRange = async (id: string) => {
-    if (!confirm('Xóa mức lương này?')) return;
-    try {
-      await deleteRange(id);
-    } catch (err) {
-      alert('Không thể xóa');
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <DollarSign className="text-green-600" size={24} />
-            Cấu hình lương GV/TG
-          </h2>
-          <p className="text-sm text-gray-500">1 ca = 90 phút | 1 giờ = 60 phút</p>
-        </div>
-        <button
-          onClick={() => { setEditingRule(null); setShowRuleModal(true); }}
-          className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm font-medium"
-        >
-          <Plus size={16} /> Thêm cấu hình
-        </button>
-      </div>
-
-      {/* Main Table - Salary Rules */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-600 border-collapse">
-            <thead>
-              <tr className="bg-orange-100/50 border-b border-gray-200 text-gray-800 font-bold">
-                <th className="px-4 py-3 border-r border-gray-200 text-center w-12">No</th>
-                <th className="px-4 py-3 border-r border-gray-200">Tên nhân sự</th>
-                <th className="px-4 py-3 border-r border-gray-200 text-center">Vị trí</th>
-                <th className="px-4 py-3 border-r border-gray-200 text-center">Lớp phụ trách</th>
-                <th className="px-4 py-3 border-r border-gray-200 text-center">Cách tính lương</th>
-                <th className="px-4 py-3 border-r border-gray-200 text-right">Mức tối thiểu</th>
-                <th className="px-4 py-3 border-r border-gray-200 text-center">Cách tính công</th>
-                <th className="px-4 py-3 border-r border-gray-200 text-right">Tiền công/ca</th>
-                <th className="px-4 py-3 border-r border-gray-200">Ngày hiệu lực</th>
-                <th className="px-4 py-3 text-center">Hành động</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={10} className="text-center py-8 text-gray-500">
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
-                      Đang tải...
-                    </div>
-                  </td>
-                </tr>
-              ) : error ? (
-                <tr>
-                  <td colSpan={10} className="text-center py-8 text-red-500">Lỗi: {error}</td>
-                </tr>
-              ) : salaryRules.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="text-center py-8 text-gray-400">
-                    <DollarSign size={48} className="mx-auto mb-2 opacity-20" />
-                    Chưa có cấu hình lương nào
-                  </td>
-                </tr>
-              ) : salaryRules.map((rule, idx) => (
-                <tr key={rule.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 border-r border-gray-100 text-center">{idx + 1}</td>
-                  <td className="px-4 py-3 border-r border-gray-100">
-                    <div className="font-medium text-gray-900">{rule.staffName}</div>
-                  </td>
-                  <td className="px-4 py-3 border-r border-gray-100 text-center">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      rule.position === 'Giáo Viên Việt' ? 'bg-blue-100 text-blue-700' :
-                      rule.position === 'Giáo Viên Nước Ngoài' ? 'bg-purple-100 text-purple-700' :
-                      'bg-green-100 text-green-700'
-                    }`}>
-                      {rule.position}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 border-r border-gray-100 text-center">{rule.className || '-'}</td>
-                  <td className="px-4 py-3 border-r border-gray-100 text-center">{rule.salaryMethod}</td>
-                  <td className="px-4 py-3 border-r border-gray-100 text-right">{formatCurrency(rule.baseRate)}</td>
-                  <td className="px-4 py-3 border-r border-gray-100 text-center">
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      rule.workMethod === 'Cố định' ? 'bg-gray-100 text-gray-700' : 'bg-orange-100 text-orange-700'
-                    }`}>
-                      {rule.workMethod}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 border-r border-gray-100 text-right font-bold text-indigo-600">
-                    {formatCurrency(rule.ratePerSession)}
-                  </td>
-                  <td className="px-4 py-3 border-r border-gray-100">{rule.effectiveDate}</td>
-                  <td className="px-4 py-3 text-center">
-                    <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => { setEditingRule(rule); setShowRuleModal(true); }}
-                        className="text-gray-400 hover:text-indigo-600 p-1"
-                      >
-                        <Edit size={16} />
-                      </button>
-                      <button
-                        onClick={() => rule.id && handleDeleteRule(rule.id)}
-                        className="text-gray-400 hover:text-red-600 p-1"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Explanation & Range Configs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Left: Logic Explanation */}
-        <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
-          <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-            <Settings size={18} />
-            Logic tính công
-          </h3>
-          <div className="space-y-2 text-sm text-gray-700">
-            <div className="flex gap-4">
-              <span className="font-bold w-24 text-gray-800">Cố định</span>
-              <span>Nhân theo mức tối thiểu/cố định</span>
-            </div>
-            <div className="flex gap-4">
-              <span className="font-bold w-24 text-gray-800">Theo sĩ số</span>
-              <span>Lấy theo sĩ số trung bình học sinh đi học thực tế</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Range Tables */}
-        <div className="space-y-4">
-          {/* Teaching Ranges */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-orange-100/50 px-4 py-2 font-bold text-gray-800 border-b border-gray-200 flex items-center justify-between">
-              <span>Mức lương theo sĩ số (GV)</span>
-              <button
-                onClick={() => { setRangeType('Teaching'); setEditingRange(null); setShowRangeModal(true); }}
-                className="text-indigo-600 hover:text-indigo-800"
-              >
-                <Plus size={18} />
-              </button>
-            </div>
-            <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
-                <tr>
-                  <th className="px-4 py-2">Sĩ số</th>
-                  <th className="px-4 py-2">Cách tính</th>
-                  <th className="px-4 py-2">Số tiền</th>
-                  <th className="px-4 py-2 w-16"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {teachingRanges.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-4 text-center text-gray-400">Chưa có</td>
-                  </tr>
-                ) : teachingRanges.map((r) => (
-                  <tr key={r.id}>
-                    <td className="px-4 py-2">{r.rangeLabel}</td>
-                    <td className="px-4 py-2">{r.method || '-'}</td>
-                    <td className="px-4 py-2 font-medium">{formatCurrency(r.amount)}</td>
-                    <td className="px-4 py-2">
-                      <button
-                        onClick={() => r.id && handleDeleteRange(r.id)}
-                        className="text-gray-400 hover:text-red-600"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Assistant Feedback Ranges */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="bg-orange-100/50 px-4 py-2 font-bold text-gray-800 border-b border-gray-200 flex items-center justify-between">
-              <span>Mức lương nhận xét (TG)</span>
-              <button
-                onClick={() => { setRangeType('AssistantFeedback'); setEditingRange(null); setShowRangeModal(true); }}
-                className="text-indigo-600 hover:text-indigo-800"
-              >
-                <Plus size={18} />
-              </button>
-            </div>
-            <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
-                <tr>
-                  <th className="px-4 py-2">Sĩ số</th>
-                  <th className="px-4 py-2">Số tiền</th>
-                  <th className="px-4 py-2 w-16"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {feedbackRanges.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-4 text-center text-gray-400">Chưa có</td>
-                  </tr>
-                ) : feedbackRanges.map((r) => (
-                  <tr key={r.id}>
-                    <td className="px-4 py-2">{r.rangeLabel}</td>
-                    <td className="px-4 py-2 font-medium">{formatCurrency(r.amount)}</td>
-                    <td className="px-4 py-2">
-                      <button
-                        onClick={() => r.id && handleDeleteRange(r.id)}
-                        className="text-gray-400 hover:text-red-600"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* Salary Rule Modal */}
-      {showRuleModal && (
-        <SalaryRuleModal
-          rule={editingRule}
-          onClose={() => { setShowRuleModal(false); setEditingRule(null); }}
-          onSubmit={async (data) => {
-            if (editingRule?.id) {
-              await updateRule(editingRule.id, data);
-            } else {
-              await createRule(data as Omit<SalaryRule, 'id'>);
-            }
-            setShowRuleModal(false);
-            setEditingRule(null);
-          }}
-        />
-      )}
-
-      {/* Salary Range Modal */}
-      {showRangeModal && (
-        <SalaryRangeModal
-          range={editingRange}
-          type={rangeType}
-          onClose={() => { setShowRangeModal(false); setEditingRange(null); }}
-          onSubmit={async (data) => {
-            if (editingRange?.id) {
-              await updateRange(editingRange.id, data);
-            } else {
-              await createRange({ ...data, type: rangeType } as Omit<SalaryRangeConfig, 'id'>);
-            }
-            setShowRangeModal(false);
-            setEditingRange(null);
-          }}
-        />
-      )}
-    </div>
-  );
-};
-
-// ============================================
-// SALARY RULE MODAL
-// ============================================
-interface StaffOption {
-  id: string;
-  name: string;
-  position: string;
-}
-
-interface SalaryRuleModalProps {
-  rule?: SalaryRule | null;
-  onClose: () => void;
-  onSubmit: (data: Partial<SalaryRule>) => Promise<void>;
-}
-
-interface ClassOption {
-  id: string;
-  name: string;
-}
-
-const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubmit }) => {
-  const [formData, setFormData] = useState({
-    staffId: rule?.staffId || '',
-    staffName: rule?.staffName || '',
-    position: rule?.position || 'Giáo Viên Việt',
-    className: rule?.className || '',
-    salaryMethod: rule?.salaryMethod || 'Theo ca' as SalaryMethod,
-    baseRate: rule?.baseRate || 200000,
-    workMethod: rule?.workMethod || 'Cố định' as WorkMethod,
-    ratePerSession: rule?.ratePerSession || 200000,
-    effectiveDate: rule?.effectiveDate || new Date().toISOString().split('T')[0],
-  });
-  const [loading, setLoading] = useState(false);
+  // State
   const [staffList, setStaffList] = useState<StaffOption[]>([]);
   const [loadingStaff, setLoadingStaff] = useState(true);
+  const [selectedStaff, setSelectedStaff] = useState<StaffOption | null>(null);
   const [staffClasses, setStaffClasses] = useState<ClassOption[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
+  
+  // Form state
+  const [salaryCycle, setSalaryCycle] = useState(() => {
+    const now = new Date();
+    return `Tháng ${now.getMonth() + 1}/${now.getFullYear()}`;
+  });
+  const [note, setNote] = useState('');
+  const [classConfigs, setClassConfigs] = useState<TeacherClassConfig[]>([]);
+  const [fixedSalary, setFixedSalary] = useState(0);
+  const [allowance, setAllowance] = useState(0);
+  const [kpiBonus, setKpiBonus] = useState(700);
+  const [enableHourlyRate, setEnableHourlyRate] = useState(true);
+  
+  // Modal state
+  const [showAddClassModal, setShowAddClassModal] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Normalize position for display
   const normalizePosition = (pos: string): string => {
@@ -359,31 +97,27 @@ const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubm
     if (lower.includes('nước ngoài') || lower.includes('ngoại') || lower === 'foreign') return 'Giáo Viên Nước Ngoài';
     if (lower.includes('việt') || lower === 'gv việt') return 'Giáo Viên Việt';
     if (lower.includes('trợ') || lower === 'tg') return 'Trợ Giảng';
-    if (lower.includes('kế toán')) return 'Kế toán';
-    if (lower.includes('lễ tân')) return 'Lễ tân';
-    if (lower.includes('nhân viên')) return 'Nhân viên';
     return pos;
   };
 
-  // Fetch staff list from Firebase
+  // Fetch staff list
   useEffect(() => {
     const fetchStaff = async () => {
       try {
         const snapshot = await getDocs(collection(db, 'staff'));
         const staffData: StaffOption[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
           const normalizedPos = normalizePosition(data.position || '');
-          // Only include teaching staff for salary config
           if (['Giáo Viên Việt', 'Giáo Viên Nước Ngoài', 'Trợ Giảng'].includes(normalizedPos)) {
             staffData.push({
-              id: doc.id,
+              id: docSnap.id,
               name: data.name || '',
               position: normalizedPos,
+              department: data.department || 'Khoa Tiếng Anh',
             });
           }
         });
-        // Sort by name
         staffData.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
         setStaffList(staffData);
       } catch (err) {
@@ -398,7 +132,7 @@ const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubm
   // Fetch classes for selected staff
   useEffect(() => {
     const fetchStaffClasses = async () => {
-      if (!formData.staffId && !formData.staffName) {
+      if (!selectedStaff) {
         setStaffClasses([]);
         return;
       }
@@ -407,26 +141,42 @@ const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubm
       try {
         const snapshot = await getDocs(collection(db, 'classes'));
         const classData: ClassOption[] = [];
-        const staffName = formData.staffName.toLowerCase().trim();
+        const staffName = selectedStaff.name.toLowerCase().trim();
         
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          const isTeacher = data.teacherId === formData.staffId || 
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const isTeacher = data.teacherId === selectedStaff.id || 
                            (data.teacher && data.teacher.toLowerCase().includes(staffName));
           const isAssistant = data.assistant && data.assistant.toLowerCase().includes(staffName);
           const isForeignTeacher = data.foreignTeacher && data.foreignTeacher.toLowerCase().includes(staffName);
           
           if (isTeacher || isAssistant || isForeignTeacher) {
             classData.push({
-              id: doc.id,
+              id: docSnap.id,
               name: data.name || '',
+              code: data.code || data.id || '',
+              teacherId: data.teacherId,
+              teacher: data.teacher,
+              assistant: data.assistant,
+              foreignTeacher: data.foreignTeacher,
+              sessionDuration: data.sessionDuration || 90,
             });
           }
         });
         
-        // Sort by name
         classData.sort((a, b) => a.name.localeCompare(b.name, 'vi'));
         setStaffClasses(classData);
+        
+        // Auto-add classes to config
+        const newConfigs: TeacherClassConfig[] = classData.map(cls => ({
+          classId: cls.id,
+          className: cls.name,
+          classCode: cls.code,
+          staffId: selectedStaff.id,
+          ratePerUnit: 200000,
+          unit: cls.sessionDuration === 60 ? 'Giờ' : 'Ca',
+        }));
+        setClassConfigs(newConfigs);
       } catch (err) {
         console.error('Error fetching classes:', err);
       } finally {
@@ -435,296 +185,510 @@ const SalaryRuleModal: React.FC<SalaryRuleModalProps> = ({ rule, onClose, onSubm
     };
     
     fetchStaffClasses();
-  }, [formData.staffId, formData.staffName]);
+  }, [selectedStaff]);
 
+  // Load existing config for selected staff
+  useEffect(() => {
+    const loadExistingConfig = async () => {
+      if (!selectedStaff) return;
+      
+      // Find existing rules for this staff
+      const existingRules = salaryRules.filter(r => r.staffId === selectedStaff.id);
+      if (existingRules.length > 0) {
+        // Load from existing rules
+        const configs: TeacherClassConfig[] = existingRules.map(rule => ({
+          id: rule.id,
+          staffId: rule.staffId || '',
+          classId: rule.classId || '',
+          className: rule.className || '',
+          classCode: rule.classCode || '',
+          ratePerUnit: rule.ratePerSession || 200000,
+          unit: rule.salaryMethod === 'Theo giờ' ? 'Giờ' : 'Ca',
+        }));
+        setClassConfigs(configs);
+        
+        // Load other settings from first rule
+        const firstRule = existingRules[0];
+        setFixedSalary(firstRule.baseRate || 0);
+        setAllowance(firstRule.allowance || 0);
+        setKpiBonus(firstRule.kpiBonus || 700);
+        setNote(firstRule.note || '');
+      }
+    };
+    
+    loadExistingConfig();
+  }, [selectedStaff, salaryRules]);
+
+  // Calculate total estimate
+  const totalEstimate = useMemo(() => {
+    const classTotal = classConfigs.reduce((sum, cfg) => sum + cfg.ratePerUnit, 0);
+    return fixedSalary + allowance + classTotal;
+  }, [classConfigs, fixedSalary, allowance]);
+
+  // Handle staff select
   const handleStaffSelect = (staffId: string) => {
-    const selected = staffList.find(s => s.id === staffId);
-    if (selected) {
-      setFormData({
-        ...formData,
-        staffId: selected.id,
-        staffName: selected.name,
-        position: selected.position,
-        className: '', // Reset class when staff changes
-      });
-    } else {
-      setFormData({
-        ...formData,
-        staffId: '',
-        staffName: '',
-        position: 'Giáo Viên Việt',
-        className: '',
-      });
+    const staff = staffList.find(s => s.id === staffId);
+    setSelectedStaff(staff || null);
+    // Reset form
+    setClassConfigs([]);
+    setNote('');
+  };
+
+  // Update class config
+  const updateClassConfig = (index: number, field: keyof TeacherClassConfig, value: any) => {
+    const newConfigs = [...classConfigs];
+    newConfigs[index] = { ...newConfigs[index], [field]: value };
+    setClassConfigs(newConfigs);
+  };
+
+  // Remove class config
+  const removeClassConfig = (index: number) => {
+    setClassConfigs(classConfigs.filter((_, i) => i !== index));
+  };
+
+  // Add new class config
+  const addClassConfig = (cls: ClassOption) => {
+    // Check if already added
+    if (classConfigs.some(c => c.classId === cls.id)) {
+      alert('Lớp này đã được thêm');
+      return;
+    }
+    
+    setClassConfigs([...classConfigs, {
+      staffId: selectedStaff?.id || '',
+      classId: cls.id,
+      className: cls.name,
+      classCode: cls.code,
+      ratePerUnit: 200000,
+      unit: cls.sessionDuration === 60 ? 'Giờ' : 'Ca',
+    }]);
+    setShowAddClassModal(false);
+  };
+
+  // Save configuration
+  const handleSave = async () => {
+    if (!selectedStaff) {
+      alert('Vui lòng chọn giáo viên');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Delete existing rules for this staff
+      const existingRules = salaryRules.filter(r => r.staffId === selectedStaff.id);
+      for (const rule of existingRules) {
+        if (rule.id) {
+          await deleteRule(rule.id);
+        }
+      }
+
+      // Create new rules for each class
+      for (const config of classConfigs) {
+        await createRule({
+          staffId: selectedStaff.id,
+          staffName: selectedStaff.name,
+          position: selectedStaff.position,
+          classId: config.classId,
+          className: config.className,
+          classCode: config.classCode,
+          salaryMethod: config.unit === 'Giờ' ? 'Theo giờ' : 'Theo ca',
+          baseRate: fixedSalary,
+          workMethod: 'Cố định',
+          ratePerSession: config.ratePerUnit,
+          allowance: allowance,
+          kpiBonus: kpiBonus,
+          note: note,
+          effectiveDate: new Date().toISOString().split('T')[0],
+          salaryCycle: salaryCycle,
+        });
+      }
+
+      alert('Đã lưu cấu hình lương thành công!');
+    } catch (err) {
+      console.error('Error saving config:', err);
+      alert('Không thể lưu cấu hình');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      await onSubmit(formData);
-    } finally {
-      setLoading(false);
-    }
+  // Reset form
+  const handleReset = () => {
+    setSelectedStaff(null);
+    setClassConfigs([]);
+    setFixedSalary(0);
+    setAllowance(0);
+    setKpiBonus(700);
+    setNote('');
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full">
-        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-800">
-            {rule ? 'Sửa cấu hình lương' : 'Thêm cấu hình lương'}
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X size={24} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tên nhân sự <span className="text-red-500">*</span>
-              </label>
-              <select
-                required
-                value={formData.staffId}
-                onChange={(e) => handleStaffSelect(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                disabled={loadingStaff}
-              >
-                <option value="">{loadingStaff ? 'Đang tải...' : '-- Chọn nhân sự --'}</option>
-                {staffList.map((staff) => (
-                  <option key={staff.id} value={staff.id}>
-                    {staff.name} ({staff.position})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Vị trí</label>
-              <input
-                type="text"
-                readOnly
-                value={formData.position}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Lớp phụ trách</label>
-              <select
-                value={formData.className}
-                onChange={(e) => setFormData({ ...formData, className: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                disabled={!formData.staffId || loadingClasses}
-              >
-                <option value="">
-                  {!formData.staffId ? '-- Chọn nhân sự trước --' : 
-                   loadingClasses ? 'Đang tải...' : 
-                   staffClasses.length === 0 ? 'Không có lớp phụ trách' : '-- Chọn lớp --'}
-                </option>
-                {staffClasses.map((cls) => (
-                  <option key={cls.id} value={cls.name}>
-                    {cls.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cách tính lương</label>
-              <select
-                value={formData.salaryMethod}
-                onChange={(e) => setFormData({ ...formData, salaryMethod: e.target.value as SalaryMethod })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="Theo ca">Theo ca (90 phút)</option>
-                <option value="Theo giờ">Theo giờ (60 phút)</option>
-                <option value="Nhận xét">Nhận xét</option>
-                <option value="Cố định">Cố định</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cách tính công</label>
-              <select
-                value={formData.workMethod}
-                onChange={(e) => setFormData({ ...formData, workMethod: e.target.value as WorkMethod })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="Cố định">Cố định</option>
-                <option value="Theo sĩ số">Theo sĩ số</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Mức tối thiểu (đ)</label>
-              <input
-                type="number"
-                value={formData.baseRate}
-                onChange={(e) => setFormData({ ...formData, baseRate: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tiền công/ca (đ)</label>
-              <input
-                type="number"
-                value={formData.ratePerSession}
-                onChange={(e) => setFormData({ ...formData, ratePerSession: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Ngày hiệu lực</label>
-              <input
-                type="date"
-                value={formData.effectiveDate}
-                onChange={(e) => setFormData({ ...formData, effectiveDate: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-            >
-              Hủy
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-            >
-              {loading ? 'Đang lưu...' : rule ? 'Lưu thay đổi' : 'Thêm cấu hình'}
-            </button>
-          </div>
-        </form>
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 rounded-2xl shadow-lg">
+        <h1 className="text-2xl font-bold text-center mb-2">CẤU HÌNH CƠ CẤU LƯƠNG GIÁO VIÊN</h1>
+        <p className="text-center text-blue-100">Lương giáo viên được tính theo ca/giờ và phân theo lớp học khác nhau.</p>
       </div>
-    </div>
-  );
-};
 
-// ============================================
-// SALARY RANGE MODAL
-// ============================================
-interface SalaryRangeModalProps {
-  range?: SalaryRangeConfig | null;
-  type: RangeType;
-  onClose: () => void;
-  onSubmit: (data: Partial<SalaryRangeConfig>) => Promise<void>;
-}
+      {/* Main Form */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
+        
+        {/* Section 1: Chọn Giáo viên & Xác định Chu kỳ */}
+        <div>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">1</span>
+            Chọn Giáo Viên & Xác Định Chu Kỳ
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tên Giáo Viên</label>
+              <div className="relative">
+                <select
+                  value={selectedStaff?.id || ''}
+                  onChange={(e) => handleStaffSelect(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 appearance-none"
+                  disabled={loadingStaff}
+                >
+                  <option value="">{loadingStaff ? 'Đang tải...' : '-- Chọn giáo viên --'}</option>
+                  {staffList.map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.name}
+                    </option>
+                  ))}
+                </select>
+                <User className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              </div>
+            </div>
 
-const SalaryRangeModal: React.FC<SalaryRangeModalProps> = ({ range, type, onClose, onSubmit }) => {
-  const [formData, setFormData] = useState({
-    rangeLabel: range?.rangeLabel || '',
-    method: range?.method || 'Cố định',
-    amount: range?.amount || 0,
-  });
-  const [amountDisplay, setAmountDisplay] = useState(
-    range?.amount ? range.amount.toLocaleString('vi-VN') : ''
-  );
-  const [loading, setLoading] = useState(false);
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phòng Ban</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  readOnly
+                  value={selectedStaff?.department || ''}
+                  placeholder="Khoa Tiếng Anh"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
+                />
+                <Building className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              </div>
+            </div>
 
-  const handleAmountChange = (value: string) => {
-    // Remove all non-digit characters
-    const numericValue = value.replace(/[^\d]/g, '');
-    const amount = parseInt(numericValue) || 0;
-    setFormData({ ...formData, amount });
-    // Format with commas for display
-    setAmountDisplay(amount > 0 ? amount.toLocaleString('vi-VN') : '');
-  };
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Chu Kỳ Lương</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={salaryCycle}
+                  onChange={(e) => setSalaryCycle(e.target.value)}
+                  placeholder="Tháng 12/2025"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+                <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              </div>
+            </div>
+          </div>
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      await onSubmit(formData);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <h3 className="text-xl font-bold text-gray-800">
-            {range ? 'Sửa mức lương' : 'Thêm mức lương'} ({type === 'Teaching' ? 'GV' : 'TG'})
-          </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X size={24} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Khoảng sĩ số <span className="text-red-500">*</span>
-            </label>
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú thêm</label>
             <input
               type="text"
-              required
-              value={formData.rangeLabel}
-              onChange={(e) => setFormData({ ...formData, rangeLabel: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              placeholder="VD: <5, 5-9, 10-20, >20"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Vd: nhân viên có 1 oral vend..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </div>
+        </div>
 
-          {type === 'Teaching' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cách tính</label>
-              <select
-                value={formData.method}
-                onChange={(e) => setFormData({ ...formData, method: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="Cố định">Cố định</option>
-                <option value="Sĩ số">Sĩ số</option>
-              </select>
+        {/* Section 2: Cấu hình Lương theo Giờ Dạy */}
+        <div>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">2</span>
+            Cấu Hình Lương Cơ Bản theo Giờ Dạy
+          </h2>
+
+          <div className="flex items-center gap-4 mb-4">
+            <button
+              onClick={() => selectedStaff && setShowAddClassModal(true)}
+              disabled={!selectedStaff}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-full hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+            >
+              <Plus size={16} />
+              Lương Theo Ca/Giờ Dạy
+            </button>
+            
+            <label className="flex items-center gap-2 cursor-pointer">
+              <div className={`relative w-12 h-6 rounded-full transition-colors ${enableHourlyRate ? 'bg-blue-600' : 'bg-gray-300'}`}>
+                <input
+                  type="checkbox"
+                  checked={enableHourlyRate}
+                  onChange={(e) => setEnableHourlyRate(e.target.checked)}
+                  className="sr-only"
+                />
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${enableHourlyRate ? 'translate-x-7' : 'translate-x-1'}`} />
+              </div>
+            </label>
+          </div>
+
+          {/* Class Rate Table */}
+          {classConfigs.length > 0 ? (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600">Tên Lớp Học</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-600">Mã Lớp</th>
+                    <th className="px-4 py-3 text-center font-medium text-gray-600">Mức Lương Giờ/Ca (VNĐ)</th>
+                    <th className="px-4 py-3 text-center font-medium text-gray-600">Đơn Vị Tính</th>
+                    <th className="px-4 py-3 text-center font-medium text-gray-600">Hành động</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {classConfigs.map((config, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-900">{config.className}</td>
+                      <td className="px-4 py-3 text-gray-600">{config.classCode}</td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          value={config.ratePerUnit}
+                          onChange={(e) => updateClassConfig(idx, 'ratePerUnit', parseInt(e.target.value) || 0)}
+                          className="w-32 px-3 py-1 border border-gray-300 rounded text-center mx-auto block"
+                          step={10000}
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <select
+                          value={config.unit}
+                          onChange={(e) => updateClassConfig(idx, 'unit', e.target.value)}
+                          className="px-3 py-1 border border-gray-300 rounded"
+                        >
+                          <option value="Giờ">Giờ</option>
+                          <option value="Ca">Ca</option>
+                        </select>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => removeClassConfig(idx)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center text-gray-400">
+              <Clock size={48} className="mx-auto mb-2 opacity-50" />
+              <p>{selectedStaff ? 'Chưa có lớp nào được cấu hình' : 'Vui lòng chọn giáo viên trước'}</p>
             </div>
           )}
+        </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Số tiền (đ) <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={amountDisplay}
-              onChange={(e) => handleAmountChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              placeholder="1.000.000"
-            />
+        {/* Section 3: Cấu hình Lương Cố Định & Phụ Cấp */}
+        <div>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">3</span>
+            Cấu Hình Lương Cố Định & Phụ Cấp
+          </h2>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <span className="text-gray-700">Lương Cố Định Hàng Tháng</span>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">{fixedSalary > 0 ? formatCurrency(fixedSalary) : '0'}</span>
+                <select
+                  value={fixedSalary}
+                  onChange={(e) => setFixedSalary(parseInt(e.target.value))}
+                  className="px-3 py-1 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value={0}>0</option>
+                  <option value={500000}>500,000</option>
+                  <option value={1000000}>1,000,000</option>
+                  <option value={2000000}>2,000,000</option>
+                  <option value={3000000}>3,000,000</option>
+                  <option value={5000000}>5,000,000</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <span className="text-gray-700">Phụ Cấp Trách Nhiệm</span>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">{allowance > 0 ? formatCurrency(allowance) : '0'}</span>
+                <select
+                  value={allowance}
+                  onChange={(e) => setAllowance(parseInt(e.target.value))}
+                  className="px-3 py-1 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value={0}>0</option>
+                  <option value={100000}>100,000</option>
+                  <option value={200000}>200,000</option>
+                  <option value={300000}>300,000</option>
+                  <option value={500000}>500,000</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <span className="text-gray-700">Thưởng KPI/Đánh giá</span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={kpiBonus}
+                  onChange={(e) => setKpiBonus(parseInt(e.target.value))}
+                  className="px-3 py-1 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value={0}>0 VNĐ</option>
+                  <option value={500}>500 VNĐ</option>
+                  <option value={700}>700 VNĐ</option>
+                  <option value={1000}>1,000 VNĐ</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 4: Tóm Tắt & Hành động */}
+        <div>
+          <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm">4</span>
+            Tóm Tắt & Hành động
+          </h2>
+
+          <div className="flex items-center justify-between bg-gray-50 p-4 rounded-lg mb-4">
+            <span className="text-gray-700 font-medium">Tổng Ước Tính</span>
+            <span className="text-2xl font-bold text-indigo-600">{formatCurrency(totalEstimate)}</span>
           </div>
 
-          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
+          <div className="flex gap-3 justify-end">
             <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              onClick={handleSave}
+              disabled={saving || !selectedStaff}
+              className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium"
             >
-              Hủy
+              <Save size={18} />
+              {saving ? 'Đang lưu...' : 'Lưu Cấu Hình'}
             </button>
             <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              onClick={handleReset}
+              className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
             >
-              {loading ? 'Đang lưu...' : 'Lưu'}
+              Hủy Bỏ
             </button>
           </div>
-        </form>
+        </div>
       </div>
+
+      {/* Existing Configurations Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-orange-100/50 px-4 py-3 font-bold text-gray-800 border-b border-gray-200">
+          Danh sách cấu hình lương đã lưu
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
+              <tr>
+                <th className="px-4 py-3">No</th>
+                <th className="px-4 py-3">Tên Giáo Viên</th>
+                <th className="px-4 py-3">Vị Trí</th>
+                <th className="px-4 py-3">Lớp</th>
+                <th className="px-4 py-3 text-right">Mức Lương/Ca</th>
+                <th className="px-4 py-3">Đơn Vị</th>
+                <th className="px-4 py-3">Ngày Hiệu Lực</th>
+                <th className="px-4 py-3 text-center">Xóa</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {rulesLoading ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-8 text-gray-500">
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
+                      Đang tải...
+                    </div>
+                  </td>
+                </tr>
+              ) : salaryRules.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-8 text-gray-400">
+                    <DollarSign size={48} className="mx-auto mb-2 opacity-20" />
+                    Chưa có cấu hình lương nào
+                  </td>
+                </tr>
+              ) : salaryRules.map((rule, idx) => (
+                <tr key={rule.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">{idx + 1}</td>
+                  <td className="px-4 py-3 font-medium">{rule.staffName}</td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                      rule.position === 'Giáo Viên Việt' ? 'bg-blue-100 text-blue-700' :
+                      rule.position === 'Giáo Viên Nước Ngoài' ? 'bg-purple-100 text-purple-700' :
+                      'bg-green-100 text-green-700'
+                    }`}>
+                      {rule.position}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">{rule.className || '-'}</td>
+                  <td className="px-4 py-3 text-right font-bold text-indigo-600">
+                    {formatCurrency(rule.ratePerSession)}
+                  </td>
+                  <td className="px-4 py-3">{rule.salaryMethod === 'Theo giờ' ? 'Giờ' : 'Ca'}</td>
+                  <td className="px-4 py-3">{rule.effectiveDate}</td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={() => rule.id && deleteRule(rule.id)}
+                      className="text-gray-400 hover:text-red-600"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Add Class Modal */}
+      {showAddClassModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-800">Thêm lớp dạy</h3>
+              <button onClick={() => setShowAddClassModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6">
+              {loadingClasses ? (
+                <div className="text-center py-8 text-gray-500">Đang tải...</div>
+              ) : staffClasses.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  Giáo viên này chưa được phân công lớp nào
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {staffClasses.filter(cls => !classConfigs.some(c => c.classId === cls.id)).map((cls) => (
+                    <button
+                      key={cls.id}
+                      onClick={() => addClassConfig(cls)}
+                      className="w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                    >
+                      <div className="font-medium text-gray-900">{cls.name}</div>
+                      <div className="text-sm text-gray-500">Mã lớp: {cls.code}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

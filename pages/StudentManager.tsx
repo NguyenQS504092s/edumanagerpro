@@ -1,6 +1,6 @@
 
-import React, { useState, useMemo } from 'react';
-import { Search, Filter, Gift, History, User, Phone, MoreHorizontal, Calendar, ArrowRight, Cake, Plus, Edit, Trash2, UserPlus, Shuffle, AlertTriangle, PlusCircle, MinusCircle, RefreshCw, Pause, UserMinus, ChevronDown, X } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Search, Filter, Gift, History, User, Phone, MoreHorizontal, Calendar, ArrowRight, Cake, Plus, Edit, Trash2, UserPlus, Shuffle, AlertTriangle, PlusCircle, MinusCircle, RefreshCw, Pause, UserMinus, ChevronDown, ChevronUp, X, DollarSign, BookOpen } from 'lucide-react';
 import { Student, StudentStatus, Parent } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { useStudents } from '../src/hooks/useStudents';
@@ -8,8 +8,28 @@ import { useParents } from '../src/hooks/useParents';
 import { useClasses } from '../src/hooks/useClasses';
 import { usePermissions } from '../src/hooks/usePermissions';
 import { useAuth } from '../src/hooks/useAuth';
+import { getFeedbacks, FeedbackRecord } from '../src/services/feedbackService';
 import { ClassModel } from '../types';
 import { createEnrollment } from '../src/services/enrollmentService';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
+
+// Normalize English status to Vietnamese - defined outside component to avoid hoisting issues
+const normalizeStatus = (status: string): StudentStatus | string => {
+  if (!status) return '';
+  
+  const lower = status.toLowerCase().trim().normalize('NFC');
+  
+  // Map various status formats to enum values
+  if (lower === 'active' || lower === 'đang học') return StudentStatus.ACTIVE;
+  if (lower === 'inactive' || lower === 'dropped' || lower === 'nghỉ học' || lower === 'đã nghỉ' || lower.includes('nghỉ')) return StudentStatus.DROPPED;
+  if (lower === 'reserved' || lower === 'bảo lưu' || lower.includes('bảo lưu')) return StudentStatus.RESERVED;
+  if (lower === 'trial' || lower === 'học thử' || lower.includes('học thử')) return StudentStatus.TRIAL;
+  if (lower === 'debt' || lower === 'nợ phí' || (lower.includes('nợ') && !lower.includes('hợp đồng'))) return StudentStatus.DEBT;
+  if (lower === 'contract_debt' || lower === 'nợ hợp đồng' || lower.includes('nợ hợp đồng')) return StudentStatus.CONTRACT_DEBT;
+  
+  return status;
+};
 
 interface StudentManagerProps {
   initialStatusFilter?: StudentStatus;
@@ -22,6 +42,8 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [studentFeedbacks, setStudentFeedbacks] = useState<FeedbackRecord[]>([]);
+  const [feedbacksLoading, setFeedbacksLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<StudentStatus | 'ALL'>(initialStatusFilter || 'ALL');
   const [birthdayMonth, setBirthdayMonth] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -39,6 +61,13 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
   const [showRemoveClassModal, setShowRemoveClassModal] = useState(false);
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
 
+  // Expanded sections state
+  const [expandedEnrollment, setExpandedEnrollment] = useState(false);
+  const [expandedFinance, setExpandedFinance] = useState(false);
+  const [studentEnrollments, setStudentEnrollments] = useState<any[]>([]);
+  const [studentContracts, setStudentContracts] = useState<any[]>([]);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
   // Permissions
   const { canCreate, canEdit, canDelete, shouldHideParentPhone, shouldShowOnlyOwnClasses, staffId } = usePermissions();
   const { staffData } = useAuth();
@@ -48,17 +77,36 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
   const hideParentPhone = shouldHideParentPhone('students');
   const onlyOwnClasses = shouldShowOnlyOwnClasses('students');
 
-  // Fetch students from Firebase
-  const { students: allStudents, loading, error, createStudent, updateStudent, deleteStudent } = useStudents({
-    status: filterStatus === 'ALL' ? undefined : filterStatus,
-    searchTerm: searchTerm || undefined
-  });
+  // Fetch ALL students from Firebase (no server-side status filter to handle legacy status values like "Đã nghỉ")
+  const { students: allStudents, loading, error, createStudent, updateStudent, deleteStudent } = useStudents();
   
   // Fetch parents for dropdown
   const { parents } = useParents();
   
   // Fetch classes for dropdown
   const { classes } = useClasses({});
+
+  // Fetch feedbacks when selectedStudent changes
+  useEffect(() => {
+    const fetchStudentFeedbacks = async () => {
+      if (selectedStudent?.id) {
+        setFeedbacksLoading(true);
+        try {
+          const feedbacks = await getFeedbacks({ studentId: selectedStudent.id });
+          setStudentFeedbacks(feedbacks);
+        } catch (err) {
+          console.error('Error fetching feedbacks:', err);
+          setStudentFeedbacks([]);
+        } finally {
+          setFeedbacksLoading(false);
+        }
+      } else {
+        setStudentFeedbacks([]);
+        setFeedbacksLoading(false);
+      }
+    };
+    fetchStudentFeedbacks();
+  }, [selectedStudent?.id]);
 
   // Filter students based on teacher's classes (if onlyOwnClasses)
   const students = useMemo(() => {
@@ -71,15 +119,34 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 
   const filteredStudents = useMemo(() => {
     return students.filter(student => {
+      // Filter by status (client-side to handle legacy status values like "Đã nghỉ")
+      let matchesStatus = true;
+      if (filterStatus !== 'ALL') {
+        const normalizedStatus = normalizeStatus(student.status);
+        matchesStatus = normalizedStatus === filterStatus;
+      }
+      
+      // Filter by search term
+      let matchesSearch = true;
+      if (searchTerm) {
+        const search = searchTerm.toLowerCase();
+        matchesSearch = 
+          student.fullName?.toLowerCase().includes(search) ||
+          student.code?.toLowerCase().includes(search) ||
+          student.phone?.includes(search) ||
+          student.parentName?.toLowerCase().includes(search);
+      }
+      
+      // Filter by birthday month
       let matchesBirthday = true;
       if (birthdayMonth) {
         const studentMonth = new Date(student.dob).getMonth() + 1;
         matchesBirthday = studentMonth === parseInt(birthdayMonth);
       }
       
-      return matchesBirthday;
+      return matchesStatus && matchesSearch && matchesBirthday;
     });
-  }, [students, birthdayMonth]);
+  }, [students, filterStatus, searchTerm, birthdayMonth]);
 
   // Find students without class assigned
   const studentsWithoutClass = useMemo(() => {
@@ -125,26 +192,6 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 
     setAssigningClasses(false);
     alert(`Đã gán lớp cho ${assigned}/${studentsWithoutClass.length} học viên!`);
-  };
-
-  // Normalize English status to Vietnamese
-  const normalizeStatus = (status: string): string => {
-    const statusMap: { [key: string]: string } = {
-      'Active': 'Đang học',
-      'active': 'Đang học',
-      'Inactive': 'Nghỉ học',
-      'inactive': 'Nghỉ học',
-      'Reserved': 'Bảo lưu',
-      'reserved': 'Bảo lưu',
-      'Trial': 'Học thử',
-      'trial': 'Học thử',
-      'Debt': 'Nợ phí',
-      'debt': 'Nợ phí',
-      'Dropped': 'Nghỉ học',
-      'dropped': 'Nghỉ học',
-      'Đã nghỉ': 'Nghỉ học', // Legacy status mapping
-    };
-    return statusMap[status] || status;
   };
 
   const getStatusColor = (status: string) => {
@@ -279,8 +326,8 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 
       <div className={`grid grid-cols-1 ${selectedStudent ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-6`}>
         {/* Student List */}
-        <div className={`${selectedStudent ? 'lg:col-span-2' : 'lg:col-span-1'} bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[calc(100vh-220px)]`}>
-          <div className="overflow-y-auto flex-1">
+        <div className={`${selectedStudent ? 'lg:col-span-2' : 'lg:col-span-1'} bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden`}>
+          <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-gray-600">
                 <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500 sticky top-0 z-10">
                 <tr>
@@ -494,9 +541,9 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
         </div>
 
         {/* Student Detail & Care History Panel */}
-        <div className="lg:col-span-1 h-[calc(100vh-220px)]">
+        <div className="lg:col-span-1">
           {selectedStudent ? (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100">
               <div className="p-6 border-b border-gray-100 bg-teal-50/30">
                  <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-gray-900 text-lg">Thông tin học viên</h3>
@@ -520,17 +567,14 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                  </div>
               </div>
               
-              <div className="flex-1 overflow-y-auto">
+              <div>
                  {/* Accordion Style Items */}
                  <div className="border-b border-gray-100">
-                     <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
-                        <span className="font-semibold text-gray-700">Lịch sử ghi danh/bảo lưu</span>
-                        <ArrowRight size={16} className="text-gray-400" />
-                     </button>
-                 </div>
-                 <div className="border-b border-gray-100">
-                     <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
-                        <span className="font-semibold text-gray-700">Thống kê tài chính</span>
+                     <button 
+                        onClick={() => navigate(`/customers/student-detail/${selectedStudent.id}?tab=finance`)}
+                        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+                     >
+                        <span className="font-semibold text-gray-700">Lịch sử ghi danh & Tài chính</span>
                         <ArrowRight size={16} className="text-gray-400" />
                      </button>
                  </div>
@@ -539,7 +583,42 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                      <h4 className="font-bold text-red-500 font-handwriting text-lg mb-3">Lịch sử chăm sóc</h4>
                      
                      <div className="space-y-4 pl-4 border-l-2 border-gray-100 ml-2">
-                        {selectedStudent.careHistory.length > 0 ? selectedStudent.careHistory.map(log => (
+                        {/* Loading state */}
+                        {feedbacksLoading && (
+                          <p className="text-sm text-gray-400 italic">Đang tải...</p>
+                        )}
+                        
+                        {/* Feedbacks (Form khảo sát, Gọi điện) */}
+                        {!feedbacksLoading && studentFeedbacks.length > 0 && studentFeedbacks.map(feedback => (
+                           <div key={feedback.id} className="relative mb-6">
+                              <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full ring-4 ring-white ${
+                                feedback.status === 'Completed' ? 'bg-green-500' : 
+                                feedback.status === 'Pending' ? 'bg-orange-500' : 'bg-gray-400'
+                              }`}></div>
+                              <p className="text-xs text-gray-500 font-medium mb-1">
+                                {feedback.date ? new Date(feedback.date).toLocaleDateString('vi-VN') : ''} - 
+                                <span className={`ml-1 ${feedback.type === 'Form' ? 'text-purple-600' : 'text-orange-600'}`}>
+                                  {feedback.type === 'Form' ? 'Form khảo sát' : 'Gọi điện'}
+                                </span>
+                                <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] ${
+                                  feedback.status === 'Completed' ? 'bg-green-100 text-green-700' : 
+                                  feedback.status === 'Pending' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {feedback.status === 'Completed' ? 'Hoàn thành' : feedback.status === 'Pending' ? 'Cần gọi' : feedback.status}
+                                </span>
+                              </p>
+                              <div className="text-sm text-gray-800 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                <p><span className="text-gray-500">Lớp:</span> {feedback.className}</p>
+                                {feedback.averageScore && (
+                                  <p><span className="text-gray-500">Điểm TB:</span> <span className="font-bold text-indigo-600">{feedback.averageScore}</span></p>
+                                )}
+                                {feedback.notes && <p className="mt-1 text-gray-600">{feedback.notes}</p>}
+                              </div>
+                           </div>
+                        ))}
+                        
+                        {/* Care History */}
+                        {selectedStudent.careHistory && selectedStudent.careHistory.length > 0 && selectedStudent.careHistory.map(log => (
                            <div key={log.id} className="relative mb-6">
                               <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-teal-500 ring-4 ring-white"></div>
                               <p className="text-xs text-gray-500 font-medium mb-1">{log.date} - <span className="text-teal-600">{log.type}</span></p>
@@ -548,33 +627,12 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
                               </p>
                               <p className="text-[10px] text-gray-400 mt-1 text-right">Người tạo: {log.staff}</p>
                            </div>
-                        )) : (
+                        ))}
+                        
+                        {/* Empty state */}
+                        {!feedbacksLoading && studentFeedbacks.length === 0 && (!selectedStudent.careHistory || selectedStudent.careHistory.length === 0) && (
                             <p className="text-sm text-gray-400 italic">Chưa có lịch sử chăm sóc</p>
                         )}
-                        
-                        {/* Static Example for 'Lịch sử gọi điện' as requested */}
-                        <div className="relative mb-6">
-                              <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-orange-500 ring-4 ring-white"></div>
-                              <p className="text-xs text-gray-500 font-medium mb-1">24/03 - <span className="text-orange-600">Gọi điện xin feedback</span></p>
-                              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                                  <table className="w-full text-xs text-left">
-                                      <thead className="bg-gray-50 text-gray-500">
-                                          <tr>
-                                              <th className="p-2">Ngày gọi</th>
-                                              <th className="p-2">Nội dung</th>
-                                              <th className="p-2 text-right">Điểm</th>
-                                          </tr>
-                                      </thead>
-                                      <tbody>
-                                          <tr>
-                                              <td className="p-2 border-t border-gray-100">24/03</td>
-                                              <td className="p-2 border-t border-gray-100">Con học rất hài lòng</td>
-                                              <td className="p-2 border-t border-gray-100 text-right font-bold">90/100</td>
-                                          </tr>
-                                      </tbody>
-                                  </table>
-                              </div>
-                        </div>
                      </div>
                  </div>
               </div>
@@ -626,8 +684,11 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
               sessions: data.change,
               type: 'Ghi danh thủ công',
               reason: data.note,
+              note: data.note,
               createdBy: staffData?.name || 'Admin',
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              createdDate: new Date().toLocaleDateString('vi-VN'),
+              finalAmount: 0,
             });
             setShowEnrollmentModal(false);
             setActionStudent(null);
@@ -663,8 +724,11 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
               sessions: -data.sessions,
               type: 'Tặng buổi',
               reason: `Tặng ${data.sessions} buổi cho ${data.targetStudentName}. ${data.note}`,
+              note: `Tặng ${data.sessions} buổi cho ${data.targetStudentName}. ${data.note}`,
               createdBy: staffData?.name || 'Admin',
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              createdDate: new Date().toLocaleDateString('vi-VN'),
+              finalAmount: 0,
             });
             // Log enrollment cho người nhận (cộng)
             await createEnrollment({
@@ -675,8 +739,11 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
               sessions: data.sessions,
               type: 'Nhận tặng buổi',
               reason: `Nhận ${data.sessions} buổi từ ${actionStudent.fullName}. ${data.note}`,
+              note: `Nhận ${data.sessions} buổi từ ${actionStudent.fullName}. ${data.note}`,
               createdBy: staffData?.name || 'Admin',
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              createdDate: new Date().toLocaleDateString('vi-VN'),
+              finalAmount: 0,
             });
             setShowTransferSessionModal(false);
             setActionStudent(null);
@@ -710,8 +777,11 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
               sessions: data.sessions,
               type: 'Chuyển lớp',
               reason: `Chuyển từ ${oldClass} sang ${data.newClassName}. ${data.note}`,
+              note: `Chuyển từ ${oldClass} sang ${data.newClassName}. ${data.note}`,
               createdBy: staffData?.name || 'Admin',
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              createdDate: new Date().toLocaleDateString('vi-VN'),
+              finalAmount: 0,
             });
             setShowTransferClassModal(false);
             setActionStudent(null);
@@ -766,8 +836,11 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
               sessions: 0,
               type: 'Xóa khỏi lớp',
               reason: `Xóa khỏi lớp ${oldClass}. ${data.note}`,
+              note: `Xóa khỏi lớp ${oldClass}. ${data.note}`,
               createdBy: staffData?.name || 'Admin',
-              createdAt: new Date().toISOString()
+              createdAt: new Date().toISOString(),
+              createdDate: new Date().toLocaleDateString('vi-VN'),
+              finalAmount: 0,
             });
             setShowRemoveClassModal(false);
             setActionStudent(null);

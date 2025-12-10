@@ -9,12 +9,14 @@ export enum ClassStatus {
 export enum StudentStatus {
   ACTIVE = 'Đang học',
   DEBT = 'Nợ phí',
+  CONTRACT_DEBT = 'Nợ hợp đồng',
   RESERVED = 'Bảo lưu',
   DROPPED = 'Nghỉ học',
   TRIAL = 'Học thử'
 }
 
 export enum AttendanceStatus {
+  PENDING = '',
   PRESENT = 'Có mặt',
   ABSENT = 'Vắng',
   RESERVED = 'Bảo lưu',
@@ -54,6 +56,17 @@ export interface Student {
   reserveDate?: string; // Ngày bảo lưu
   reserveNote?: string; // Ghi chú bảo lưu  
   reserveSessions?: number; // Số buổi bảo lưu
+  
+  // Nợ xấu
+  badDebt?: boolean; // Tick nợ xấu (học sinh nghỉ học nhưng còn nợ)
+  badDebtSessions?: number; // Số buổi nợ
+  badDebtAmount?: number; // Số tiền nợ xấu (sessions x 150k)
+  badDebtDate?: string; // Ngày ghi nhận nợ xấu
+  badDebtNote?: string; // Ghi chú nợ xấu
+  
+  // Nợ hợp đồng (trả góp)
+  contractDebt?: number; // Số tiền còn nợ hợp đồng
+  nextPaymentDate?: string; // Ngày hẹn thanh toán tiếp theo
 }
 
 export interface CareLog {
@@ -168,12 +181,63 @@ export interface AttendanceRecord {
 export interface StudentAttendance {
   id?: string;
   attendanceId: string;
+  sessionId?: string;
   studentId: string;
   studentName: string;
   studentCode: string;
+  classId?: string;
+  className?: string;
+  date?: string;
+  sessionNumber?: number;
   status: AttendanceStatus;
   note?: string;
+  
+  // Thông tin điểm số buổi học
+  homeworkCompletion?: number;  // % BTVN (0-100)
+  testName?: string;            // Tên bài KT (nếu có)
+  score?: number;               // Điểm (0-10)
+  bonusPoints?: number;         // Điểm thưởng
+  
+  // Thông tin đúng giờ / trễ giờ
+  punctuality?: 'onTime' | 'late' | '';  // Đúng giờ / Trễ giờ
+  isLate?: boolean;             // Đi trễ (legacy)
+  
   createdAt?: string;
+  updatedAt?: string;
+}
+
+// Nhận xét cuối tháng của giáo viên
+export interface MonthlyComment {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classId: string;
+  className: string;
+  month: number;              // 1-12
+  year: number;               // 2025
+  
+  // Nhận xét từ giáo viên
+  teacherComment?: string;
+  teacherId?: string;
+  teacherName?: string;
+  
+  // Nhận xét AI (có thể generate)
+  aiComment?: string;
+  
+  // Metadata
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+}
+
+// Thống kê báo cáo tháng
+export interface MonthlyReportStats {
+  totalSessions: number;        // Tổng số buổi
+  attendedSessions: number;     // Số buổi có mặt
+  absentSessions: number;       // Số buổi vắng
+  attendanceRate: number;       // Tỉ lệ tham gia (%)
+  averageScore: number | null;  // Điểm trung bình
+  totalBonusPoints: number;     // Tổng điểm thưởng
 }
 
 export interface Product {
@@ -214,7 +278,7 @@ export interface EnrollmentRecord {
   classId?: string;
   className?: string;
   sessions: number;
-  type: 'Hợp đồng mới' | 'Hợp đồng tái phí' | 'Ghi danh thủ công' | 'Tặng buổi' | 'Nhận tặng buổi' | 'Chuyển lớp' | 'Xóa khỏi lớp';
+  type: 'Hợp đồng mới' | 'Hợp đồng tái phí' | 'Hợp đồng liên kết' | 'Thanh toán thêm' | 'Ghi danh thủ công' | 'Tặng buổi' | 'Nhận tặng buổi' | 'Chuyển lớp' | 'Xóa khỏi lớp';
   contractCode?: string;
   contractId?: string;
   originalAmount?: number;
@@ -365,9 +429,10 @@ export enum ContractCategory {
 }
 
 export enum ContractStatus {
-  DRAFT = 'Nháp',
+  DRAFT = 'Lưu nháp',
+  PENDING = 'Chờ thanh toán',
   PAID = 'Đã thanh toán',
-  DEBT = 'Nợ phí',
+  PARTIAL = 'Nợ hợp đồng',
   CANCELLED = 'Đã hủy'
 }
 
@@ -463,4 +528,19 @@ export interface ContractPayment {
   notes?: string;
   createdAt: string;
   createdBy: string;
+}
+
+export interface BirthdayGift {
+  id: string;
+  studentId: string;
+  studentName: string;
+  year: number;
+  month: number;
+  giftPrepared: boolean;
+  giftGiven: boolean;
+  preparedAt?: string;
+  givenAt?: string;
+  preparedBy?: string;
+  givenBy?: string;
+  note?: string;
 }

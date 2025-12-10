@@ -31,11 +31,16 @@ export interface SalaryRule {
   position: string;
   classId?: string;
   className?: string;
+  classCode?: string;
   salaryMethod: SalaryMethod;
   baseRate: number;
   workMethod: WorkMethod;
   avgStudents?: number;
   ratePerSession: number;
+  allowance?: number;
+  kpiBonus?: number;
+  note?: string;
+  salaryCycle?: string;
   effectiveDate: string;
   createdAt?: string;
   updatedAt?: string;

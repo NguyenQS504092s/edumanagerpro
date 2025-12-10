@@ -54,6 +54,14 @@ export interface StudentData {
   className?: string;
   enrollmentDate?: string;
   totalSessions?: number;
+  registeredSessions?: number;
+  attendedSessions?: number;
+  // Nợ xấu
+  badDebt?: boolean;
+  badDebtSessions?: number;
+  badDebtAmount?: number;
+  badDebtDate?: string;
+  badDebtNote?: string;
 }
 
 export interface SessionData {

@@ -50,6 +50,7 @@ const subItemToModule: Record<string, ModuleKey> = {
   'revenue': 'revenue',
   'report-training': 'reports_training',
   'report-finance': 'reports_finance',
+  'report-monthly': 'reports_training',
   'settings-staff': 'settings',
   'settings-products': 'settings',
   'settings-inventory': 'settings',
@@ -142,6 +143,7 @@ const menuItems: MenuItem[] = [
     subItems: [
         { id: 'report-training', label: 'Báo cáo đào tạo', path: '/reports/training', icon: ChevronRight },
         { id: 'report-finance', label: 'Báo cáo tài chính', path: '/reports/finance', icon: ChevronRight },
+        { id: 'report-monthly', label: 'Báo cáo học tập', path: '/reports/monthly', icon: ChevronRight },
     ]
   },
   {

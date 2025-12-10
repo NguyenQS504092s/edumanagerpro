@@ -21,13 +21,17 @@ interface UseAttendanceReturn {
   checkExisting: (classId: string, date: string) => Promise<AttendanceRecord | null>;
   loadStudentAttendance: (attendanceId: string) => Promise<void>;
   saveAttendance: (
-    attendanceData: Omit<AttendanceRecord, 'id'>,
+    attendanceData: Omit<AttendanceRecord, 'id'> & { sessionId?: string },
     students: Array<{
       studentId: string;
       studentName: string;
       studentCode: string;
       status: AttendanceStatus;
       note?: string;
+      homeworkCompletion?: number;
+      testName?: string;
+      score?: number;
+      bonusPoints?: number;
     }>
   ) => Promise<string>;
   deleteAttendance: (id: string) => Promise<void>;
@@ -85,13 +89,17 @@ export const useAttendance = (props?: UseAttendanceProps): UseAttendanceReturn =
   };
 
   const saveAttendance = async (
-    attendanceData: Omit<AttendanceRecord, 'id'>,
+    attendanceData: Omit<AttendanceRecord, 'id'> & { sessionId?: string },
     students: Array<{
       studentId: string;
       studentName: string;
       studentCode: string;
       status: AttendanceStatus;
       note?: string;
+      homeworkCompletion?: number;
+      testName?: string;
+      score?: number;
+      bonusPoints?: number;
     }>
   ): Promise<string> => {
     const id = await attendanceService.saveFullAttendance(attendanceData, students);

@@ -136,7 +136,11 @@ export const checkExistingAttendance = async (
 export const saveStudentAttendance = async (
   attendanceId: string,
   students: Omit<StudentAttendance, 'id' | 'attendanceId'>[],
-  classId?: string
+  classId?: string,
+  className?: string,
+  date?: string,
+  sessionNumber?: number,
+  sessionId?: string
 ): Promise<void> => {
   try {
     const batch = writeBatch(db);
@@ -149,13 +153,17 @@ export const saveStudentAttendance = async (
     const existingDocs = await getDocs(existingQuery);
     existingDocs.docs.forEach(doc => batch.delete(doc.ref));
     
-    // Add new records
+    // Add new records with extended fields
     students.forEach(student => {
       const docRef = doc(collection(db, STUDENT_ATTENDANCE_COLLECTION));
       batch.set(docRef, {
         ...student,
         attendanceId,
+        sessionId: sessionId || null,
         classId: classId || null,
+        className: className || null,
+        date: date || null,
+        sessionNumber: sessionNumber || null,
         createdAt: new Date().toISOString(),
       });
     });
@@ -333,21 +341,30 @@ export const checkAndUpdateStudentDebtStatus = async (
  * Full attendance save with auto tutoring creation
  */
 export const saveFullAttendance = async (
-  attendanceData: Omit<AttendanceRecord, 'id'>,
+  attendanceData: Omit<AttendanceRecord, 'id'> & { sessionId?: string },
   students: Array<{
     studentId: string;
     studentName: string;
     studentCode: string;
     status: AttendanceStatus;
     note?: string;
+    homeworkCompletion?: number;
+    testName?: string;
+    score?: number;
+    bonusPoints?: number;
+    punctuality?: 'onTime' | 'late' | '';
+    isLate?: boolean;
   }>
 ): Promise<string> => {
   try {
-    // Calculate summary
-    const present = students.filter(s => s.status === AttendanceStatus.PRESENT).length;
-    const absent = students.filter(s => s.status === AttendanceStatus.ABSENT).length;
-    const reserved = students.filter(s => s.status === AttendanceStatus.RESERVED).length;
-    const tutored = students.filter(s => s.status === AttendanceStatus.TUTORED).length;
+    // Filter out students with PENDING status (not yet marked)
+    const markedStudents = students.filter(s => s.status && s.status !== AttendanceStatus.PENDING);
+    
+    // Calculate summary from marked students only
+    const present = markedStudents.filter(s => s.status === AttendanceStatus.PRESENT).length;
+    const absent = markedStudents.filter(s => s.status === AttendanceStatus.ABSENT).length;
+    const reserved = markedStudents.filter(s => s.status === AttendanceStatus.RESERVED).length;
+    const tutored = markedStudents.filter(s => s.status === AttendanceStatus.TUTORED).length;
     
     // Check existing
     const existing = await checkExistingAttendance(attendanceData.classId, attendanceData.date);
@@ -377,11 +394,19 @@ export const saveFullAttendance = async (
       });
     }
     
-    // Save student attendance with classId for debt tracking
-    await saveStudentAttendance(attendanceId, students, attendanceData.classId);
+    // Save student attendance with extended fields for monthly report (only marked students)
+    await saveStudentAttendance(
+      attendanceId, 
+      markedStudents, 
+      attendanceData.classId,
+      attendanceData.className,
+      attendanceData.date,
+      attendanceData.sessionNumber,
+      attendanceData.sessionId
+    );
     
     // Auto create tutoring for absent students
-    const absentStudents = students.filter(s => s.status === AttendanceStatus.ABSENT);
+    const absentStudents = markedStudents.filter(s => s.status === AttendanceStatus.ABSENT);
     for (const student of absentStudents) {
       await createTutoringFromAbsent({
         studentId: student.studentId,
@@ -394,7 +419,7 @@ export const saveFullAttendance = async (
     }
     
     // Check and update debt status for present students
-    const presentStudents = students.filter(s => s.status === AttendanceStatus.PRESENT);
+    const presentStudents = markedStudents.filter(s => s.status === AttendanceStatus.PRESENT);
     for (const student of presentStudents) {
       await checkAndUpdateStudentDebtStatus(student.studentId, attendanceData.classId);
     }

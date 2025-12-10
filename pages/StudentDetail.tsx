@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, User, Phone, Mail, MapPin, Calendar, BookOpen, DollarSign, Clock, MessageSquare, FileText, X, GraduationCap, CheckCircle2, CalendarCheck, Circle } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { ChevronLeft, User, Phone, Mail, MapPin, Calendar, BookOpen, DollarSign, Clock, MessageSquare, FileText, X, GraduationCap, CheckCircle2, CalendarCheck, Circle, TrendingUp, AlertTriangle, History, CreditCard, AlertCircle, BadgeDollarSign } from 'lucide-react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 import { useClasses } from '../src/hooks/useClasses';
@@ -16,8 +16,23 @@ import { Plus, Minus } from 'lucide-react';
 export const StudentDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
+  
   const [activeTab, setActiveTab] = useState<'info' | 'history' | 'finance' | 'feedback'>('info');
+  
+  // Update tab from URL query param when component mounts or URL changes
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'finance') {
+      setActiveTab('finance');
+    } else if (tabParam === 'enrollment' || tabParam === 'history') {
+      setActiveTab('history');
+    } else if (tabParam === 'feedback') {
+      setActiveTab('feedback');
+    }
+  }, [location.search]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [showManualEnrollModal, setShowManualEnrollModal] = useState(false);
@@ -44,8 +59,121 @@ export const StudentDetail: React.FC = () => {
     return tutoringList.filter(t => t.studentId === id);
   }, [tutoringList, id]);
 
+  // Attendance stats for student
+  const [attendanceStats, setAttendanceStats] = useState({
+    totalSessions: 0,
+    presentSessions: 0,
+    absentSessions: 0,
+    lateSessions: 0,
+    onTimeSessions: 0,
+    attendanceRate: 0,
+  });
+
+  // Fetch attendance stats
+  useEffect(() => {
+    const fetchAttendanceStats = async () => {
+      if (!id) return;
+      try {
+        const q = query(
+          collection(db, 'studentAttendance'),
+          where('studentId', '==', id)
+        );
+        const snapshot = await getDocs(q);
+        const records = snapshot.docs.map(d => d.data()).filter(r => r.status && r.status !== '');
+        
+        const total = records.length;
+        const present = records.filter(r => r.status === 'Có mặt').length;
+        const absent = records.filter(r => r.status === 'Vắng').length;
+        
+        // Calculate late sessions from punctuality field
+        let late = 0;
+        let onTime = 0;
+        records.forEach(r => {
+          if (r.status === 'Có mặt') {
+            if (r.punctuality === 'late' || r.isLate) {
+              late++;
+            } else if (r.punctuality === 'onTime') {
+              onTime++;
+            }
+            // If punctuality not set, don't count
+          }
+        });
+        
+        setAttendanceStats({
+          totalSessions: total,
+          presentSessions: present,
+          absentSessions: absent,
+          lateSessions: late,
+          onTimeSessions: present - late,
+          attendanceRate: total > 0 ? Math.round((present / total) * 100) : 0,
+        });
+      } catch (error) {
+        console.error('Error fetching attendance stats:', error);
+      }
+    };
+    fetchAttendanceStats();
+  }, [id]);
+
+  // Enrollment history for student
+  const [enrollments, setEnrollments] = useState<any[]>([]);
+  const [contracts, setContracts] = useState<any[]>([]);
+  const [financeLoading, setFinanceLoading] = useState(false);
+
+  // Fetch enrollments and contracts
+  useEffect(() => {
+    const fetchFinanceData = async () => {
+      if (!id) return;
+      setFinanceLoading(true);
+      try {
+        // Fetch enrollments
+        const enrollQ = query(
+          collection(db, 'enrollments'),
+          where('studentId', '==', id)
+        );
+        const enrollSnap = await getDocs(enrollQ);
+        const enrollList = enrollSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Sort by createdAt desc
+        enrollList.sort((a: any, b: any) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        });
+        setEnrollments(enrollList);
+
+        // Fetch contracts
+        const contractQ = query(
+          collection(db, 'contracts'),
+          where('studentId', '==', id)
+        );
+        const contractSnap = await getDocs(contractQ);
+        const contractList = contractSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        contractList.sort((a: any, b: any) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        });
+        setContracts(contractList);
+      } catch (error) {
+        console.error('Error fetching finance data:', error);
+      } finally {
+        setFinanceLoading(false);
+      }
+    };
+    fetchFinanceData();
+  }, [id]);
+
   // Find student by ID from Firebase data
   const student = students.find(s => s.id === id);
+  
+  // Calculate remaining sessions and warning
+  const remainingSessions = useMemo(() => {
+    if (!student) return 0;
+    const registered = student.registeredSessions || 0;
+    const attended = student.attendedSessions || 0;
+    return Math.max(0, registered - attended);
+  }, [student]);
+  
+  const showSessionWarning = remainingSessions > 0 && remainingSessions <= 6;
   
   // Edit form state
   const [editForm, setEditForm] = useState({
@@ -209,7 +337,18 @@ export const StudentDetail: React.FC = () => {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
                  <div>
                     <h1 className="text-2xl font-bold text-gray-900">{student.fullName}</h1>
-                    <p className="text-gray-500 font-medium">{student.code} • <span className={`text-${student.status === 'Đang học' ? 'green' : 'gray'}-600`}>{student.status}</span></p>
+                    <p className="text-gray-500 font-medium">
+                      {student.code} • <span className={`text-${student.status === 'Đang học' ? 'green' : 'gray'}-600`}>{student.status}</span>
+                      {student.badDebt && <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full font-bold">Nợ xấu</span>}
+                    </p>
+                    {showSessionWarning && (
+                      <div className="mt-2 flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                        <AlertCircle size={16} className="text-amber-600" />
+                        <span className="text-sm text-amber-700 font-medium">
+                          Cảnh báo: Còn {remainingSessions} buổi học - Cần gia hạn hợp đồng!
+                        </span>
+                      </div>
+                    )}
                  </div>
                  <div className="flex gap-2">
                     <button 
@@ -355,6 +494,45 @@ export const StudentDetail: React.FC = () => {
 
          {activeTab === 'history' && (
             <div>
+               {/* Attendance Stats Cards */}
+               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 rounded-xl border border-emerald-200">
+                     <div className="flex items-center gap-2 mb-2">
+                        <TrendingUp size={18} className="text-emerald-600" />
+                        <span className="text-sm font-medium text-emerald-700">Chuyên cần</span>
+                     </div>
+                     <p className="text-2xl font-bold text-emerald-700">{attendanceStats.attendanceRate}%</p>
+                     <p className="text-xs text-emerald-600 mt-1">{attendanceStats.presentSessions}/{attendanceStats.totalSessions} buổi</p>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl border border-blue-200">
+                     <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle2 size={18} className="text-blue-600" />
+                        <span className="text-sm font-medium text-blue-700">Đúng giờ</span>
+                     </div>
+                     <p className="text-2xl font-bold text-blue-700">{attendanceStats.onTimeSessions}</p>
+                     <p className="text-xs text-blue-600 mt-1">buổi đến đúng giờ</p>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-amber-50 to-amber-100 p-4 rounded-xl border border-amber-200">
+                     <div className="flex items-center gap-2 mb-2">
+                        <Clock size={18} className="text-amber-600" />
+                        <span className="text-sm font-medium text-amber-700">Đi trễ</span>
+                     </div>
+                     <p className="text-2xl font-bold text-amber-700">{attendanceStats.lateSessions}</p>
+                     <p className="text-xs text-amber-600 mt-1">buổi đến muộn</p>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-red-50 to-red-100 p-4 rounded-xl border border-red-200">
+                     <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle size={18} className="text-red-600" />
+                        <span className="text-sm font-medium text-red-700">Vắng mặt</span>
+                     </div>
+                     <p className="text-2xl font-bold text-red-700">{attendanceStats.absentSessions}</p>
+                     <p className="text-xs text-red-600 mt-1">buổi nghỉ học</p>
+                  </div>
+               </div>
+
                <h3 className="font-bold text-gray-800 mb-4">Các lớp đã tham gia</h3>
                <div className="overflow-hidden border border-gray-200 rounded-lg">
                   <table className="w-full text-left text-sm">
@@ -509,11 +687,177 @@ export const StudentDetail: React.FC = () => {
          )}
 
          {activeTab === 'finance' && (
-            <div className="text-center py-10">
-               <div className="bg-gray-50 inline-block p-4 rounded-full mb-3">
-                  <DollarSign size={32} className="text-gray-400" />
-               </div>
-               <p className="text-gray-500">Chức năng đang được phát triển</p>
+            <div className="space-y-6">
+               {financeLoading ? (
+                  <div className="text-center py-10">
+                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-3"></div>
+                     <p className="text-gray-500">Đang tải dữ liệu...</p>
+                  </div>
+               ) : (
+                  <>
+                     {/* Summary Cards */}
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl border border-blue-200">
+                           <div className="flex items-center gap-2 mb-2">
+                              <BookOpen size={18} className="text-blue-600" />
+                              <span className="text-sm font-medium text-blue-700">Buổi đăng ký</span>
+                           </div>
+                           <p className="text-2xl font-bold text-blue-700">{student?.registeredSessions || 0}</p>
+                        </div>
+                        <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 rounded-xl border border-emerald-200">
+                           <div className="flex items-center gap-2 mb-2">
+                              <CheckCircle2 size={18} className="text-emerald-600" />
+                              <span className="text-sm font-medium text-emerald-700">Đã học</span>
+                           </div>
+                           <p className="text-2xl font-bold text-emerald-700">{student?.attendedSessions || 0}</p>
+                        </div>
+                        <div className={`bg-gradient-to-br p-4 rounded-xl border ${remainingSessions <= 6 ? 'from-amber-50 to-amber-100 border-amber-200' : 'from-gray-50 to-gray-100 border-gray-200'}`}>
+                           <div className="flex items-center gap-2 mb-2">
+                              <Clock size={18} className={remainingSessions <= 6 ? 'text-amber-600' : 'text-gray-600'} />
+                              <span className={`text-sm font-medium ${remainingSessions <= 6 ? 'text-amber-700' : 'text-gray-700'}`}>Còn lại</span>
+                           </div>
+                           <p className={`text-2xl font-bold ${remainingSessions <= 6 ? 'text-amber-700' : 'text-gray-700'}`}>{remainingSessions}</p>
+                        </div>
+                        <div className={`bg-gradient-to-br p-4 rounded-xl border ${student?.badDebt ? 'from-red-50 to-red-100 border-red-200' : 'from-gray-50 to-gray-100 border-gray-200'}`}>
+                           <div className="flex items-center gap-2 mb-2">
+                              <BadgeDollarSign size={18} className={student?.badDebt ? 'text-red-600' : 'text-gray-600'} />
+                              <span className={`text-sm font-medium ${student?.badDebt ? 'text-red-700' : 'text-gray-700'}`}>Nợ xấu</span>
+                           </div>
+                           <p className={`text-2xl font-bold ${student?.badDebt ? 'text-red-700' : 'text-gray-700'}`}>
+                              {student?.badDebtAmount ? `${(student.badDebtAmount / 1000000).toFixed(1)}tr` : '0'}
+                           </p>
+                        </div>
+                     </div>
+
+                     {/* Enrollment History */}
+                     <div>
+                        <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                           <History size={18} className="text-indigo-600" /> Lịch sử ghi danh
+                        </h3>
+                        <div className="overflow-hidden border border-gray-200 rounded-lg">
+                           <table className="w-full text-left text-sm">
+                              <thead className="bg-gray-50 font-semibold text-gray-600">
+                                 <tr>
+                                    <th className="px-4 py-3">Ngày</th>
+                                    <th className="px-4 py-3">Loại</th>
+                                    <th className="px-4 py-3">Lớp</th>
+                                    <th className="px-4 py-3 text-center">Số buổi</th>
+                                    <th className="px-4 py-3 text-right">Số tiền</th>
+                                    <th className="px-4 py-3">Ghi chú</th>
+                                 </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                 {enrollments.length === 0 ? (
+                                    <tr>
+                                       <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                                          Chưa có lịch sử ghi danh
+                                       </td>
+                                    </tr>
+                                 ) : enrollments.map((enroll: any) => (
+                                    <tr key={enroll.id} className="hover:bg-gray-50">
+                                       <td className="px-4 py-3">{enroll.createdDate || new Date(enroll.createdAt).toLocaleDateString('vi-VN')}</td>
+                                       <td className="px-4 py-3">
+                                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                             enroll.type === 'Hợp đồng mới' ? 'bg-green-100 text-green-700' :
+                                             enroll.type === 'Hợp đồng tái phí' ? 'bg-blue-100 text-blue-700' :
+                                             enroll.type === 'Ghi danh thủ công' ? 'bg-purple-100 text-purple-700' :
+                                             enroll.type === 'Tặng buổi' ? 'bg-pink-100 text-pink-700' :
+                                             enroll.type === 'Nhận tặng buổi' ? 'bg-emerald-100 text-emerald-700' :
+                                             enroll.type === 'Chuyển lớp' ? 'bg-amber-100 text-amber-700' :
+                                             'bg-gray-100 text-gray-700'
+                                          }`}>
+                                             {enroll.type}
+                                          </span>
+                                       </td>
+                                       <td className="px-4 py-3">{enroll.className || '--'}</td>
+                                       <td className="px-4 py-3 text-center font-medium">
+                                          <span className={enroll.sessions > 0 ? 'text-green-600' : enroll.sessions < 0 ? 'text-red-600' : ''}>
+                                             {enroll.sessions > 0 ? '+' : ''}{enroll.sessions}
+                                          </span>
+                                       </td>
+                                       <td className="px-4 py-3 text-right">{enroll.finalAmount ? enroll.finalAmount.toLocaleString('vi-VN') + 'đ' : '--'}</td>
+                                       <td className="px-4 py-3 text-gray-500 truncate max-w-[200px]" title={enroll.note || enroll.reason}>{enroll.note || enroll.reason || '--'}</td>
+                                    </tr>
+                                 ))}
+                              </tbody>
+                           </table>
+                        </div>
+                     </div>
+
+                     {/* Contract History */}
+                     <div>
+                        <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                           <CreditCard size={18} className="text-indigo-600" /> Lịch sử hợp đồng
+                        </h3>
+                        <div className="overflow-hidden border border-gray-200 rounded-lg">
+                           <table className="w-full text-left text-sm">
+                              <thead className="bg-gray-50 font-semibold text-gray-600">
+                                 <tr>
+                                    <th className="px-4 py-3">Mã HĐ</th>
+                                    <th className="px-4 py-3">Loại</th>
+                                    <th className="px-4 py-3">Ngày tạo</th>
+                                    <th className="px-4 py-3 text-right">Tổng tiền</th>
+                                    <th className="px-4 py-3 text-center">Trạng thái</th>
+                                 </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                 {contracts.length === 0 ? (
+                                    <tr>
+                                       <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                                          Chưa có hợp đồng
+                                       </td>
+                                    </tr>
+                                 ) : contracts.map((contract: any) => (
+                                    <tr key={contract.id} className="hover:bg-gray-50">
+                                       <td className="px-4 py-3 font-medium text-indigo-600">{contract.code || contract.id.slice(0, 8)}</td>
+                                       <td className="px-4 py-3">{contract.category || contract.type}</td>
+                                       <td className="px-4 py-3">{contract.createdAt ? new Date(contract.createdAt).toLocaleDateString('vi-VN') : '--'}</td>
+                                       <td className="px-4 py-3 text-right font-medium">{contract.totalAmount?.toLocaleString('vi-VN')}đ</td>
+                                       <td className="px-4 py-3 text-center">
+                                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                             contract.status === 'Đã thanh toán' ? 'bg-green-100 text-green-700' :
+                                             contract.status === 'Nợ phí' ? 'bg-red-100 text-red-700' :
+                                             contract.status === 'Nháp' ? 'bg-gray-100 text-gray-700' :
+                                             'bg-amber-100 text-amber-700'
+                                          }`}>
+                                             {contract.status}
+                                          </span>
+                                       </td>
+                                    </tr>
+                                 ))}
+                              </tbody>
+                           </table>
+                        </div>
+                     </div>
+
+                     {/* Bad Debt Section */}
+                     {student?.badDebt && (
+                        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                           <h3 className="font-bold text-red-800 mb-3 flex items-center gap-2">
+                              <AlertTriangle size={18} /> Thông tin nợ xấu
+                           </h3>
+                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                              <div>
+                                 <p className="text-red-600">Số buổi nợ</p>
+                                 <p className="font-bold text-red-800">{student.badDebtSessions || 0} buổi</p>
+                              </div>
+                              <div>
+                                 <p className="text-red-600">Số tiền nợ</p>
+                                 <p className="font-bold text-red-800">{(student.badDebtAmount || 0).toLocaleString('vi-VN')}đ</p>
+                              </div>
+                              <div>
+                                 <p className="text-red-600">Ngày ghi nhận</p>
+                                 <p className="font-bold text-red-800">{student.badDebtDate || '--'}</p>
+                              </div>
+                              <div>
+                                 <p className="text-red-600">Ghi chú</p>
+                                 <p className="font-medium text-red-800">{student.badDebtNote || '--'}</p>
+                              </div>
+                           </div>
+                        </div>
+                     )}
+                  </>
+               )}
             </div>
          )}
 
