@@ -714,9 +714,14 @@ export const StudentDetail: React.FC = () => {
                         <div className={`bg-gradient-to-br p-4 rounded-xl border ${remainingSessions <= 6 ? 'from-amber-50 to-amber-100 border-amber-200' : 'from-gray-50 to-gray-100 border-gray-200'}`}>
                            <div className="flex items-center gap-2 mb-2">
                               <Clock size={18} className={remainingSessions <= 6 ? 'text-amber-600' : 'text-gray-600'} />
-                              <span className={`text-sm font-medium ${remainingSessions <= 6 ? 'text-amber-700' : 'text-gray-700'}`}>Còn lại</span>
+                              <span className={`text-sm font-medium ${remainingSessions <= 6 ? 'text-amber-700' : 'text-gray-700'}`}>Còn lại (TT nợ HV)</span>
                            </div>
                            <p className={`text-2xl font-bold ${remainingSessions <= 6 ? 'text-amber-700' : 'text-gray-700'}`}>{remainingSessions}</p>
+                           {remainingSessions > 0 && (
+                              <p className={`text-xs mt-1 ${remainingSessions <= 6 ? 'text-amber-600' : 'text-gray-500'}`}>
+                                 ~{((remainingSessions * 150000) / 1000000).toFixed(1)} triệu
+                              </p>
+                           )}
                         </div>
                         <div className={`bg-gradient-to-br p-4 rounded-xl border ${student?.badDebt ? 'from-red-50 to-red-100 border-red-200' : 'from-gray-50 to-gray-100 border-gray-200'}`}>
                            <div className="flex items-center gap-2 mb-2">

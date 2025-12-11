@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, Search, Edit, Trash2, User, Eye, EyeOff, AlertTriangle, X, Phone } from 'lucide-react';
-import { Staff } from '../types';
+import { Staff, StaffRole } from '../types';
 import { useStaff } from '../src/hooks/useStaff';
 
 // Departments and positions based on Excel
@@ -10,6 +10,9 @@ const POSITIONS = {
   'Đào Tạo': ['Giáo Viên Việt', 'Giáo Viên Nước Ngoài', 'Trợ Giảng'],
   'Văn phòng': ['Nhân viên', 'Kế toán', 'Lễ tân'],
 };
+
+// Available roles for multi-select
+const AVAILABLE_ROLES: StaffRole[] = ['Giáo viên', 'Trợ giảng', 'Nhân viên', 'Sale', 'Văn phòng', 'Quản lý', 'Quản trị viên'];
 
 export const StaffManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -27,6 +30,7 @@ export const StaffManager: React.FC = () => {
     phone: '',
     department: 'Đào Tạo',
     position: 'Giáo Viên Việt',
+    roles: [] as StaffRole[],
     startDate: '',
     contractLink: '',
     username: '',
@@ -89,6 +93,7 @@ export const StaffManager: React.FC = () => {
       phone: '',
       department: 'Đào Tạo',
       position: 'Giáo Viên Việt',
+      roles: [],
       startDate: new Date().toISOString().split('T')[0],
       contractLink: '',
       username: '',
@@ -107,6 +112,7 @@ export const StaffManager: React.FC = () => {
       phone: staffMember.phone || '',
       department: staffMember.department || 'Đào Tạo',
       position: staffMember.position || 'Giáo Viên Việt',
+      roles: staffMember.roles || (staffMember.role ? [staffMember.role] : []),
       startDate: staffMember.startDate || '',
       contractLink: '',
       username: '',
@@ -124,6 +130,12 @@ export const StaffManager: React.FC = () => {
     }
 
     try {
+      // Determine primary role from position or roles array
+      const primaryRole = formData.roles.length > 0 ? formData.roles[0] :
+              formData.position.includes('Giáo Viên') ? 'Giáo viên' : 
+              formData.position === 'Trợ Giảng' ? 'Trợ giảng' : 
+              formData.position === 'Quản lý (Admin)' ? 'Quản lý' : 'Nhân viên';
+      
       const staffData = {
         name: formData.name,
         code: editingStaff?.code || `NV${Date.now().toString().slice(-6)}`,
@@ -131,9 +143,8 @@ export const StaffManager: React.FC = () => {
         phone: formData.phone,
         department: formData.department,
         position: formData.position,
-        role: formData.position.includes('Giáo Viên') ? 'Giáo viên' : 
-              formData.position === 'Trợ Giảng' ? 'Trợ giảng' : 
-              formData.position === 'Quản lý (Admin)' ? 'Quản lý' : 'Nhân viên',
+        role: primaryRole,
+        roles: formData.roles.length > 0 ? formData.roles : [primaryRole],
         startDate: formData.startDate,
         status: formData.status,
       };
@@ -242,6 +253,7 @@ export const StaffManager: React.FC = () => {
               <th className="px-6 py-4">SĐT</th>
               <th className="px-6 py-4 text-center">Phòng ban</th>
               <th className="px-6 py-4">Vị trí</th>
+              <th className="px-6 py-4">Vai trò</th>
               <th className="px-6 py-4 text-right">Hành động</th>
             </tr>
           </thead>
@@ -266,6 +278,15 @@ export const StaffManager: React.FC = () => {
                   </span>
                 </td>
                 <td className="px-6 py-4">{normalizePosition(s.position || '')}</td>
+                <td className="px-6 py-4">
+                  <div className="flex flex-wrap gap-1">
+                    {(s.roles?.length ? s.roles : [s.role]).map((role, i) => (
+                      <span key={i} className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded text-xs">
+                        {role}
+                      </span>
+                    ))}
+                  </div>
+                </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
                     <button 
@@ -287,7 +308,7 @@ export const StaffManager: React.FC = () => {
               </tr>
             )) : (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
+                <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
                   Không có nhân viên nào
                 </td>
               </tr>
@@ -390,6 +411,35 @@ export const StaffManager: React.FC = () => {
                     <option key={pos} value={pos}>{pos}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Multiple Roles */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Vai trò (có thể chọn nhiều)
+                </label>
+                <div className="border border-gray-300 rounded-lg p-2 grid grid-cols-2 gap-2">
+                  {AVAILABLE_ROLES.map(role => (
+                    <label key={role} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                      <input
+                        type="checkbox"
+                        checked={formData.roles.includes(role)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData({ ...formData, roles: [...formData.roles, role] });
+                          } else {
+                            setFormData({ ...formData, roles: formData.roles.filter(r => r !== role) });
+                          }
+                        }}
+                        className="rounded border-gray-300 text-indigo-600"
+                      />
+                      <span className="text-sm">{role}</span>
+                    </label>
+                  ))}
+                </div>
+                {formData.roles.length > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">Đã chọn: {formData.roles.join(', ')}</p>
+                )}
               </div>
 
               {/* Start Date & Contract Link */}

@@ -6,13 +6,13 @@
  * 3. Nợ hợp đồng (thanh toán trả góp)
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Clock, CreditCard, Phone, Calendar, ChevronDown, ChevronUp, User, BookOpen } from 'lucide-react';
+import { AlertTriangle, Clock, CreditCard, Phone, Calendar, ChevronDown, ChevronUp, User, BookOpen, RefreshCw } from 'lucide-react';
 import { useStudents } from '../src/hooks/useStudents';
 import { useClasses } from '../src/hooks/useClasses';
 import { formatCurrency } from '../src/utils/currencyUtils';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 
 const SESSIONS_WARNING_THRESHOLD = 6; // Cảnh báo khi còn <= 6 buổi
@@ -26,10 +26,78 @@ export const DebtManagement: React.FC = () => {
     almostOut: true,
     debt: true,
     contractDebt: true,
+    centerDebt: true, // Công nợ trung tâm nợ học viên
   });
   
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [paymentDateValue, setPaymentDateValue] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  // Sync contract debt from contracts collection to students
+  const syncContractDebt = async () => {
+    setSyncing(true);
+    try {
+      // Get all contracts with "Nợ hợp đồng" status
+      const contractsQuery = query(
+        collection(db, 'contracts'),
+        where('status', '==', 'Nợ hợp đồng')
+      );
+      const contractsSnap = await getDocs(contractsQuery);
+      
+      // Group contracts by studentId and sum debt
+      const studentDebts: Record<string, { 
+        totalDebt: number; 
+        nextPaymentDate: string | null;
+        contractCount: number;
+      }> = {};
+      
+      for (const contractDoc of contractsSnap.docs) {
+        const contract = contractDoc.data();
+        if (!contract.studentId) continue;
+        
+        const studentId = contract.studentId;
+        if (!studentDebts[studentId]) {
+          studentDebts[studentId] = { totalDebt: 0, nextPaymentDate: null, contractCount: 0 };
+        }
+        
+        // Sum debt from all contracts
+        studentDebts[studentId].totalDebt += (contract.remainingAmount || 0);
+        studentDebts[studentId].contractCount++;
+        
+        // Get earliest nextPaymentDate
+        if (contract.nextPaymentDate) {
+          if (!studentDebts[studentId].nextPaymentDate || 
+              contract.nextPaymentDate < studentDebts[studentId].nextPaymentDate) {
+            studentDebts[studentId].nextPaymentDate = contract.nextPaymentDate;
+          }
+        }
+      }
+      
+      // Update students
+      let updated = 0;
+      for (const [studentId, debt] of Object.entries(studentDebts)) {
+        try {
+          await updateDoc(doc(db, 'students', studentId), {
+            status: 'Nợ hợp đồng',
+            contractDebt: debt.totalDebt,
+            nextPaymentDate: debt.nextPaymentDate,
+          });
+          updated++;
+          console.log(`Updated ${studentId}: ${debt.contractCount} contracts, total debt: ${debt.totalDebt}`);
+        } catch (err) {
+          console.error(`Error updating student ${studentId}:`, err);
+        }
+      }
+      
+      alert(`Đã đồng bộ ${updated} học viên (${contractsSnap.size} hợp đồng). Vui lòng refresh trang.`);
+      window.location.reload();
+    } catch (err) {
+      console.error('Error syncing:', err);
+      alert('Có lỗi khi đồng bộ. Vui lòng thử lại.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // 1. Học viên chuẩn bị hết phí (còn <= 6 buổi, đang học)
   const almostOutStudents = useMemo(() => {
@@ -60,6 +128,49 @@ export const DebtManagement: React.FC = () => {
     return students.filter(s => 
       s.status === 'Nợ hợp đồng' && (s.contractDebt || 0) > 0
     ).sort((a, b) => (b.contractDebt || 0) - (a.contractDebt || 0));
+  }, [students]);
+
+  // 4. Công nợ trung tâm nợ học viên (buổi học còn lại đã đóng tiền)
+  // = Số buổi đăng ký - Số buổi đã học (khi > 0)
+  const PRICE_PER_SESSION = 150000; // Giá trung bình 1 buổi
+
+  const centerDebtByClass = useMemo(() => {
+    // Group students by class
+    const classMap: Record<string, { 
+      className: string; 
+      students: { id: string; name: string; remaining: number }[];
+      totalSessions: number;
+      totalAmount: number;
+    }> = {};
+
+    students.forEach(s => {
+      if (!s.classId || s.status === 'Nghỉ học' || s.status === 'Bảo lưu') return;
+      
+      const remaining = (s.registeredSessions || 0) - (s.attendedSessions || 0);
+      if (remaining <= 0) return; // Chỉ tính khi còn buổi
+      
+      if (!classMap[s.classId]) {
+        const cls = classes.find(c => c.id === s.classId);
+        classMap[s.classId] = {
+          className: cls?.name || 'Không xác định',
+          students: [],
+          totalSessions: 0,
+          totalAmount: 0,
+        };
+      }
+      
+      classMap[s.classId].students.push({
+        id: s.id,
+        name: s.fullName,
+        remaining,
+      });
+      classMap[s.classId].totalSessions += remaining;
+      classMap[s.classId].totalAmount += remaining * PRICE_PER_SESSION;
+    });
+
+    return Object.entries(classMap)
+      .map(([classId, data]) => ({ classId, ...data }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
   }, [students]);
 
   const toggleSection = (section: keyof typeof expandedSections) => {
@@ -126,13 +237,26 @@ export const DebtManagement: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-          <CreditCard className="text-red-500" size={24} />
-          Quản lý công nợ
-        </h2>
-        <p className="text-sm text-gray-500 mt-1">
-          Theo dõi học viên chuẩn bị hết phí, đang nợ phí và nợ hợp đồng
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              <CreditCard className="text-red-500" size={24} />
+              Quản lý công nợ
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Theo dõi học viên chuẩn bị hết phí, đang nợ phí và nợ hợp đồng
+            </p>
+          </div>
+          <button
+            onClick={syncContractDebt}
+            disabled={syncing}
+            className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm"
+            title="Đồng bộ dữ liệu nợ hợp đồng từ danh sách hợp đồng"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Đang đồng bộ...' : 'Đồng bộ HĐ'}
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -434,6 +558,103 @@ export const DebtManagement: React.FC = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* Section 4: Công nợ trung tâm nợ học viên */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <SectionHeader
+          title="Công nợ buổi học còn lại (Trung tâm nợ học viên)"
+          icon={BookOpen}
+          count={centerDebtByClass.reduce((sum, c) => sum + c.students.length, 0)}
+          color="bg-indigo-500"
+          expanded={expandedSections.centerDebt}
+          onToggle={() => toggleSection('centerDebt')}
+        />
+        
+        {expandedSections.centerDebt && (
+          <div className="p-4">
+            {/* Summary */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div className="bg-indigo-50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-indigo-600">
+                  {centerDebtByClass.reduce((sum, c) => sum + c.totalSessions, 0)}
+                </p>
+                <p className="text-xs text-gray-500">Tổng buổi còn lại</p>
+              </div>
+              <div className="bg-indigo-50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-indigo-600">
+                  {formatCurrency(centerDebtByClass.reduce((sum, c) => sum + c.totalAmount, 0))}
+                </p>
+                <p className="text-xs text-gray-500">Tổng giá trị (~150k/buổi)</p>
+              </div>
+              <div className="bg-indigo-50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-indigo-600">
+                  {centerDebtByClass.length}
+                </p>
+                <p className="text-xs text-gray-500">Số lớp</p>
+              </div>
+              <div className="bg-indigo-50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-indigo-600">
+                  {centerDebtByClass.reduce((sum, c) => sum + c.students.length, 0)}
+                </p>
+                <p className="text-xs text-gray-500">Số học viên</p>
+              </div>
+            </div>
+
+            {/* Table by class */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">Lớp</th>
+                    <th className="px-4 py-3 text-center font-semibold text-gray-700">Số HS</th>
+                    <th className="px-4 py-3 text-center font-semibold text-gray-700">Tổng buổi còn</th>
+                    <th className="px-4 py-3 text-right font-semibold text-gray-700">Giá trị</th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700">Chi tiết HS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {centerDebtByClass.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                        Không có công nợ buổi học
+                      </td>
+                    </tr>
+                  ) : centerDebtByClass.map(cls => (
+                    <tr key={cls.classId} className="hover:bg-indigo-50">
+                      <td className="px-4 py-3 font-medium text-gray-900">{cls.className}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-bold">
+                          {cls.students.length}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center font-bold text-indigo-600">
+                        {cls.totalSessions} buổi
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-indigo-600">
+                        {formatCurrency(cls.totalAmount)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {cls.students.slice(0, 5).map((s, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
+                              {s.name} ({s.remaining})
+                            </span>
+                          ))}
+                          {cls.students.length > 5 && (
+                            <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">
+                              +{cls.students.length - 5} khác
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

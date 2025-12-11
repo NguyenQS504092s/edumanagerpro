@@ -1,10 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Search, Plus, Phone, FileText, X, Calendar, User, Clock, PhoneCall } from 'lucide-react';
 import { Student, StudentStatus } from '../types';
 import { useStudents } from '../src/hooks/useStudents';
 import { useClasses } from '../src/hooks/useClasses';
 import { useStaff } from '../src/hooks/useStaff';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { formatSchedule } from '../src/utils/scheduleUtils';
 
 // Extended student type for trial students
@@ -21,6 +21,7 @@ interface TrialStudent extends Student {
 
 export const TrialStudents: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('ALL');
   const [filterConsultant, setFilterConsultant] = useState('ALL');
@@ -31,6 +32,7 @@ export const TrialStudents: React.FC = () => {
   const [showAddClassModal, setShowAddClassModal] = useState(false);
   const [showCallHistoryModal, setShowCallHistoryModal] = useState(false);
   const [showAddCallModal, setShowAddCallModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<TrialStudent | null>(null);
 
   // Form states
@@ -55,12 +57,37 @@ export const TrialStudents: React.FC = () => {
     result: 'Đã liên hệ'
   });
 
+  const [editForm, setEditForm] = useState({
+    trialStatus: 'Chờ Test' as 'Chờ Test' | 'Đang học thử' | 'Đã đăng ký' | 'Không đăng ký',
+    consultant: '',
+    source: '',
+    note: ''
+  });
+
   const { students, loading, createStudent, updateStudent } = useStudents({ status: StudentStatus.TRIAL });
   const { classes } = useClasses({});
   const { staff } = useStaff();
 
+  // Handle prefill data from CustomerDatabase (Kho dữ liệu KH)
+  useEffect(() => {
+    const state = location.state as { prefillData?: { fullName?: string; parentName?: string; phone?: string; source?: string; note?: string } } | null;
+    if (state?.prefillData) {
+      setNewStudentForm(prev => ({
+        ...prev,
+        fullName: state.prefillData?.fullName || '',
+        parentName: state.prefillData?.parentName || '',
+        phone: state.prefillData?.phone || '',
+        source: state.prefillData?.source || '',
+        note: state.prefillData?.note || ''
+      }));
+      setShowAddModal(true);
+      // Clear location state to prevent re-triggering
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
   // Get consultants from staff (all staff can be consultants)
-  const consultants = useMemo(() => staff.map(s => s.fullName), [staff]);
+  const consultants = useMemo(() => staff.map(s => s.name).filter(Boolean), [staff]);
   const sources = ['Facebook', 'Zalo', 'Giới thiệu', 'Website', 'Khác'];
 
   // Filter students
@@ -164,6 +191,42 @@ export const TrialStudents: React.FC = () => {
     alert('Đã lưu lịch sử cuộc gọi!');
     setShowAddCallModal(false);
     setNewCallForm({ date: new Date().toISOString().split('T')[0], content: '', result: 'Đã liên hệ' });
+  };
+
+  // Open edit modal
+  const openEditModal = (student: TrialStudent) => {
+    setSelectedStudent(student);
+    setEditForm({
+      trialStatus: student.trialStatus || 'Chờ Test',
+      consultant: student.consultant || '',
+      source: student.source || '',
+      note: (student as any).note || ''
+    });
+    setShowEditModal(true);
+  };
+
+  // Update student
+  const handleUpdateStudent = async () => {
+    if (!selectedStudent) return;
+
+    try {
+      await updateStudent(selectedStudent.id, {
+        trialStatus: editForm.trialStatus,
+        consultant: editForm.consultant,
+        source: editForm.source,
+        note: editForm.note,
+        // If status changes to "Đã đăng ký", update main status
+        ...(editForm.trialStatus === 'Đã đăng ký' && { status: StudentStatus.ACTIVE }),
+        ...(editForm.trialStatus === 'Không đăng ký' && { status: StudentStatus.INACTIVE })
+      } as any);
+      
+      setShowEditModal(false);
+      setSelectedStudent(null);
+      alert('Đã cập nhật thông tin học viên!');
+    } catch (err) {
+      console.error('Error updating student:', err);
+      alert('Có lỗi xảy ra. Vui lòng thử lại.');
+    }
   };
 
   if (loading) {
@@ -331,14 +394,23 @@ export const TrialStudents: React.FC = () => {
                       )}
                     </td>
                     <td className="px-4 py-4 text-right">
-                      {student.trialStatus !== 'Đã đăng ký' && student.trialStatus !== 'Không đăng ký' && (
+                      <div className="flex items-center justify-end gap-2">
                         <button
-                          onClick={() => navigate('/finance/contracts/create')}
-                          className="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 transition-colors"
+                          onClick={() => openEditModal(student)}
+                          className="px-2 py-1 text-indigo-600 hover:bg-indigo-50 rounded text-xs font-medium transition-colors"
+                          title="Cập nhật thông tin"
                         >
-                          Tạo hợp đồng
+                          Cập nhật
                         </button>
-                      )}
+                        {student.trialStatus !== 'Đã đăng ký' && student.trialStatus !== 'Không đăng ký' && (
+                          <button
+                            onClick={() => navigate('/finance/contracts/create', { state: { studentId: student.id } })}
+                            className="px-2 py-1 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 transition-colors"
+                          >
+                            Tạo HĐ
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -651,6 +723,103 @@ export const TrialStudents: React.FC = () => {
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
                 Lưu cuộc gọi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Student Modal */}
+      {showEditModal && selectedStudent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-hidden">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-indigo-50 to-purple-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Cập nhật thông tin</h3>
+                <p className="text-sm text-gray-500">{selectedStudent.fullName}</p>
+              </div>
+              <button onClick={() => { setShowEditModal(false); setSelectedStudent(null); }} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
+              {/* Trial Status */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Trạng thái <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={editForm.trialStatus}
+                  onChange={(e) => setEditForm({ ...editForm, trialStatus: e.target.value as any })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="Chờ Test">Chờ Test</option>
+                  <option value="Đang học thử">Đang học thử</option>
+                  <option value="Đã đăng ký">Đã đăng ký</option>
+                  <option value="Không đăng ký">Không đăng ký</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {editForm.trialStatus === 'Đã đăng ký' && '→ Học viên sẽ chuyển sang trạng thái "Đang học"'}
+                  {editForm.trialStatus === 'Không đăng ký' && '→ Học viên sẽ chuyển sang trạng thái "Nghỉ học"'}
+                </p>
+              </div>
+
+              {/* Consultant */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Người tư vấn</label>
+                <select
+                  value={editForm.consultant}
+                  onChange={(e) => setEditForm({ ...editForm, consultant: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Chọn người tư vấn --</option>
+                  {consultants.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Source */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nguồn</label>
+                <select
+                  value={editForm.source}
+                  onChange={(e) => setEditForm({ ...editForm, source: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Chọn nguồn --</option>
+                  {sources.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Note */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+                <textarea
+                  value={editForm.note}
+                  onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Ghi chú về học viên..."
+                />
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3 bg-gray-50">
+              <button
+                onClick={() => { setShowEditModal(false); setSelectedStudent(null); }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleUpdateStudent}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                Lưu thay đổi
               </button>
             </div>
           </div>

@@ -45,6 +45,7 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
   const [studentFeedbacks, setStudentFeedbacks] = useState<FeedbackRecord[]>([]);
   const [feedbacksLoading, setFeedbacksLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<StudentStatus | 'ALL'>(initialStatusFilter || 'ALL');
+  const [filterClass, setFilterClass] = useState<string>('ALL');
   const [birthdayMonth, setBirthdayMonth] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -143,10 +144,18 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
         const studentMonth = new Date(student.dob).getMonth() + 1;
         matchesBirthday = studentMonth === parseInt(birthdayMonth);
       }
+
+      // Filter by class
+      let matchesClass = true;
+      if (filterClass === 'NO_CLASS') {
+        matchesClass = !student.classId && !student.class;
+      } else if (filterClass !== 'ALL') {
+        matchesClass = student.classId === filterClass || student.class === filterClass;
+      }
       
-      return matchesStatus && matchesSearch && matchesBirthday;
+      return matchesStatus && matchesSearch && matchesBirthday && matchesClass;
     });
-  }, [students, filterStatus, searchTerm, birthdayMonth]);
+  }, [students, filterStatus, searchTerm, birthdayMonth, filterClass]);
 
   // Find students without class assigned
   const studentsWithoutClass = useMemo(() => {
@@ -283,6 +292,18 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
             <option value="">Tháng sinh</option>
             {Array.from({length: 12}, (_, i) => i + 1).map(m => (
               <option key={m} value={m}>Tháng {m}</option>
+            ))}
+          </select>
+
+          <select
+            className="pl-2 pr-8 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm min-w-[140px]"
+            value={filterClass}
+            onChange={(e) => setFilterClass(e.target.value)}
+          >
+            <option value="ALL">Tất cả lớp</option>
+            <option value="NO_CLASS">Chưa có lớp</option>
+            {classes.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
 

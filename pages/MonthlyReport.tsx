@@ -167,8 +167,9 @@ export const MonthlyReport: React.FC = () => {
   
   // Get status badge
   const getStatusBadge = (status: AttendanceStatus) => {
-    const styles: Record<AttendanceStatus, { bg: string; text: string; label: string }> = {
-      [AttendanceStatus.PRESENT]: { bg: 'bg-green-100', text: 'text-green-700', label: 'Có mặt' },
+    const styles: Record<string, { bg: string; text: string; label: string }> = {
+      [AttendanceStatus.ON_TIME]: { bg: 'bg-green-100', text: 'text-green-700', label: 'Đúng giờ' },
+      [AttendanceStatus.LATE]: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Trễ giờ' },
       [AttendanceStatus.ABSENT]: { bg: 'bg-red-100', text: 'text-red-700', label: 'Vắng' },
       [AttendanceStatus.RESERVED]: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'Bảo lưu' },
       [AttendanceStatus.TUTORED]: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Đã bồi' },
@@ -459,7 +460,7 @@ export const MonthlyReport: React.FC = () => {
                               {record.date ? new Date(record.date).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : '-'}
                             </td>
                             <td className="px-3 py-2 text-center">
-                              {record.status === AttendanceStatus.PRESENT || record.status === AttendanceStatus.TUTORED ? (
+                              {record.status === AttendanceStatus.ON_TIME || record.status === AttendanceStatus.LATE || record.status === AttendanceStatus.TUTORED ? (
                                 <CheckCircle className="inline text-green-500" size={18} />
                               ) : (
                                 <XCircle className="inline text-red-500" size={18} />

@@ -29,6 +29,7 @@ interface ContractData {
   totalAmount: number;
   paidAmount?: number;
   remainingAmount?: number;
+  nextPaymentDate?: string;
   createdBy: string;
 }
 
@@ -128,6 +129,9 @@ export const onContractUpdate = functions
       // Set student status to CONTRACT_DEBT
       updateData.status = 'Nợ hợp đồng';
       updateData.contractDebt = after.remainingAmount || 0;
+      if (after.nextPaymentDate) {
+        updateData.nextPaymentDate = after.nextPaymentDate;
+      }
       console.log(`[onContractUpdate] Updating student status to Nợ hợp đồng (${after.remainingAmount}đ)`);
     } else if (after.category === 'Hợp đồng mới' && studentData?.status === 'Học thử') {
       // If new contract and student was in TRIAL status, update to ACTIVE
@@ -243,6 +247,9 @@ export const onContractCreate = functions
     if (contract.status === 'Nợ hợp đồng') {
       updateData.status = 'Nợ hợp đồng';
       updateData.contractDebt = contract.remainingAmount || 0;
+      if (contract.nextPaymentDate) {
+        updateData.nextPaymentDate = contract.nextPaymentDate;
+      }
       console.log(`[onContractCreate] Setting student status to Nợ hợp đồng (${contract.remainingAmount}đ)`);
     } else if (contract.category === 'Hợp đồng mới' && studentData?.status === 'Học thử') {
       updateData.status = 'Đang học';

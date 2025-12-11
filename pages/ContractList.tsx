@@ -97,11 +97,34 @@ export const ContractList: React.FC = () => {
             registeredSessions: (studentData.registeredSessions || 0) + sessionDiff,
           };
           
-          if (newStatus === ContractStatus.PAID) {
+          // Check for other debt contracts of this student
+          const { collection, getDocs, query, where } = await import('firebase/firestore');
+          const otherDebtQuery = query(
+            collection(db, 'contracts'),
+            where('studentId', '==', selectedContract.studentId),
+            where('status', '==', 'Nợ hợp đồng')
+          );
+          const otherDebtSnap = await getDocs(otherDebtQuery);
+          
+          // Calculate total debt from ALL debt contracts (excluding current if it's now PAID)
+          let totalDebt = 0;
+          otherDebtSnap.docs.forEach(d => {
+            if (d.id !== selectedContract.id) {
+              totalDebt += (d.data().remainingAmount || 0);
+            }
+          });
+          
+          // Add current contract's remaining if still PARTIAL
+          if (newStatus === ContractStatus.PARTIAL) {
+            totalDebt += newRemainingAmount;
+          }
+          
+          if (totalDebt > 0) {
+            updateData.contractDebt = totalDebt;
+            updateData.status = 'Nợ hợp đồng';
+          } else {
             updateData.contractDebt = 0;
             updateData.status = 'Đang học';
-          } else {
-            updateData.contractDebt = newRemainingAmount;
           }
           
           await updateDoc(studentRef, updateData);

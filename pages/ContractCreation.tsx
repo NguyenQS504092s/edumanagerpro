@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   FileText, Plus, X, Calculator, DollarSign, 
   User, Calendar, Save, FileCheck, Printer 
@@ -23,6 +23,8 @@ import {
   numberToWords, 
   calculateDiscount 
 } from '../src/utils/currencyUtils';
+import { db } from '../src/config/firebase';
+import { doc, updateDoc } from 'firebase/firestore';
 
 // Contract Preview Component
 interface ContractPreviewProps {
@@ -232,11 +234,15 @@ const ContractPreview: React.FC<ContractPreviewProps> = ({ contract, onClose, on
 
 export const ContractCreation: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { students } = useStudents();
   const { createContract } = useContracts();
   const { curriculums } = useCurriculums({ status: 'Active' });
   const { products } = useProducts({ status: 'Kích hoạt' });
+  
+  // Get studentId from navigation state (from TrialStudents page)
+  const preSelectedStudentId = (location.state as any)?.studentId;
 
   // Form state
   const [contractType, setContractType] = useState<ContractType>(ContractType.STUDENT);
@@ -250,6 +256,8 @@ export const ContractCreation: React.FC = () => {
   const [createdContract, setCreatedContract] = useState<Partial<Contract> | null>(null);
   const [showPartialPaymentModal, setShowPartialPaymentModal] = useState(false);
   const [partialPaidAmount, setPartialPaidAmount] = useState<number>(0);
+  const [partialPaymentDate, setPartialPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [nextPaymentDate, setNextPaymentDate] = useState<string>('');
 
   // Convert curriculums to course format for contract
   const availableCourses: Course[] = curriculums.map(c => {
@@ -277,6 +285,16 @@ export const ContractCreation: React.FC = () => {
     stock: p.stock,
     status: p.status,
   }));
+
+  // Auto-select student if coming from TrialStudents page
+  useEffect(() => {
+    if (preSelectedStudentId && students.length > 0) {
+      const student = students.find(s => s.id === preSelectedStudentId);
+      if (student) {
+        setSelectedStudent(student);
+      }
+    }
+  }, [preSelectedStudentId, students]);
 
   // Calculate totals
   const calculations = useMemo(() => {
@@ -403,6 +421,9 @@ export const ContractCreation: React.FC = () => {
         paidAmount,
         remainingAmount,
         contractDate: new Date().toISOString(),
+        paymentDate: status === ContractStatus.PAID ? new Date().toISOString() : 
+                     status === ContractStatus.PARTIAL ? partialPaymentDate : undefined,
+        nextPaymentDate: status === ContractStatus.PARTIAL && nextPaymentDate ? nextPaymentDate : undefined,
         status,
         notes,
         createdBy: user.uid || user.email || 'unknown',
@@ -414,6 +435,20 @@ export const ContractCreation: React.FC = () => {
       // NOTE: Enrollment record is created by Firestore trigger (contractTriggers.ts)
       // to ensure data integrity and avoid duplicate records
       // Trigger will check if enrollment already exists before creating
+      
+      // Directly update student for PARTIAL payment (sync with DebtManagement)
+      if (status === ContractStatus.PARTIAL && selectedStudent?.id) {
+        try {
+          await updateDoc(doc(db, 'students', selectedStudent.id), {
+            status: 'Nợ hợp đồng',
+            contractDebt: remainingAmount,
+            nextPaymentDate: nextPaymentDate || null,
+          });
+          console.log('Updated student debt info directly');
+        } catch (err) {
+          console.error('Error updating student debt:', err);
+        }
+      }
       
       if (status === ContractStatus.PAID || status === ContractStatus.PARTIAL) {
         // Show preview for paid/partial contracts
@@ -811,10 +846,29 @@ export const ContractCreation: React.FC = () => {
       {showPartialPaymentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">Nợ hợp đồng</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              Tổng tiền hợp đồng: <span className="font-bold text-indigo-600">{formatCurrency(calculations.totalAmount)}</span>
-            </p>
+            <h3 className="text-lg font-bold text-gray-800 mb-4">Thanh toán một phần</h3>
+            
+            {/* Tổng tiền */}
+            <div className="bg-indigo-50 p-3 rounded-lg mb-4">
+              <p className="text-sm text-gray-600">
+                Tổng tiền hợp đồng: <span className="font-bold text-indigo-600">{formatCurrency(calculations.totalAmount)}</span>
+              </p>
+            </div>
+
+            {/* Ngày thanh toán */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ngày thanh toán
+              </label>
+              <input
+                type="date"
+                value={partialPaymentDate}
+                onChange={(e) => setPartialPaymentDate(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Số tiền đã thanh toán */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Số tiền đã thanh toán
@@ -830,19 +884,45 @@ export const ContractCreation: React.FC = () => {
                 placeholder="Nhập số tiền đã nhận..."
               />
             </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Còn nợ: <span className="font-bold text-red-600">{formatCurrency(calculations.totalAmount - partialPaidAmount)}</span>
-            </p>
+
+            {/* Còn nợ */}
+            <div className="bg-red-50 p-3 rounded-lg mb-4">
+              <p className="text-sm text-gray-600">
+                Còn nợ: <span className="font-bold text-red-600">{formatCurrency(calculations.totalAmount - partialPaidAmount)}</span>
+              </p>
+            </div>
+
+            {/* Ngày hẹn thanh toán tiếp theo */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ngày hẹn thanh toán tiếp theo <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                value={nextPaymentDate}
+                onChange={(e) => setNextPaymentDate(e.target.value)}
+                min={partialPaymentDate}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Thông tin này sẽ được đồng bộ với Quản lý công nợ
+              </p>
+            </div>
+
             <div className="flex gap-3 justify-end">
               <button
-                onClick={() => setShowPartialPaymentModal(false)}
+                onClick={() => {
+                  setShowPartialPaymentModal(false);
+                  setPartialPaidAmount(0);
+                  setNextPaymentDate('');
+                }}
                 className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
               >
                 Hủy
               </button>
               <button
                 onClick={() => handleSubmit(ContractStatus.PARTIAL)}
-                disabled={loading || partialPaidAmount <= 0 || partialPaidAmount >= calculations.totalAmount}
+                disabled={loading || partialPaidAmount <= 0 || partialPaidAmount >= calculations.totalAmount || !nextPaymentDate}
                 className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2"
               >
                 {loading ? 'Đang xử lý...' : 'Xác nhận'}

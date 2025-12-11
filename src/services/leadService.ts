@@ -33,6 +33,10 @@ export interface Lead {
   status: LeadStatus;
   assignedTo?: string;
   assignedToName?: string;
+  // Support multiple campaigns
+  campaignIds?: string[];
+  campaignNames?: string[];
+  // Legacy single campaign (for backward compatibility)
   campaignId?: string;
   campaignName?: string;
   note?: string;

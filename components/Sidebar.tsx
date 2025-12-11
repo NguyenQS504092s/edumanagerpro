@@ -152,7 +152,8 @@ const menuItems: MenuItem[] = [
     icon: Settings,
     subItems: [
         { id: 'settings-staff', label: 'Quản lý nhân viên', path: '/settings/staff', icon: ChevronRight },
-        { id: 'settings-products', label: 'Quản lý gói mua', path: '/settings/products', icon: ChevronRight },
+        { id: 'settings-curriculum', label: 'Quản lý giáo trình', path: '/settings/curriculum', icon: ChevronRight },
+        { id: 'settings-products', label: 'Quản lý vật phẩm', path: '/settings/products', icon: ChevronRight },
         { id: 'settings-inventory', label: 'Quản lý kho', path: '/settings/inventory', icon: ChevronRight },
         { id: 'settings-rooms', label: 'Quản lý phòng học', path: '/settings/rooms', icon: ChevronRight },
     ]

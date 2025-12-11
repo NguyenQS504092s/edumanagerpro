@@ -233,7 +233,7 @@ export const calculateMonthlyStats = (
 ): MonthlyReportStats => {
   const totalSessions = attendanceRecords.length;
   const attendedSessions = attendanceRecords.filter(
-    r => r.status === AttendanceStatus.PRESENT || r.status === AttendanceStatus.TUTORED
+    r => r.status === AttendanceStatus.ON_TIME || r.status === AttendanceStatus.LATE || r.status === AttendanceStatus.TUTORED
   ).length;
   const absentSessions = attendanceRecords.filter(
     r => r.status === AttendanceStatus.ABSENT
