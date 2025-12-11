@@ -28,6 +28,7 @@ const formatDateSafe = (dateValue: any): string => {
 export const ClassManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [teacherFilter, setTeacherFilter] = useState('');
+  const [classFilter, setClassFilter] = useState('');
   const [viewMode, setViewMode] = useState<'stats' | 'curriculum'>('stats');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -76,6 +77,8 @@ export const ClassManager: React.FC = () => {
     debt: number;
     reserved: number;
     dropped: number;
+    remainingSessions: number; // Công nợ buổi học còn lại
+    remainingValue: number;    // Giá trị tiền (~150k/buổi)
   }>>({});
 
   // State for session progress per class (Single Source of Truth)
@@ -131,11 +134,12 @@ export const ClassManager: React.FC = () => {
       (snapshot) => {
         const students = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-        const counts: Record<string, { total: number; trial: number; active: number; debt: number; reserved: number; dropped: number }> = {};
+        const PRICE_PER_SESSION = 150000;
+        const counts: Record<string, { total: number; trial: number; active: number; debt: number; reserved: number; dropped: number; remainingSessions: number; remainingValue: number }> = {};
         
         // Initialize counts for all classes
         classes.forEach(cls => {
-          counts[cls.id] = { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0 };
+          counts[cls.id] = { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0, remainingSessions: 0, remainingValue: 0 };
         });
         
         // Count students per class
@@ -169,6 +173,18 @@ export const ClassManager: React.FC = () => {
               counts[matchedClassId].reserved++;
             } else if (status === 'Nghỉ học') {
               counts[matchedClassId].dropped++;
+            }
+            
+            // Calculate remaining sessions (công nợ buổi học còn lại)
+            // Chỉ tính cho học viên đang học, học thử (không tính nghỉ học, bảo lưu)
+            if (status !== 'Nghỉ học' && status !== 'Bảo lưu') {
+              const registered = student.registeredSessions || 0;
+              const attended = student.attendedSessions || 0;
+              const remaining = registered - attended;
+              if (remaining > 0) {
+                counts[matchedClassId].remainingSessions += remaining;
+                counts[matchedClassId].remainingValue += remaining * PRICE_PER_SESSION;
+              }
             }
           }
         });
@@ -224,7 +240,7 @@ export const ClassManager: React.FC = () => {
 
   // Get counts for a specific class
   const getClassCounts = (classId: string) => {
-    return classStudentCounts[classId] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0 };
+    return classStudentCounts[classId] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0, remainingSessions: 0, remainingValue: 0 };
   };
 
   // Get session stats for a specific class
@@ -232,11 +248,17 @@ export const ClassManager: React.FC = () => {
     return classSessionStats[classId] || { completed: 0, total: 0 };
   };
 
-  // Filter by teacher on client side
+  // Filter by teacher and class name on client side
   const filteredClasses = useMemo(() => {
-    if (!teacherFilter) return classes;
-    return classes.filter(c => c.teacher === teacherFilter);
-  }, [classes, teacherFilter]);
+    let result = classes;
+    if (teacherFilter) {
+      result = result.filter(c => c.teacher === teacherFilter);
+    }
+    if (classFilter) {
+      result = result.filter(c => c.id === classFilter);
+    }
+    return result;
+  }, [classes, teacherFilter, classFilter]);
 
   // Get unique teachers for dropdown
   const teachers = useMemo(() => {
@@ -455,6 +477,20 @@ export const ClassManager: React.FC = () => {
       {/* Top Control Bar */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
         <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto flex-1">
+          {/* Class Filter */}
+          <div className="min-w-[180px]">
+            <select 
+              className="w-full pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              value={classFilter}
+              onChange={(e) => setClassFilter(e.target.value)}
+            >
+              <option value="">Tất cả lớp</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Teacher Filter */}
           <div className="min-w-[180px]">
             <select 
@@ -568,6 +604,7 @@ export const ClassManager: React.FC = () => {
                     <th className="px-3 py-4 text-center whitespace-nowrap">Đang học</th>
                     <th className="px-3 py-4 text-center whitespace-nowrap">Nợ phí</th>
                     <th className="px-3 py-4 text-center whitespace-nowrap">Bảo lưu</th>
+                    <th className="px-3 py-4 text-center whitespace-nowrap" title="Buổi còn lại (TT nợ HV)">Buổi còn</th>
                   </>
                 ) : (
                   <th className="px-4 py-4">Độ tuổi</th>
@@ -612,6 +649,15 @@ export const ClassManager: React.FC = () => {
                         <td className="px-4 py-4 text-center text-green-600">{getClassCounts(cls.id).active}</td>
                         <td className="px-4 py-4 text-center text-red-600">{getClassCounts(cls.id).debt}</td>
                         <td className="px-4 py-4 text-center text-orange-600">{getClassCounts(cls.id).reserved}</td>
+                        <td className="px-4 py-4 text-center">
+                          {getClassCounts(cls.id).remainingSessions > 0 ? (
+                            <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded text-xs font-bold" title={`~${(getClassCounts(cls.id).remainingValue / 1000000).toFixed(1)}tr`}>
+                              {getClassCounts(cls.id).remainingSessions}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
                       </>
                     ) : (
                       <td className="px-4 py-4 text-gray-700">
@@ -828,7 +874,7 @@ export const ClassManager: React.FC = () => {
       {showDetailModal && selectedClassForDetail && (
         <ClassDetailModal
           classData={selectedClassForDetail}
-          studentCounts={classStudentCounts[selectedClassForDetail.id] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0 }}
+          studentCounts={classStudentCounts[selectedClassForDetail.id] || { total: 0, trial: 0, active: 0, debt: 0, reserved: 0, dropped: 0, remainingSessions: 0, remainingValue: 0 }}
           onClose={() => { setShowDetailModal(false); setSelectedClassForDetail(null); }}
           onEdit={() => {
             setShowDetailModal(false);
@@ -1484,9 +1530,9 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
                 <option value="">-- Chọn phòng --</option>
                 {roomList.length > 0 ? roomList.map(r => (
                   <option key={r.id} value={r.name}>{r.name}</option>
-                )) : ['P.101', 'P.102', 'P.103', 'P.201', 'P.202', 'P.203'].map(r => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
+                )) : (
+                  <option value="" disabled>Chưa có phòng - vui lòng tạo trong Quản lý phòng</option>
+                )}
               </select>
             </div>
 
@@ -1973,7 +2019,11 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
               </div>
             ) : (
               <div className="space-y-2">
-                {studentsInClass.map((student) => (
+                {studentsInClass.map((student) => {
+                  const registered = student.registeredSessions || 0;
+                  const attended = student.attendedSessions || 0;
+                  const remaining = Math.max(0, registered - attended);
+                  return (
                   <div 
                     key={student.id}
                     className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:border-green-300 transition-colors"
@@ -1983,11 +2033,19 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
                         <span className="font-medium text-gray-900">{student.fullName || student.name}</span>
                         <span className="text-xs text-gray-500">({student.code})</span>
                       </div>
-                      <div className="flex items-center gap-2 mt-1">
+                      <div className="flex items-center gap-3 mt-1">
                         <span className={`text-xs px-2 py-0.5 rounded ${getStatusColor(student.status)}`}>
                           {normalizeStatus(student.status)}
                         </span>
-                        {student.phone && <span className="text-xs text-gray-500">{student.phone}</span>}
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-blue-600" title="Đăng ký">{registered} ĐK</span>
+                          <span className="text-gray-400">/</span>
+                          <span className="text-green-600" title="Đã học">{attended} ĐH</span>
+                          <span className="text-gray-400">/</span>
+                          <span className={`font-medium ${remaining <= 3 ? 'text-red-600' : 'text-orange-600'}`} title="Còn lại">
+                            {remaining} CL
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <button
@@ -1998,7 +2056,8 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
                       <UserMinus size={18} />
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -2078,7 +2137,7 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
 // ============================================
 interface ClassDetailModalProps {
   classData: ClassModel;
-  studentCounts: { total: number; trial: number; active: number; debt: number; reserved: number; dropped: number };
+  studentCounts: { total: number; trial: number; active: number; debt: number; reserved: number; dropped: number; remainingSessions: number; remainingValue: number };
   onClose: () => void;
   onEdit: () => void;
   onManageStudents: () => void;
@@ -2440,6 +2499,21 @@ const ClassDetailModal: React.FC<ClassDetailModalProps> = ({
                       +{studentsInClass.length - 8} khác
                     </span>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Công nợ buổi học còn lại */}
+            {studentCounts.remainingSessions > 0 && (
+              <div className="mt-3 pt-3 border-t border-green-200">
+                <p className="text-xs text-green-700 mb-2">Buổi học còn lại (TT nợ HV):</p>
+                <div className="flex items-center gap-3">
+                  <span className="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-sm font-bold">
+                    {studentCounts.remainingSessions} buổi
+                  </span>
+                  <span className="text-sm text-gray-600">
+                    ~{(studentCounts.remainingValue / 1000000).toFixed(1)} triệu đồng
+                  </span>
                 </div>
               </div>
             )}

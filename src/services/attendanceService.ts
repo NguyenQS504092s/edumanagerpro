@@ -143,6 +143,13 @@ export const saveStudentAttendance = async (
   sessionId?: string
 ): Promise<void> => {
   try {
+    console.log('[saveStudentAttendance] Starting...', { attendanceId, studentsCount: students.length });
+    
+    if (students.length === 0) {
+      console.warn('[saveStudentAttendance] No students to save!');
+      return;
+    }
+    
     const batch = writeBatch(db);
     
     // Delete existing records for this attendance
@@ -151,26 +158,52 @@ export const saveStudentAttendance = async (
       where('attendanceId', '==', attendanceId)
     );
     const existingDocs = await getDocs(existingQuery);
-    existingDocs.docs.forEach(doc => batch.delete(doc.ref));
+    console.log('[saveStudentAttendance] Deleting existing:', existingDocs.size);
+    existingDocs.docs.forEach(d => batch.delete(d.ref));
     
     // Add new records with extended fields
-    students.forEach(student => {
+    console.log('[saveStudentAttendance] Adding', students.length, 'new records...');
+    students.forEach((student, i) => {
       const docRef = doc(collection(db, STUDENT_ATTENDANCE_COLLECTION));
-      batch.set(docRef, {
-        ...student,
+      
+      // Build record, excluding undefined values (Firestore doesn't accept undefined)
+      const record: Record<string, unknown> = {
+        studentId: student.studentId,
+        studentName: student.studentName,
+        studentCode: student.studentCode,
+        status: student.status,
         attendanceId,
-        sessionId: sessionId || null,
         classId: classId || null,
         className: className || null,
         date: date || null,
         sessionNumber: sessionNumber || null,
+        sessionId: sessionId || null,
         createdAt: new Date().toISOString(),
-      });
+      };
+      
+      // Add optional fields only if they have values
+      if (student.note) record.note = student.note;
+      if (student.homeworkCompletion !== undefined) record.homeworkCompletion = student.homeworkCompletion;
+      if (student.testName) record.testName = student.testName;
+      if (student.score !== undefined) record.score = student.score;
+      if (student.bonusPoints !== undefined) record.bonusPoints = student.bonusPoints;
+      if (student.punctuality) record.punctuality = student.punctuality;
+      if (student.isLate !== undefined) record.isLate = student.isLate;
+      
+      batch.set(docRef, record);
     });
     
-    await batch.commit();
+    console.log('[saveStudentAttendance] Committing batch...');
+    try {
+      await batch.commit();
+      console.log('[saveStudentAttendance] Batch committed successfully!');
+    } catch (commitError) {
+      console.error('[saveStudentAttendance] Batch commit failed:', commitError);
+      throw commitError;
+    }
+    console.log('[saveStudentAttendance] Saved', students.length, 'students');
   } catch (error) {
-    console.error('Error saving student attendance:', error);
+    console.error('[saveStudentAttendance] Error:', error);
     throw new Error('Không thể lưu điểm danh học sinh');
   }
 };
@@ -284,7 +317,7 @@ export const countStudentAttendedSessions = async (
       collection(db, STUDENT_ATTENDANCE_COLLECTION),
       where('studentId', '==', studentId),
       where('classId', '==', classId),
-      where('status', '==', AttendanceStatus.PRESENT)
+      where('status', 'in', [AttendanceStatus.ON_TIME, AttendanceStatus.LATE])
     );
     const snapshot = await getDocs(q);
     return snapshot.size;
@@ -357,11 +390,15 @@ export const saveFullAttendance = async (
   }>
 ): Promise<string> => {
   try {
+    console.log('[saveFullAttendance] Input students:', students.length);
+    console.log('[saveFullAttendance] Student statuses:', students.map(s => ({ name: s.studentName, status: s.status })));
+    
     // Filter out students with PENDING status (not yet marked)
     const markedStudents = students.filter(s => s.status && s.status !== AttendanceStatus.PENDING);
+    console.log('[saveFullAttendance] Marked students after filter:', markedStudents.length);
     
-    // Calculate summary from marked students only
-    const present = markedStudents.filter(s => s.status === AttendanceStatus.PRESENT).length;
+    // Calculate summary from marked students only (ON_TIME + LATE = present)
+    const present = markedStudents.filter(s => s.status === AttendanceStatus.ON_TIME || s.status === AttendanceStatus.LATE).length;
     const absent = markedStudents.filter(s => s.status === AttendanceStatus.ABSENT).length;
     const reserved = markedStudents.filter(s => s.status === AttendanceStatus.RESERVED).length;
     const tutored = markedStudents.filter(s => s.status === AttendanceStatus.TUTORED).length;
@@ -395,6 +432,7 @@ export const saveFullAttendance = async (
     }
     
     // Save student attendance with extended fields for monthly report (only marked students)
+    console.log('[saveFullAttendance] Saving student attendance...');
     await saveStudentAttendance(
       attendanceId, 
       markedStudents, 
@@ -404,9 +442,11 @@ export const saveFullAttendance = async (
       attendanceData.sessionNumber,
       attendanceData.sessionId
     );
+    console.log('[saveFullAttendance] Student attendance saved!');
     
     // Auto create tutoring for absent students
     const absentStudents = markedStudents.filter(s => s.status === AttendanceStatus.ABSENT);
+    console.log('[saveFullAttendance] Creating tutoring for', absentStudents.length, 'absent students...');
     for (const student of absentStudents) {
       await createTutoringFromAbsent({
         studentId: student.studentId,
@@ -417,13 +457,16 @@ export const saveFullAttendance = async (
         type: 'Nghỉ học',
       });
     }
+    console.log('[saveFullAttendance] Tutoring created!');
     
-    // Check and update debt status for present students
-    const presentStudents = markedStudents.filter(s => s.status === AttendanceStatus.PRESENT);
+    // Check and update debt status for present students (ON_TIME or LATE)
+    const presentStudents = markedStudents.filter(s => s.status === AttendanceStatus.ON_TIME || s.status === AttendanceStatus.LATE);
+    console.log('[saveFullAttendance] Checking debt for', presentStudents.length, 'present students...');
     for (const student of presentStudents) {
       await checkAndUpdateStudentDebtStatus(student.studentId, attendanceData.classId);
     }
     
+    console.log('[saveFullAttendance] All done! Returning attendanceId:', attendanceId);
     return attendanceId;
   } catch (error) {
     console.error('Error saving full attendance:', error);

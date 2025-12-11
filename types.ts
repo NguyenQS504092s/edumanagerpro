@@ -17,7 +17,8 @@ export enum StudentStatus {
 
 export enum AttendanceStatus {
   PENDING = '',
-  PRESENT = 'Có mặt',
+  ON_TIME = 'Đúng giờ',
+  LATE = 'Trễ giờ',
   ABSENT = 'Vắng',
   RESERVED = 'Bảo lưu',
   TUTORED = 'Đã bồi'
@@ -119,11 +120,16 @@ export interface ClassModel {
   trainingHistory?: TrainingHistoryEntry[]; // Lịch sử đào tạo
 }
 
+export type StaffRole = 'Giáo viên' | 'Trợ giảng' | 'Nhân viên' | 'Sale' | 'Văn phòng' | 'Quản lý' | 'Quản trị viên';
+
 export interface Staff {
   id: string;
   name: string;
   code: string;
-  role: 'Giáo viên' | 'Trợ giảng' | 'Nhân viên' | 'Quản lý' | 'Quản trị viên';
+  // Support multiple roles
+  roles?: StaffRole[];
+  // Legacy single role (for backward compatibility)
+  role: StaffRole;
   department: string;
   position: string;
   phone: string;
@@ -504,6 +510,7 @@ export interface Contract {
   // Dates
   contractDate: string;
   paymentDate?: string;
+  nextPaymentDate?: string; // Ngày hẹn thanh toán tiếp theo (cho nợ hợp đồng)
   
   // Status
   status: ContractStatus;

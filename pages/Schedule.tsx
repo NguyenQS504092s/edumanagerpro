@@ -5,6 +5,8 @@ import { useStudents } from '../src/hooks/useStudents';
 import { usePermissions } from '../src/hooks/usePermissions';
 import { useAuth } from '../src/hooks/useAuth';
 import { useHolidays } from '../src/hooks/useHolidays';
+import { useRooms } from '../src/hooks/useRooms';
+import { useStaff } from '../src/hooks/useStaff';
 import { ClassModel, Student, Holiday } from '../types';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
@@ -12,6 +14,8 @@ import { getScheduleTime, getScheduleDays, formatSchedule } from '../src/utils/s
 
 export const Schedule: React.FC = () => {
   const [selectedBranch, setSelectedBranch] = useState('Cơ sở 1');
+  const [filterTeacher, setFilterTeacher] = useState<string>('ALL');
+  const [filterRoom, setFilterRoom] = useState<string>('ALL');
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [classStudents, setClassStudents] = useState<Student[]>([]);
   const [detailModalClass, setDetailModalClass] = useState<ClassModel | null>(null);
@@ -30,6 +34,8 @@ export const Schedule: React.FC = () => {
   const { classes: allClasses } = useClasses({});
   const { students: allStudents } = useStudents({});
   const { holidays } = useHolidays();
+  const { rooms } = useRooms();
+  const { staff } = useStaff();
 
   // Get active holidays (applied)
   const activeHolidays = useMemo(() => {
@@ -110,20 +116,54 @@ export const Schedule: React.FC = () => {
     }
   }, [expandedCardId, allStudents, allClasses]);
 
-  // Filter classes for teachers (onlyOwnClasses)
+  // Get unique teachers from staff (only teachers/assistants)
+  const uniqueTeachers = useMemo(() => {
+    return staff
+      .filter(s => s.role === 'Giáo viên' || s.role === 'Trợ giảng')
+      .map(s => s.name)
+      .sort();
+  }, [staff]);
+
+  // Get rooms from rooms collection (active only)
+  const uniqueRooms = useMemo(() => {
+    return rooms
+      .filter(r => r.status === 'Hoạt động')
+      .map(r => r.name)
+      .sort();
+  }, [rooms]);
+
+  // Filter classes for teachers (onlyOwnClasses) and by teacher/room filters
   const classes = useMemo(() => {
-    if (!onlyOwnClasses || !staffData) return allClasses;
-    const myName = staffData.name;
-    const myId = staffData.id || staffId;
-    return allClasses.filter(cls => 
-      cls.teacher === myName || 
-      cls.teacherId === myId ||
-      cls.assistant === myName ||
-      cls.assistantId === myId ||
-      cls.foreignTeacher === myName ||
-      cls.foreignTeacherId === myId
-    );
-  }, [allClasses, onlyOwnClasses, staffData, staffId]);
+    let filtered = allClasses;
+    
+    // Filter by own classes if teacher
+    if (onlyOwnClasses && staffData) {
+      const myName = staffData.name;
+      const myId = staffData.id || staffId;
+      filtered = filtered.filter(cls => 
+        cls.teacher === myName || 
+        cls.teacherId === myId ||
+        cls.assistant === myName ||
+        cls.assistantId === myId ||
+        cls.foreignTeacher === myName ||
+        cls.foreignTeacherId === myId
+      );
+    }
+    
+    // Filter by teacher
+    if (filterTeacher !== 'ALL') {
+      filtered = filtered.filter(cls => 
+        cls.teacher === filterTeacher || cls.foreignTeacher === filterTeacher
+      );
+    }
+    
+    // Filter by room
+    if (filterRoom !== 'ALL') {
+      filtered = filtered.filter(cls => cls.room === filterRoom);
+    }
+    
+    return filtered;
+  }, [allClasses, onlyOwnClasses, staffData, staffId, filterTeacher, filterRoom]);
 
   const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'CN'];
   const branches = [
@@ -318,13 +358,47 @@ export const Schedule: React.FC = () => {
           </div>
         </div>
 
-        <button 
-          onClick={handlePrint}
+        {/* Filters Row */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Teacher Filter */}
+          <div className="bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5 flex items-center gap-2">
+            <User className="text-white/80" size={16} />
+            <select
+              value={filterTeacher}
+              onChange={(e) => setFilterTeacher(e.target.value)}
+              className="bg-white text-gray-800 border-0 rounded-md px-2 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer min-w-[120px]"
+            >
+              <option value="ALL">Tất cả GV</option>
+              {uniqueTeachers.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Room Filter */}
+          <div className="bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5 flex items-center gap-2">
+            <Home className="text-white/80" size={16} />
+            <select
+              value={filterRoom}
+              onChange={(e) => setFilterRoom(e.target.value)}
+              className="bg-white text-gray-800 border-0 rounded-md px-2 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer min-w-[100px]"
+            >
+              <option value="ALL">Tất cả phòng</option>
+              {uniqueRooms.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Print Button */}
+          <button 
+            onClick={handlePrint}
           className="flex items-center gap-2 bg-white text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-50 text-sm font-bold shadow-md transition-colors"
         >
           <Printer size={16} />
           In TKB
         </button>
+        </div>
       </div>
 
       {/* Schedule Grid */}

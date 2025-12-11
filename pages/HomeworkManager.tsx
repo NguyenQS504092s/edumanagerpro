@@ -59,6 +59,15 @@ export const HomeworkManager: React.FC = () => {
   
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  
+  // Bulk homework state
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkClassId, setBulkClassId] = useState('');
+  const [bulkFromSession, setBulkFromSession] = useState(1);
+  const [bulkToSession, setBulkToSession] = useState(10);
+  const [bulkHomeworks, setBulkHomeworks] = useState<string[]>(['']);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkSessions, setBulkSessions] = useState<any[]>([]);
 
   // Filter classes for teachers
   const filteredClasses = useMemo(() => {
@@ -298,14 +307,167 @@ export const HomeworkManager: React.FC = () => {
     }
   };
 
+  // Load sessions for bulk modal
+  const loadBulkSessions = async (classId: string) => {
+    if (!classId) {
+      setBulkSessions([]);
+      return;
+    }
+    try {
+      const q = query(collection(db, 'classSessions'), where('classId', '==', classId));
+      const snapshot = await getDocs(q);
+      const sessionsData = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a: any, b: any) => a.sessionNumber - b.sessionNumber);
+      setBulkSessions(sessionsData);
+      
+      // Set default range
+      if (sessionsData.length > 0) {
+        setBulkFromSession(1);
+        setBulkToSession(Math.min(10, sessionsData.length));
+      }
+    } catch (err) {
+      console.error('Error loading bulk sessions:', err);
+    }
+  };
+
+  // Handle bulk class change
+  const handleBulkClassChange = (classId: string) => {
+    setBulkClassId(classId);
+    loadBulkSessions(classId);
+  };
+
+  // Add bulk homework input
+  const handleAddBulkHomeworkInput = () => {
+    setBulkHomeworks(prev => [...prev, '']);
+  };
+
+  // Update bulk homework
+  const handleBulkHomeworkChange = (index: number, value: string) => {
+    setBulkHomeworks(prev => {
+      const updated = [...prev];
+      updated[index] = value;
+      return updated;
+    });
+  };
+
+  // Remove bulk homework input
+  const handleRemoveBulkHomeworkInput = (index: number) => {
+    setBulkHomeworks(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Save bulk homework
+  const handleSaveBulkHomework = async () => {
+    const validHomeworks = bulkHomeworks.filter(h => h.trim());
+    if (!bulkClassId || validHomeworks.length === 0) {
+      alert('Vui lòng chọn lớp và nhập ít nhất 1 bài tập!');
+      return;
+    }
+
+    if (bulkFromSession > bulkToSession) {
+      alert('Buổi bắt đầu phải nhỏ hơn hoặc bằng buổi kết thúc!');
+      return;
+    }
+
+    setBulkSaving(true);
+    try {
+      const selectedClass = classes.find(c => c.id === bulkClassId);
+      const targetSessions = bulkSessions.filter(
+        s => s.sessionNumber >= bulkFromSession && s.sessionNumber <= bulkToSession
+      );
+
+      if (targetSessions.length === 0) {
+        alert('Không tìm thấy buổi học trong khoảng đã chọn!');
+        return;
+      }
+
+      // Create homework list with IDs
+      const homeworkList = validHomeworks.map(name => ({
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        name
+      }));
+
+      let created = 0;
+      let updated = 0;
+
+      for (const session of targetSessions) {
+        // Check if record exists
+        const existingQ = query(
+          collection(db, 'homeworkRecords'),
+          where('classId', '==', bulkClassId),
+          where('sessionId', '==', session.id)
+        );
+        const existingSnap = await getDocs(existingQ);
+
+        if (!existingSnap.empty) {
+          // Update existing - merge homeworks
+          const existingDoc = existingSnap.docs[0];
+          const existingData = existingDoc.data();
+          const existingHomeworks = existingData.homeworks || [];
+          
+          // Add new homeworks that don't exist
+          const newHomeworks = homeworkList.filter(
+            h => !existingHomeworks.some((eh: any) => eh.name === h.name)
+          );
+          
+          if (newHomeworks.length > 0) {
+            await updateDoc(doc(db, 'homeworkRecords', existingDoc.id), {
+              homeworks: [...existingHomeworks, ...newHomeworks],
+              updatedAt: new Date().toISOString()
+            });
+            updated++;
+          }
+        } else {
+          // Create new record
+          await addDoc(collection(db, 'homeworkRecords'), {
+            classId: bulkClassId,
+            className: selectedClass?.name || '',
+            sessionId: session.id,
+            sessionNumber: session.sessionNumber,
+            sessionDate: session.date || '',
+            homeworks: homeworkList,
+            studentRecords: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            createdBy: staffData?.name || user?.displayName || 'Unknown'
+          });
+          created++;
+        }
+      }
+
+      alert(`Đã thêm bài tập vào ${created} buổi mới và cập nhật ${updated} buổi có sẵn!`);
+      setShowBulkModal(false);
+      setBulkHomeworks(['']);
+      
+      // Reload if viewing same class
+      if (selectedClassId === bulkClassId && selectedSessionId) {
+        loadHomeworkRecord(selectedSessionId);
+      }
+    } catch (err: any) {
+      console.error('Error saving bulk homework:', err);
+      alert('Có lỗi xảy ra: ' + (err.message || err));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2 mb-4">
-          <BookOpen className="text-blue-600" />
-          Quản lý Bài tập về nhà
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <BookOpen className="text-blue-600" />
+            Quản lý Bài tập về nhà
+          </h2>
+          <button
+            onClick={() => setShowBulkModal(true)}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2 text-sm font-medium"
+          >
+            <Plus size={18} />
+            Thêm bài tập hàng loạt
+          </button>
+        </div>
         
         {/* Class and Session Selector */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -515,6 +677,143 @@ export const HomeworkManager: React.FC = () => {
           <BookOpen size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-lg font-medium text-gray-600 mb-2">Chọn lớp và buổi học</h3>
           <p className="text-gray-400">Vui lòng chọn lớp học và buổi học để quản lý bài tập về nhà</p>
+        </div>
+      )}
+
+      {/* Bulk Homework Modal */}
+      {showBulkModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-800">Thêm bài tập hàng loạt</h3>
+              <button onClick={() => setShowBulkModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              {/* Class Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chọn lớp học</label>
+                <select
+                  value={bulkClassId}
+                  onChange={(e) => handleBulkClassChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">-- Chọn lớp --</option>
+                  {filteredClasses.map(cls => (
+                    <option key={cls.id} value={cls.id}>{cls.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Session Range */}
+              {bulkClassId && bulkSessions.length > 0 && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Từ buổi</label>
+                    <select
+                      value={bulkFromSession}
+                      onChange={(e) => setBulkFromSession(Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    >
+                      {bulkSessions.map(s => (
+                        <option key={s.id} value={s.sessionNumber}>Buổi {s.sessionNumber}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Đến buổi</label>
+                    <select
+                      value={bulkToSession}
+                      onChange={(e) => setBulkToSession(Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    >
+                      {bulkSessions.map(s => (
+                        <option key={s.id} value={s.sessionNumber}>Buổi {s.sessionNumber}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {bulkClassId && bulkSessions.length === 0 && (
+                <p className="text-sm text-orange-600 bg-orange-50 p-3 rounded-lg">
+                  Lớp này chưa có buổi học nào. Vui lòng tạo buổi học trước.
+                </p>
+              )}
+
+              {/* Homework List */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Danh sách bài tập</label>
+                <div className="space-y-2">
+                  {bulkHomeworks.map((hw, index) => (
+                    <div key={index} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={hw}
+                        onChange={(e) => handleBulkHomeworkChange(index, e.target.value)}
+                        placeholder={`Bài tập ${index + 1}...`}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                      />
+                      {bulkHomeworks.length > 1 && (
+                        <button
+                          onClick={() => handleRemoveBulkHomeworkInput(index)}
+                          className="px-3 py-2 text-red-500 hover:bg-red-50 rounded-lg"
+                        >
+                          <X size={18} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={handleAddBulkHomeworkInput}
+                  className="mt-2 text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1"
+                >
+                  <Plus size={16} />
+                  Thêm bài tập
+                </button>
+              </div>
+
+              {/* Preview */}
+              {bulkClassId && bulkSessions.length > 0 && (
+                <div className="bg-purple-50 p-3 rounded-lg text-sm">
+                  <p className="text-purple-700">
+                    <strong>Xem trước:</strong> Sẽ thêm {bulkHomeworks.filter(h => h.trim()).length} bài tập 
+                    vào {Math.max(0, bulkToSession - bulkFromSession + 1)} buổi 
+                    (Buổi {bulkFromSession} → Buổi {bulkToSession})
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => setShowBulkModal(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveBulkHomework}
+                disabled={bulkSaving || !bulkClassId || bulkSessions.length === 0 || bulkHomeworks.filter(h => h.trim()).length === 0}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {bulkSaving ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Đang lưu...
+                  </>
+                ) : (
+                  <>
+                    <Save size={18} />
+                    Thêm hàng loạt
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

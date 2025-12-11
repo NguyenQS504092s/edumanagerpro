@@ -1,10 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ClipboardList, CheckCircle, XCircle, BarChart2, X, Eye, FileDown, Trash2, AlertTriangle } from 'lucide-react';
 import { useClasses } from '../src/hooks/useClasses';
 import { useAttendance } from '../src/hooks/useAttendance';
 import { usePermissions } from '../src/hooks/usePermissions';
 import { useAuth } from '../src/hooks/useAuth';
+import { useStudents } from '../src/hooks/useStudents';
+import { useStaff } from '../src/hooks/useStaff';
 import { AttendanceRecord, AttendanceStatus } from '../types';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
 import * as XLSX from 'xlsx';
 
 const RECORDS_PER_PAGE = 10;
@@ -14,9 +18,19 @@ export const AttendanceHistory: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [filterClass, setFilterClass] = useState<string>('');
-  const [filterDate, setFilterDate] = useState<string>('');
-  const [showOnlyValid, setShowOnlyValid] = useState(true); // Default: only show valid records
+  const [filterTeacher, setFilterTeacher] = useState<string>('');
+  const [filterStudent, setFilterStudent] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterFromDate, setFilterFromDate] = useState<string>('');
+  const [filterToDate, setFilterToDate] = useState<string>('');
+  const [showOnlyValid, setShowOnlyValid] = useState(true);
   const [deletingOrphans, setDeletingOrphans] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filteredAttendanceIds, setFilteredAttendanceIds] = useState<string[] | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [studentSearch, setStudentSearch] = useState('');
+  const [showStudentDropdown, setShowStudentDropdown] = useState(false);
+  const studentDropdownRef = useRef<HTMLDivElement>(null);
   
   // Permissions
   const { shouldShowOnlyOwnClasses, staffId } = usePermissions();
@@ -24,6 +38,8 @@ export const AttendanceHistory: React.FC = () => {
   const onlyOwnClasses = shouldShowOnlyOwnClasses('attendance_history');
 
   const { classes: allClasses } = useClasses({});
+  const { students: allStudents } = useStudents({});
+  const { staff: allStaff } = useStaff();
   const { 
     attendanceRecords: allRecords, 
     loading, 
@@ -32,6 +48,15 @@ export const AttendanceHistory: React.FC = () => {
     deleteAttendance,
     refresh: refreshAttendance
   } = useAttendance({});
+
+  // Get teachers from staff (role Giáo viên or Trợ giảng)
+  const teachers = useMemo(() => {
+    return allStaff.filter(s => 
+      s.position?.toLowerCase().includes('giáo viên') ||
+      s.position?.toLowerCase().includes('trợ giảng') ||
+      s.role === 'teacher'
+    );
+  }, [allStaff]);
 
   // Filter classes for teachers
   const classes = useMemo(() => {
@@ -72,20 +97,50 @@ export const AttendanceHistory: React.FC = () => {
       records = records.filter(r => r.classId === filterClass || r.className === filterClass);
     }
     
-    // Filter by date
-    if (filterDate) {
-      records = records.filter(r => r.date === filterDate);
+    // Filter by teacher
+    if (filterTeacher) {
+      const teacherClasses = allClasses.filter(c => 
+        c.teacher === filterTeacher || 
+        c.teacherId === filterTeacher ||
+        c.assistant === filterTeacher ||
+        c.assistantId === filterTeacher
+      );
+      const teacherClassIds = teacherClasses.map(c => c.id);
+      records = records.filter(r => teacherClassIds.includes(r.classId));
+    }
+    
+    // Filter by date range
+    if (filterFromDate) {
+      records = records.filter(r => {
+        const recordDate = r.date?.includes('/') 
+          ? r.date.split('/').reverse().join('-') 
+          : r.date;
+        return recordDate >= filterFromDate;
+      });
+    }
+    if (filterToDate) {
+      records = records.filter(r => {
+        const recordDate = r.date?.includes('/') 
+          ? r.date.split('/').reverse().join('-') 
+          : r.date;
+        return recordDate <= filterToDate;
+      });
+    }
+
+    // Filter by student or status (from studentAttendance query)
+    if (filteredAttendanceIds !== null) {
+      records = records.filter(r => filteredAttendanceIds.includes(r.id));
     }
     
     // Sort by date descending
     records.sort((a, b) => {
-      const dateA = a.date?.split('/').reverse().join('-') || '';
-      const dateB = b.date?.split('/').reverse().join('-') || '';
+      const dateA = a.date?.includes('/') ? a.date.split('/').reverse().join('-') : a.date || '';
+      const dateB = b.date?.includes('/') ? b.date.split('/').reverse().join('-') : b.date || '';
       return dateB.localeCompare(dateA);
     });
     
     return records;
-  }, [allRecords, allClasses, onlyOwnClasses, staffData, classes, filterClass, filterDate, showOnlyValid]);
+  }, [allRecords, allClasses, onlyOwnClasses, staffData, classes, filterClass, filterTeacher, filterFromDate, filterToDate, showOnlyValid, filteredAttendanceIds]);
 
   // Pagination
   const totalPages = Math.ceil(attendanceRecords.length / RECORDS_PER_PAGE);
@@ -97,7 +152,105 @@ export const AttendanceHistory: React.FC = () => {
   // Reset page when filter changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterClass, filterDate]);
+  }, [filterClass, filterTeacher, filterStudent, filterStatus, filterFromDate, filterToDate]);
+
+  // Sorted students list: Đang học first, then Nghỉ học, sorted by name
+  const sortedStudents = useMemo(() => {
+    const statusOrder: Record<string, number> = {
+      'Đang học': 0,
+      'Học thử': 1,
+      'Nợ phí': 2,
+      'Bảo lưu': 3,
+      'Nghỉ học': 4,
+    };
+    return [...allStudents]
+      .sort((a, b) => {
+        const orderA = statusOrder[a.status] ?? 3;
+        const orderB = statusOrder[b.status] ?? 3;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.fullName || '').localeCompare(b.fullName || '');
+      });
+  }, [allStudents]);
+
+  // Filtered students by search
+  const filteredStudents = useMemo(() => {
+    if (!studentSearch.trim()) return sortedStudents;
+    const term = studentSearch.toLowerCase();
+    return sortedStudents.filter(s => 
+      s.fullName?.toLowerCase().includes(term) || 
+      s.code?.toLowerCase().includes(term)
+    );
+  }, [sortedStudents, studentSearch]);
+
+  // Get selected student name
+  const selectedStudentName = useMemo(() => {
+    if (!filterStudent) return '';
+    const student = allStudents.find(s => s.id === filterStudent);
+    return student ? `${student.fullName} - ${student.code || ''}` : '';
+  }, [filterStudent, allStudents]);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (studentDropdownRef.current && !studentDropdownRef.current.contains(e.target as Node)) {
+        setShowStudentDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Clear all filters
+  const clearAllFilters = () => {
+    setFilterClass('');
+    setFilterTeacher('');
+    setFilterStudent('');
+    setFilterStatus('');
+    setFilterFromDate('');
+    setFilterToDate('');
+    setStudentSearch('');
+  };
+
+  const hasActiveFilters = filterClass || filterTeacher || filterStudent || filterStatus || filterFromDate || filterToDate;
+
+  // Query studentAttendance when student or status filter changes
+  useEffect(() => {
+    const queryStudentAttendance = async () => {
+      if (!filterStudent && !filterStatus) {
+        setFilteredAttendanceIds(null);
+        return;
+      }
+
+      setFilterLoading(true);
+      try {
+        let q = query(collection(db, 'studentAttendance'));
+        
+        // Build query constraints
+        const constraints: any[] = [];
+        if (filterStudent) {
+          constraints.push(where('studentId', '==', filterStudent));
+        }
+        if (filterStatus) {
+          constraints.push(where('status', '==', filterStatus));
+        }
+
+        if (constraints.length > 0) {
+          q = query(collection(db, 'studentAttendance'), ...constraints);
+        }
+
+        const snapshot = await getDocs(q);
+        const attendanceIds = [...new Set(snapshot.docs.map(doc => doc.data().attendanceId))];
+        setFilteredAttendanceIds(attendanceIds);
+      } catch (error) {
+        console.error('Error querying studentAttendance:', error);
+        setFilteredAttendanceIds(null);
+      } finally {
+        setFilterLoading(false);
+      }
+    };
+
+    queryStudentAttendance();
+  }, [filterStudent, filterStatus]);
 
   const exportDetailToExcel = () => {
     if (!selectedRecord || studentAttendance.length === 0) return;
@@ -389,41 +542,184 @@ export const AttendanceHistory: React.FC = () => {
       )}
       
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-4 border-b border-gray-100 flex flex-wrap justify-between items-center gap-4">
-            <h3 className="font-bold text-gray-800">Lịch sử điểm danh ({attendanceRecords.length} bản ghi)</h3>
-            <div className="flex gap-3 items-center">
-              <select
-                value={filterClass}
-                onChange={(e) => setFilterClass(e.target.value)}
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-3">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              Lịch sử điểm danh ({attendanceRecords.length} bản ghi)
+              {filterLoading && <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></span>}
+            </h3>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`px-3 py-1.5 text-sm rounded-lg border flex items-center gap-2 ${
+                showFilters || hasActiveFilters 
+                  ? 'bg-indigo-50 border-indigo-300 text-indigo-700' 
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <BarChart2 size={16} />
+              Bộ lọc {hasActiveFilters && `(${[filterClass, filterTeacher, filterStudent, filterStatus, filterFromDate, filterToDate].filter(Boolean).length})`}
+            </button>
+          </div>
+          
+          {/* Filter Panel */}
+          {showFilters && (
+            <div className="bg-gray-50 p-4 rounded-lg space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {/* Filter by Class */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Lớp học</label>
+                  <select
+                    value={filterClass}
+                    onChange={(e) => setFilterClass(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Tất cả lớp</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter by Teacher */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Giáo viên</label>
+                  <select
+                    value={filterTeacher}
+                    onChange={(e) => setFilterTeacher(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Tất cả giáo viên</option>
+                    {teachers.map(t => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter by Student - Searchable Dropdown */}
+                <div className="relative" ref={studentDropdownRef}>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Học viên ({allStudents.length})</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={filterStudent ? selectedStudentName : studentSearch}
+                      onChange={(e) => {
+                        setStudentSearch(e.target.value);
+                        setFilterStudent('');
+                        setShowStudentDropdown(true);
+                      }}
+                      onFocus={() => setShowStudentDropdown(true)}
+                      placeholder="Tìm học viên..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 pr-8"
+                    />
+                    {filterStudent && (
+                      <button
+                        onClick={() => {
+                          setFilterStudent('');
+                          setStudentSearch('');
+                        }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                  {showStudentDropdown && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+                      <div
+                        className="px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm text-gray-500"
+                        onClick={() => {
+                          setFilterStudent('');
+                          setStudentSearch('');
+                          setShowStudentDropdown(false);
+                        }}
+                      >
+                        Tất cả học viên
+                      </div>
+                      {filteredStudents.length > 0 ? (
+                        filteredStudents.map(s => (
+                          <div
+                            key={s.id}
+                            className={`px-3 py-2 hover:bg-indigo-50 cursor-pointer text-sm flex justify-between items-center ${
+                              filterStudent === s.id ? 'bg-indigo-100' : ''
+                            }`}
+                            onClick={() => {
+                              setFilterStudent(s.id);
+                              setStudentSearch('');
+                              setShowStudentDropdown(false);
+                            }}
+                          >
+                            <span>{s.fullName} {s.code ? `- ${s.code}` : ''}</span>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${
+                              s.status === 'Đang học' ? 'bg-green-100 text-green-700' :
+                              s.status === 'Nghỉ học' ? 'bg-red-100 text-red-700' :
+                              s.status === 'Bảo lưu' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              {s.status}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-gray-400">Không tìm thấy</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Filter by Status */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Trạng thái</label>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Tất cả trạng thái</option>
+                    <option value="Đúng giờ">Đúng giờ</option>
+                    <option value="Trễ giờ">Trễ giờ</option>
+                    <option value="Vắng">Vắng</option>
+                    <option value="Bảo lưu">Bảo lưu</option>
+                    <option value="Đã bồi">Đã bồi</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Date Range */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Từ ngày</label>
+                  <input
+                    type="date"
+                    value={filterFromDate}
+                    onChange={(e) => setFilterFromDate(e.target.value)}
                 className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">Tất cả lớp</option>
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <input
-                type="date"
-                value={filterDate ? filterDate.split('/').reverse().join('-') : ''}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    const [y, m, d] = e.target.value.split('-');
-                    setFilterDate(`${d}/${m}/${y}`);
-                  } else {
-                    setFilterDate('');
-                  }
-                }}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
-              />
-              {(filterClass || filterDate) && (
-                <button
-                  onClick={() => { setFilterClass(''); setFilterDate(''); }}
-                  className="text-gray-500 hover:text-red-500 text-sm"
-                >
-                  Xóa bộ lọc
-                </button>
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Đến ngày</label>
+                  <input
+                    type="date"
+                    value={filterToDate}
+                    onChange={(e) => setFilterToDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Clear Filters Button */}
+              {hasActiveFilters && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-sm text-red-600 hover:text-red-700 flex items-center gap-1"
+                  >
+                    <X size={14} />
+                    Xóa tất cả bộ lọc
+                  </button>
+                </div>
               )}
             </div>
+          )}
         </div>
         <table className="w-full text-left text-sm text-gray-600">
           <thead className="bg-gray-50 text-xs uppercase font-semibold text-gray-500">
@@ -586,13 +882,15 @@ export const AttendanceHistory: React.FC = () => {
                         </td>
                       </tr>
                     ) : studentAttendance.length > 0 ? studentAttendance.map((sa, index) => {
-                      const statusColor = sa.status === AttendanceStatus.PRESENT 
+                      const statusColor = sa.status === AttendanceStatus.ON_TIME 
                         ? 'bg-green-100 text-green-700' 
-                        : sa.status === AttendanceStatus.ABSENT 
-                          ? 'bg-red-100 text-red-700'
-                          : sa.status === AttendanceStatus.RESERVED
-                            ? 'bg-yellow-100 text-yellow-700'
-                            : 'bg-blue-100 text-blue-700';
+                        : sa.status === AttendanceStatus.LATE
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : sa.status === AttendanceStatus.ABSENT 
+                            ? 'bg-red-100 text-red-700'
+                            : sa.status === AttendanceStatus.RESERVED
+                              ? 'bg-orange-100 text-orange-700'
+                              : 'bg-blue-100 text-blue-700';
                       return (
                         <tr key={sa.id || index}>
                           <td className="px-4 py-3 text-gray-500">{index + 1}</td>

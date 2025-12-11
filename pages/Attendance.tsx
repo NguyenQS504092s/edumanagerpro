@@ -1,6 +1,6 @@
 /**
  * Attendance Page
- * Điểm danh với 4 trạng thái: Có mặt, Vắng, Bảo lưu, Đã bồi
+ * Điểm danh với 5 trạng thái: Đúng giờ, Trễ giờ, Vắng, Bảo lưu, Đã bồi
  * Logic: Vắng → Auto tạo record bồi bài
  * + Tab Rà soát điểm danh cho lễ tân
  */
@@ -318,7 +318,7 @@ export const Attendance: React.FC = () => {
           sessionNumber: selectedSession?.sessionNumber,
           sessionId: selectedSession?.id,
           totalStudents: attendanceData.length,
-          present: attendanceData.filter(s => s.status === AttendanceStatus.PRESENT).length,
+          present: attendanceData.filter(s => s.status === AttendanceStatus.ON_TIME || s.status === AttendanceStatus.LATE).length,
           absent: absentCount,
           reserved: attendanceData.filter(s => s.status === AttendanceStatus.RESERVED).length,
           tutored: attendanceData.filter(s => s.status === AttendanceStatus.TUTORED).length,
@@ -373,11 +373,14 @@ export const Attendance: React.FC = () => {
 
   const getStatusStyle = (status: AttendanceStatus, current: AttendanceStatus) => {
     const isActive = status === current && status !== AttendanceStatus.PENDING;
-    const styles: Record<AttendanceStatus, string> = {
+    const styles: Record<string, string> = {
       [AttendanceStatus.PENDING]: 'bg-white text-gray-400 border-gray-200',
-      [AttendanceStatus.PRESENT]: isActive
+      [AttendanceStatus.ON_TIME]: isActive
         ? 'bg-green-600 text-white border-green-600'
         : 'bg-white text-green-600 border-green-300 hover:bg-green-50',
+      [AttendanceStatus.LATE]: isActive
+        ? 'bg-yellow-500 text-white border-yellow-500'
+        : 'bg-white text-yellow-600 border-yellow-300 hover:bg-yellow-50',
       [AttendanceStatus.ABSENT]: isActive
         ? 'bg-red-600 text-white border-red-600'
         : 'bg-white text-red-600 border-red-300 hover:bg-red-50',
@@ -388,14 +391,14 @@ export const Attendance: React.FC = () => {
         ? 'bg-blue-600 text-white border-blue-600'
         : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50',
     };
-    return styles[status];
+    return styles[status] || styles[AttendanceStatus.PENDING];
   };
 
   // Stats
   const stats = {
     total: attendanceData.length,
     pending: attendanceData.filter(s => s.status === AttendanceStatus.PENDING || !s.status).length,
-    present: attendanceData.filter(s => s.status === AttendanceStatus.PRESENT).length,
+    present: attendanceData.filter(s => s.status === AttendanceStatus.ON_TIME || s.status === AttendanceStatus.LATE).length,
     absent: attendanceData.filter(s => s.status === AttendanceStatus.ABSENT).length,
     reserved: attendanceData.filter(s => s.status === AttendanceStatus.RESERVED).length,
     tutored: attendanceData.filter(s => s.status === AttendanceStatus.TUTORED).length,
@@ -704,7 +707,7 @@ export const Attendance: React.FC = () => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <h2 className="text-lg font-bold text-gray-800">Điểm danh lớp học</h2>
-                <p className="text-sm text-gray-500">4 trạng thái: Có mặt, Vắng, Bảo lưu, Đã bồi</p>
+                <p className="text-sm text-gray-500">5 trạng thái: Đúng giờ, Trễ giờ, Vắng, Bảo lưu, Đã bồi</p>
               </div>
               <div className="flex flex-wrap gap-3 w-full md:w-auto">
                 <select
@@ -948,10 +951,10 @@ export const Attendance: React.FC = () => {
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium text-gray-600">Điểm danh nhanh:</span>
               <button
-                onClick={() => handleBulkStatus(AttendanceStatus.PRESENT)}
+                onClick={() => handleBulkStatus(AttendanceStatus.ON_TIME)}
                 className="px-3 py-1 text-xs font-medium rounded bg-green-100 text-green-700 hover:bg-green-200"
               >
-                Tất cả có mặt
+                Tất cả đúng giờ
               </button>
               <button
                 onClick={() => handleBulkStatus(AttendanceStatus.ABSENT)}
@@ -980,7 +983,6 @@ export const Attendance: React.FC = () => {
                 <th className="px-4 py-4 w-12">STT</th>
                 <th className="px-4 py-4">Học viên</th>
                 <th className="px-4 py-4 text-center">Trạng thái</th>
-                <th className="px-4 py-4 text-center">Đúng giờ/Trễ</th>
                 {showGradeFields && (
                   <>
                     <th className="px-4 py-4 text-center w-20">% BTVN</th>
@@ -1005,10 +1007,16 @@ export const Attendance: React.FC = () => {
                   <td className="px-4 py-3">
                     <div className="flex justify-center gap-1 flex-wrap">
                       <button
-                        onClick={() => handleStatusChange(student.studentId, AttendanceStatus.PRESENT)}
-                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.PRESENT, student.status)}`}
+                        onClick={() => handleStatusChange(student.studentId, AttendanceStatus.ON_TIME)}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.ON_TIME, student.status)}`}
                       >
-                        Có mặt
+                        Đúng giờ
+                      </button>
+                      <button
+                        onClick={() => handleStatusChange(student.studentId, AttendanceStatus.LATE)}
+                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.LATE, student.status)}`}
+                      >
+                        Trễ giờ
                       </button>
                       <button
                         onClick={() => handleStatusChange(student.studentId, AttendanceStatus.ABSENT)}
@@ -1028,44 +1036,6 @@ export const Attendance: React.FC = () => {
                         className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${getStatusStyle(AttendanceStatus.TUTORED, student.status)}`}
                       >
                         Đã bồi
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Auto set status to PRESENT when clicking punctuality
-                          if (student.status !== AttendanceStatus.PRESENT) {
-                            handleStatusChange(student.studentId, AttendanceStatus.PRESENT);
-                          }
-                          handleGradeChange(student.studentId, 'punctuality', student.punctuality === 'onTime' ? '' : 'onTime');
-                        }}
-                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${
-                          student.punctuality === 'onTime'
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50'
-                        }`}
-                      >
-                        Đúng giờ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          // Auto set status to PRESENT when clicking punctuality
-                          if (student.status !== AttendanceStatus.PRESENT) {
-                            handleStatusChange(student.studentId, AttendanceStatus.PRESENT);
-                          }
-                          handleGradeChange(student.studentId, 'punctuality', student.punctuality === 'late' ? '' : 'late');
-                        }}
-                        className={`px-2 py-1 rounded text-xs font-bold border transition-colors ${
-                          student.punctuality === 'late'
-                            ? 'bg-amber-500 text-white border-amber-500'
-                            : 'bg-white text-amber-600 border-amber-300 hover:bg-amber-50'
-                        }`}
-                      >
-                        Trễ giờ
                       </button>
                     </div>
                   </td>

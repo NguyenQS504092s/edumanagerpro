@@ -248,16 +248,15 @@ export const getSessionsByClass = async (
 };
 
 /**
- * Get upcoming sessions (not yet attended)
+ * Get pending sessions (not yet attended) - includes past sessions that weren't marked
  */
 export const getUpcomingSessions = async (
   classId: string,
   limit: number = 10
 ): Promise<ClassSession[]> => {
-  const today = new Date().toISOString().split('T')[0];
+  // Get all "Chưa học" sessions, including past ones for makeup attendance
   return getSessionsByClass(classId, {
     status: 'Chưa học',
-    fromDate: today,
     limit,
   });
 };

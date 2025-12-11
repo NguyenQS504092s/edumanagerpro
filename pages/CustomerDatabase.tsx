@@ -3,12 +3,20 @@
  * Kho dữ liệu khách hàng tiềm năng (Leads)
  */
 
-import React, { useState } from 'react';
-import { Users, Plus, Search, Phone, Mail, Calendar, Tag, X, Trash2, UserCheck, Filter, Edit2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Users, Plus, Search, Phone, Mail, Calendar, Tag, X, Trash2, UserCheck, Filter, Edit2, Target, UserPlus, FileText, Settings, Palette } from 'lucide-react';
 import { useLeads } from '../src/hooks/useLeads';
+import { useCampaigns } from '../src/hooks/useCampaigns';
+import { useStaff } from '../src/hooks/useStaff';
 import { Lead, LeadStatus, LeadSource } from '../src/services/leadService';
+import { Campaign } from '../src/services/campaignService';
+import { Staff } from '../types';
+import { db } from '../src/config/firebase';
+import { collection, doc, getDoc, setDoc } from 'firebase/firestore';
 
-const STATUS_COLORS: Record<LeadStatus, string> = {
+// Default status colors
+const DEFAULT_STATUS_COLORS: Record<string, string> = {
   'Mới': 'bg-blue-100 text-blue-700',
   'Đang liên hệ': 'bg-yellow-100 text-yellow-700',
   'Quan tâm': 'bg-purple-100 text-purple-700',
@@ -18,11 +26,33 @@ const STATUS_COLORS: Record<LeadStatus, string> = {
   'Từ chối': 'bg-red-100 text-red-700',
 };
 
+// Available colors for custom statuses
+const AVAILABLE_COLORS = [
+  { name: 'Xanh dương', value: 'bg-blue-100 text-blue-700' },
+  { name: 'Vàng', value: 'bg-yellow-100 text-yellow-700' },
+  { name: 'Tím', value: 'bg-purple-100 text-purple-700' },
+  { name: 'Cam', value: 'bg-orange-100 text-orange-700' },
+  { name: 'Xanh ngọc', value: 'bg-cyan-100 text-cyan-700' },
+  { name: 'Xanh lá', value: 'bg-green-100 text-green-700' },
+  { name: 'Đỏ', value: 'bg-red-100 text-red-700' },
+  { name: 'Hồng', value: 'bg-pink-100 text-pink-700' },
+  { name: 'Xám', value: 'bg-gray-100 text-gray-700' },
+];
+
 const SOURCE_OPTIONS: LeadSource[] = ['Facebook', 'Zalo', 'Website', 'Giới thiệu', 'Walk-in', 'Khác'];
-const STATUS_OPTIONS: LeadStatus[] = ['Mới', 'Đang liên hệ', 'Quan tâm', 'Hẹn test', 'Đã test', 'Đăng ký', 'Từ chối'];
+const DEFAULT_STATUS_OPTIONS: string[] = ['Mới', 'Đang liên hệ', 'Quan tâm', 'Hẹn test', 'Đã test', 'Đăng ký', 'Từ chối'];
+
+// Status config interface
+interface StatusConfig {
+  name: string;
+  color: string;
+}
 
 export const CustomerDatabase: React.FC = () => {
+  const navigate = useNavigate();
   const { leads, stats, loading, error, createLead, updateLead, updateStatus, deleteLead } = useLeads();
+  const { campaigns } = useCampaigns(false); // Only active campaigns
+  const { staff } = useStaff();
   
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<LeadStatus | ''>('');
@@ -31,6 +61,88 @@ export const CustomerDatabase: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
+  
+  // Status configuration
+  const [showStatusConfigModal, setShowStatusConfigModal] = useState(false);
+  const [statusConfigs, setStatusConfigs] = useState<StatusConfig[]>([]);
+  const [newStatusName, setNewStatusName] = useState('');
+  const [newStatusColor, setNewStatusColor] = useState(AVAILABLE_COLORS[0].value);
+
+  // Load status config from Firestore
+  useEffect(() => {
+    const loadStatusConfig = async () => {
+      try {
+        const docRef = doc(db, 'settings', 'leadStatusConfig');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setStatusConfigs(docSnap.data().statuses || []);
+        } else {
+          // Initialize with default statuses
+          const defaultConfigs = DEFAULT_STATUS_OPTIONS.map(name => ({
+            name,
+            color: DEFAULT_STATUS_COLORS[name] || AVAILABLE_COLORS[0].value
+          }));
+          setStatusConfigs(defaultConfigs);
+        }
+      } catch (err) {
+        console.error('Error loading status config:', err);
+        // Fallback to defaults
+        const defaultConfigs = DEFAULT_STATUS_OPTIONS.map(name => ({
+          name,
+          color: DEFAULT_STATUS_COLORS[name] || AVAILABLE_COLORS[0].value
+        }));
+        setStatusConfigs(defaultConfigs);
+      }
+    };
+    loadStatusConfig();
+  }, []);
+
+  // Get status options from config
+  const STATUS_OPTIONS = statusConfigs.map(s => s.name);
+  const STATUS_COLORS: Record<string, string> = statusConfigs.reduce((acc, s) => {
+    acc[s.name] = s.color;
+    return acc;
+  }, {} as Record<string, string>);
+
+  // Save status config
+  const saveStatusConfig = async (configs: StatusConfig[]) => {
+    try {
+      await setDoc(doc(db, 'settings', 'leadStatusConfig'), { statuses: configs });
+      setStatusConfigs(configs);
+    } catch (err) {
+      console.error('Error saving status config:', err);
+      alert('Không thể lưu cấu hình');
+    }
+  };
+
+  // Add new status
+  const handleAddStatus = async () => {
+    if (!newStatusName.trim()) {
+      alert('Vui lòng nhập tên trạng thái');
+      return;
+    }
+    if (statusConfigs.some(s => s.name === newStatusName.trim())) {
+      alert('Trạng thái này đã tồn tại');
+      return;
+    }
+    const newConfigs = [...statusConfigs, { name: newStatusName.trim(), color: newStatusColor }];
+    await saveStatusConfig(newConfigs);
+    setNewStatusName('');
+    setNewStatusColor(AVAILABLE_COLORS[0].value);
+  };
+
+  // Delete status
+  const handleDeleteStatus = async (name: string) => {
+    if (!confirm(`Xóa trạng thái "${name}"? Các lead có trạng thái này sẽ không bị ảnh hưởng.`)) return;
+    const newConfigs = statusConfigs.filter(s => s.name !== name);
+    await saveStatusConfig(newConfigs);
+  };
+
+  // Update status color
+  const handleUpdateStatusColor = async (name: string, color: string) => {
+    const newConfigs = statusConfigs.map(s => s.name === name ? { ...s, color } : s);
+    await saveStatusConfig(newConfigs);
+  };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Xóa khách hàng này?')) return;
@@ -47,6 +159,34 @@ export const CustomerDatabase: React.FC = () => {
     } catch (err) {
       alert('Không thể cập nhật');
     }
+  };
+
+  // Convert lead to trial student
+  const handleConvertToTrialStudent = (lead: Lead) => {
+    // Navigate to Trial Students page with lead data pre-filled
+    navigate('/customers/trial', { 
+      state: { 
+        prefillData: {
+          fullName: lead.childName || lead.name,
+          parentName: lead.name,
+          phone: lead.phone,
+          source: lead.source,
+          note: lead.note
+        }
+      }
+    });
+  };
+
+  // Create contract from lead
+  const handleCreateContract = (lead: Lead) => {
+    navigate('/finance/contracts/create', { 
+      state: { 
+        leadId: lead.id,
+        leadName: lead.name,
+        leadPhone: lead.phone,
+        childName: lead.childName
+      }
+    });
   };
 
   // Filter leads
@@ -80,12 +220,21 @@ export const CustomerDatabase: React.FC = () => {
               <p className="text-sm text-gray-500">Quản lý khách hàng tiềm năng</p>
             </div>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium"
-          >
-            <Plus size={16} /> Thêm khách hàng
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowStatusConfigModal(true)}
+              className="flex items-center gap-2 border border-gray-300 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
+              title="Cấu hình trạng thái"
+            >
+              <Settings size={16} /> Cấu hình
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium"
+            >
+              <Plus size={16} /> Thêm khách hàng
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
@@ -158,6 +307,7 @@ export const CustomerDatabase: React.FC = () => {
                 <th className="px-4 py-3">Phụ huynh</th>
                 <th className="px-4 py-3">Con</th>
                 <th className="px-4 py-3">Nguồn</th>
+                <th className="px-4 py-3">Chiến dịch</th>
                 <th className="px-4 py-3">Người phụ trách</th>
                 <th className="px-4 py-3 text-center">Trạng thái</th>
                 <th className="px-4 py-3">Ghi chú</th>
@@ -167,7 +317,7 @@ export const CustomerDatabase: React.FC = () => {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-gray-500">
+                  <td colSpan={8} className="text-center py-12 text-gray-500">
                     <div className="flex items-center justify-center gap-2">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
                       Đang tải...
@@ -176,11 +326,11 @@ export const CustomerDatabase: React.FC = () => {
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-red-500">Lỗi: {error}</td>
+                  <td colSpan={8} className="text-center py-12 text-red-500">Lỗi: {error}</td>
                 </tr>
               ) : filteredLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-gray-400">
+                  <td colSpan={8} className="text-center py-12 text-gray-400">
                     <Users size={48} className="mx-auto mb-2 opacity-20" />
                     Chưa có khách hàng nào
                   </td>
@@ -213,6 +363,18 @@ export const CustomerDatabase: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    {(lead.campaignNames?.length || lead.campaignName) ? (
+                      <div className="flex flex-wrap gap-1">
+                        {(lead.campaignNames?.length ? lead.campaignNames : [lead.campaignName]).map((name, i) => (
+                          <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">
+                            <Target size={10} />
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className="text-gray-400">-</span>}
+                  </td>
+                  <td className="px-4 py-3">
                     {lead.assignedToName || <span className="text-gray-400">Chưa phân công</span>}
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -229,8 +391,22 @@ export const CustomerDatabase: React.FC = () => {
                   <td className="px-4 py-3 max-w-xs truncate text-gray-500">
                     {lead.note || '-'}
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3">
                     <div className="flex items-center justify-center gap-1">
+                      <button
+                        onClick={() => handleConvertToTrialStudent(lead)}
+                        className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                        title="Chuyển HV học thử"
+                      >
+                        <UserPlus size={15} />
+                      </button>
+                      <button
+                        onClick={() => handleCreateContract(lead)}
+                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                        title="Tạo hợp đồng"
+                      >
+                        <FileText size={15} />
+                      </button>
                       <button
                         onClick={() => {
                           setEditingLead(lead);
@@ -260,6 +436,9 @@ export const CustomerDatabase: React.FC = () => {
       {/* Add Modal */}
       {showModal && (
         <LeadModal
+          campaigns={campaigns}
+          staff={staff}
+          statusOptions={STATUS_OPTIONS}
           onClose={() => setShowModal(false)}
           onSubmit={async (data) => {
             await createLead(data);
@@ -272,6 +451,9 @@ export const CustomerDatabase: React.FC = () => {
       {showEditModal && editingLead && (
         <LeadModal
           lead={editingLead}
+          campaigns={campaigns}
+          staff={staff}
+          statusOptions={STATUS_OPTIONS}
           onClose={() => {
             setShowEditModal(false);
             setEditingLead(null);
@@ -285,6 +467,102 @@ export const CustomerDatabase: React.FC = () => {
           }}
         />
       )}
+
+      {/* Status Config Modal */}
+      {showStatusConfigModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-hidden">
+            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between bg-gradient-to-r from-gray-50 to-slate-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">Cấu hình trạng thái</h3>
+                <p className="text-sm text-gray-500">Thêm, sửa, xóa trạng thái khách hàng</p>
+              </div>
+              <button onClick={() => setShowStatusConfigModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[50vh] overflow-y-auto">
+              {/* Current statuses */}
+              <div className="space-y-2">
+                {statusConfigs.map((status, index) => (
+                  <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <span className={`px-3 py-1 rounded text-xs font-medium ${status.color}`}>
+                        {status.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={status.color}
+                        onChange={(e) => handleUpdateStatusColor(status.name, e.target.value)}
+                        className="text-xs border border-gray-300 rounded px-2 py-1"
+                      >
+                        {AVAILABLE_COLORS.map(c => (
+                          <option key={c.value} value={c.value}>{c.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleDeleteStatus(status.name)}
+                        className="p-1 text-gray-400 hover:text-red-600"
+                        title="Xóa"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add new status */}
+              <div className="border-t border-gray-200 pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Thêm trạng thái mới</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newStatusName}
+                    onChange={(e) => setNewStatusName(e.target.value)}
+                    placeholder="Tên trạng thái..."
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <select
+                    value={newStatusColor}
+                    onChange={(e) => setNewStatusColor(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    {AVAILABLE_COLORS.map(c => (
+                      <option key={c.value} value={c.value}>{c.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAddStatus}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm"
+                  >
+                    Thêm
+                  </button>
+                </div>
+                {newStatusName && (
+                  <div className="mt-2">
+                    <span className="text-xs text-gray-500">Xem trước: </span>
+                    <span className={`px-3 py-1 rounded text-xs font-medium ${newStatusColor}`}>
+                      {newStatusName}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setShowStatusConfigModal(false)}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -292,11 +570,14 @@ export const CustomerDatabase: React.FC = () => {
 // Lead Modal
 interface LeadModalProps {
   lead?: Lead;
+  campaigns: Campaign[];
+  staff: Staff[];
+  statusOptions: string[];
   onClose: () => void;
   onSubmit: (data: Omit<Lead, 'id'>) => Promise<void>;
 }
 
-const LeadModal: React.FC<LeadModalProps> = ({ lead, onClose, onSubmit }) => {
+const LeadModal: React.FC<LeadModalProps> = ({ lead, campaigns, staff, statusOptions, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     name: lead?.name || '',
     phone: lead?.phone || '',
@@ -306,6 +587,11 @@ const LeadModal: React.FC<LeadModalProps> = ({ lead, onClose, onSubmit }) => {
     source: lead?.source || 'Facebook' as LeadSource,
     status: lead?.status || 'Mới' as LeadStatus,
     note: lead?.note || '',
+    // Support multiple campaigns
+    campaignIds: lead?.campaignIds || (lead?.campaignId ? [lead.campaignId] : []),
+    campaignNames: lead?.campaignNames || (lead?.campaignName ? [lead.campaignName] : []),
+    assignedTo: lead?.assignedTo || '',
+    assignedToName: lead?.assignedToName || '',
   });
   const [loading, setLoading] = useState(false);
 
@@ -422,11 +708,78 @@ const LeadModal: React.FC<LeadModalProps> = ({ lead, onClose, onSubmit }) => {
                 onChange={(e) => setFormData({ ...formData, status: e.target.value as LeadStatus })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
               >
-                {STATUS_OPTIONS.map(s => (
+                {statusOptions.map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Campaign - Multiple Select */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
+              <Target size={14} className="text-orange-500" />
+              Chiến dịch (có thể chọn nhiều)
+            </label>
+            <div className="border border-gray-300 rounded-lg p-2 max-h-32 overflow-y-auto space-y-1">
+              {campaigns.filter(c => c.status === 'Đang mở').length === 0 ? (
+                <p className="text-sm text-gray-400">Chưa có chiến dịch đang mở</p>
+              ) : (
+                campaigns.filter(c => c.status === 'Đang mở').map(c => (
+                  <label key={c.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                    <input
+                      type="checkbox"
+                      checked={formData.campaignIds.includes(c.id || '')}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setFormData({
+                            ...formData,
+                            campaignIds: [...formData.campaignIds, c.id || ''],
+                            campaignNames: [...formData.campaignNames, c.name]
+                          });
+                        } else {
+                          setFormData({
+                            ...formData,
+                            campaignIds: formData.campaignIds.filter(id => id !== c.id),
+                            campaignNames: formData.campaignNames.filter(n => n !== c.name)
+                          });
+                        }
+                      }}
+                      className="rounded border-gray-300 text-indigo-600"
+                    />
+                    <span className="text-sm">{c.name}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            {formData.campaignIds.length > 0 && (
+              <p className="text-xs text-gray-500 mt-1">Đã chọn: {formData.campaignIds.length} chiến dịch</p>
+            )}
+          </div>
+
+          {/* Assigned To */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
+              <UserCheck size={14} className="text-blue-500" />
+              Người phụ trách
+            </label>
+            <select
+              value={formData.assignedTo}
+              onChange={(e) => {
+                const selectedStaff = staff.find(s => s.id === e.target.value);
+                setFormData({ 
+                  ...formData, 
+                  assignedTo: e.target.value,
+                  assignedToName: selectedStaff?.name || ''
+                });
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">-- Chọn người phụ trách --</option>
+              {staff.filter(s => s.status === 'Active').map(s => (
+                <option key={s.id} value={s.id}>{s.name} - {s.role}</option>
+              ))}
+            </select>
           </div>
 
           <div>

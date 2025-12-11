@@ -18,6 +18,10 @@ interface TrainingSummary {
   attendanceRate: number;
   tutoringCount: number;
   completedTutoring: number;
+  // Renewal stats
+  expiredStudents: number;    // HS đã hết phí
+  renewedStudents: number;    // HS đã gia hạn
+  renewalRate: number;        // Tỉ lệ tái tục
 }
 
 interface ClassSummary {
@@ -27,6 +31,11 @@ interface ClassSummary {
   sessionCount: number;
   attendanceRate: number;
   status: string;
+  // New fields for active rate
+  regularStudents: number; // HS đi học đều (>=80%)
+  tutoredStudents: number; // HS được bồi đủ
+  activeStudents: number;  // Tổng HS active
+  activeRate: number;      // Tỉ lệ HS active
 }
 
 export const TrainingReport: React.FC = () => {
@@ -41,6 +50,9 @@ export const TrainingReport: React.FC = () => {
     attendanceRate: 0,
     tutoringCount: 0,
     completedTutoring: 0,
+    expiredStudents: 0,
+    renewedStudents: 0,
+    renewalRate: 0,
   });
   const [classSummaries, setClassSummaries] = useState<ClassSummary[]>([]);
 
@@ -54,17 +66,19 @@ export const TrainingReport: React.FC = () => {
       setError(null);
 
       // Fetch all collections
-      const [classesSnap, studentsSnap, attendanceSnap, tutoringSnap] = await Promise.all([
+      const [classesSnap, studentsSnap, attendanceSnap, tutoringSnap, contractsSnap] = await Promise.all([
         getDocs(collection(db, 'classes')),
         getDocs(collection(db, 'students')),
         getDocs(collection(db, 'attendance')),
         getDocs(collection(db, 'tutoring')),
+        getDocs(collection(db, 'contracts')),
       ]);
 
       const classes = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const students = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const attendance = attendanceSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const tutoring = tutoringSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const contracts = contractsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
       // Calculate summary - Normalize status (Vietnamese)
       const normalizeClassStatus = (status: string) => {
@@ -110,6 +124,30 @@ export const TrainingReport: React.FC = () => {
       // Tutoring stats
       const completedTutoring = tutoring.filter((t: any) => t.status === 'Đã bồi' || t.status === 'Completed').length;
 
+      // Renewal rate calculation
+      // HS hết phí = registeredSessions <= attendedSessions (đã học hết buổi đăng ký)
+      // hoặc status = 'Nghỉ học' với lý do hết phí
+      const expiredStudents = students.filter((s: any) => {
+        const registered = s.registeredSessions || 0;
+        const attended = s.attendedSessions || 0;
+        // Đã học hết hoặc gần hết (còn <= 0 buổi)
+        return registered > 0 && attended >= registered;
+      });
+      
+      // HS đã gia hạn = có hợp đồng tái phí (category = 'Hợp đồng tái phí') và đã thanh toán
+      const renewalContracts = contracts.filter((c: any) => 
+        (c.category === 'Hợp đồng tái phí' || c.category === 'Hợp đồng liên kết') &&
+        c.status === 'Đã thanh toán'
+      );
+      
+      // Unique students who renewed
+      const renewedStudentIds = new Set(renewalContracts.map((c: any) => c.studentId).filter(Boolean));
+      const renewedStudents = renewedStudentIds.size;
+      
+      // Renewal rate = students who renewed / students who expired
+      const expiredCount = expiredStudents.length;
+      const renewalRate = expiredCount > 0 ? (renewedStudents / expiredCount) * 100 : 0;
+
       setSummary({
         totalClasses: classes.length,
         activeClasses,
@@ -119,34 +157,97 @@ export const TrainingReport: React.FC = () => {
         attendanceRate,
         tutoringCount: tutoring.length,
         completedTutoring,
+        expiredStudents: expiredCount,
+        renewedStudents,
+        renewalRate,
       });
 
-      // Class summaries
-      const classData: ClassSummary[] = classes.slice(0, 10).map((c: any) => {
+      // Class summaries with active rate calculation
+      const classData: ClassSummary[] = classes.map((c: any) => {
         const classAttendance = attendance.filter((a: any) => a.classId === c.id);
-        let present = 0;
-        let total = 0;
+        const classTutoring = tutoring.filter((t: any) => t.classId === c.id);
+        const classStudents = students.filter((s: any) => s.classId === c.id);
+        
+        // Track attendance by student
+        const studentAttendance: Record<string, { present: number; absent: number; total: number }> = {};
+        const studentTutored: Record<string, number> = {}; // count of tutoring sessions
+        
         classAttendance.forEach((a: any) => {
           if (a.records) {
             const records = Array.isArray(a.records) ? a.records : Object.values(a.records);
             records.forEach((r: any) => {
-              total++;
-              if (r.status === 'Present' || r.status === 'Có mặt') present++;
+              const studentId = r.studentId || r.id;
+              if (!studentId) return;
+              
+              if (!studentAttendance[studentId]) {
+                studentAttendance[studentId] = { present: 0, absent: 0, total: 0 };
+              }
+              studentAttendance[studentId].total++;
+              if (r.status === 'Present' || r.status === 'Có mặt') {
+                studentAttendance[studentId].present++;
+              } else {
+                studentAttendance[studentId].absent++;
+              }
             });
           }
+        });
+        
+        // Count tutoring per student
+        classTutoring.forEach((t: any) => {
+          if (t.studentId && (t.status === 'Đã bồi' || t.status === 'Completed')) {
+            studentTutored[t.studentId] = (studentTutored[t.studentId] || 0) + 1;
+          }
+        });
+        
+        // Calculate active students
+        let regularStudents = 0; // HS đi học đều (>=80%)
+        let tutoredStudents = 0; // HS vắng nhiều nhưng được bồi đủ
+        
+        Object.entries(studentAttendance).forEach(([studentId, data]) => {
+          if (data.total === 0) return;
+          
+          const attendanceRate = (data.present / data.total) * 100;
+          const absentCount = data.absent;
+          const tutoredCount = studentTutored[studentId] || 0;
+          
+          if (attendanceRate >= 80) {
+            // Đi học đều (>=80%)
+            regularStudents++;
+          } else if (absentCount > 0 && tutoredCount >= absentCount) {
+            // Vắng nhưng được bồi đủ
+            tutoredStudents++;
+          }
+        });
+        
+        const totalStudentCount = c.currentStudents || c.studentsCount || classStudents.length || 0;
+        const activeStudents = regularStudents + tutoredStudents;
+        const activeRate = totalStudentCount > 0 ? (activeStudents / totalStudentCount) * 100 : 0;
+        
+        // Overall attendance rate
+        let totalPresent = 0;
+        let totalRecords = 0;
+        Object.values(studentAttendance).forEach(data => {
+          totalPresent += data.present;
+          totalRecords += data.total;
         });
         
         return {
           id: c.id,
           name: c.name || 'N/A',
-          studentCount: c.currentStudents || c.studentsCount || 0,
+          studentCount: totalStudentCount,
           sessionCount: classAttendance.length,
-          attendanceRate: total > 0 ? (present / total) * 100 : 0,
+          attendanceRate: totalRecords > 0 ? (totalPresent / totalRecords) * 100 : 0,
           status: normalizeClassStatus(c.status) || 'N/A',
+          regularStudents,
+          tutoredStudents,
+          activeStudents,
+          activeRate,
         };
       });
 
-      setClassSummaries(classData);
+      // Sort by active rate descending, then filter top 10 for display
+      classData.sort((a, b) => b.activeRate - a.activeRate);
+      setClassSummaries(classData.slice(0, 15));
     } catch (err) {
       console.error('Error fetching training data:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -255,52 +356,114 @@ export const TrainingReport: React.FC = () => {
         </div>
       </div>
 
-      {/* Class Table */}
+      {/* Renewal Rate Stats */}
+      <div className="bg-gradient-to-r from-purple-500 to-pink-600 p-6 rounded-xl text-white">
+        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+          <TrendingUp size={20} />
+          Tỉ lệ tái tục
+        </h3>
+        <p className="text-purple-100 text-xs mb-4">
+          HS hết phí mà đăng ký tiếp (không tính đang nợ phí)
+        </p>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <div className="text-3xl font-bold">{summary.expiredStudents}</div>
+            <div className="text-purple-100 text-sm">HS đã hết phí</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold">{summary.renewedStudents}</div>
+            <div className="text-purple-100 text-sm">HS đã gia hạn</div>
+          </div>
+          <div>
+            <div className={`text-3xl font-bold ${summary.renewalRate >= 70 ? '' : summary.renewalRate >= 50 ? 'text-yellow-200' : 'text-red-200'}`}>
+              {summary.renewalRate.toFixed(0)}%
+            </div>
+            <div className="text-purple-100 text-sm">Tỉ lệ tái tục</div>
+          </div>
+        </div>
+        {summary.expiredStudents > 0 && (
+          <div className="mt-4 bg-white/10 rounded-lg p-3">
+            <div className="h-3 bg-white/20 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full ${summary.renewalRate >= 70 ? 'bg-green-400' : summary.renewalRate >= 50 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                style={{ width: `${Math.min(100, summary.renewalRate)}%` }}
+              />
+            </div>
+            <p className="text-xs text-purple-100 mt-2 text-center">
+              {summary.renewedStudents}/{summary.expiredStudents} học viên gia hạn
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Class Table - Báo cáo chuyên cần */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
           <h3 className="font-bold text-gray-800 flex items-center gap-2">
             <Award size={18} />
-            Chi tiết theo lớp (Top 10)
+            Báo cáo chuyên cần theo lớp
           </h3>
+          <p className="text-xs text-gray-500 mt-1">
+            Tỉ lệ HS active = (HS đi học đều ≥80% + HS được bồi đủ) / Sĩ số lớp
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
-                <th className="px-4 py-3 text-left">Lớp</th>
-                <th className="px-4 py-3 text-center">Học viên</th>
-                <th className="px-4 py-3 text-center">Số buổi</th>
-                <th className="px-4 py-3 text-center">Tỷ lệ đi học</th>
-                <th className="px-4 py-3 text-center">Trạng thái</th>
+                <th className="px-3 py-3 text-left">Lớp</th>
+                <th className="px-3 py-3 text-center">Sĩ số</th>
+                <th className="px-3 py-3 text-center">Đi đều</th>
+                <th className="px-3 py-3 text-center">Được bồi</th>
+                <th className="px-3 py-3 text-center">HS Active</th>
+                <th className="px-3 py-3 text-center">Tỉ lệ Active</th>
+                <th className="px-3 py-3 text-center">TT</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {classSummaries.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center py-8 text-gray-400">
+                  <td colSpan={7} className="text-center py-8 text-gray-400">
                     Chưa có dữ liệu lớp học
                   </td>
                 </tr>
               ) : classSummaries.map((cls) => (
                 <tr key={cls.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{cls.name}</td>
-                  <td className="px-4 py-3 text-center">{cls.studentCount}</td>
-                  <td className="px-4 py-3 text-center">{cls.sessionCount}</td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-3 py-3 font-medium text-gray-900">{cls.name}</td>
+                  <td className="px-3 py-3 text-center font-bold">{cls.studentCount}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-bold">
+                      {cls.regularStudents}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold">
+                      {cls.tutoredStudents}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs font-bold">
+                      {cls.activeStudents}/{cls.studentCount}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full ${
-                            cls.attendanceRate >= 80 ? 'bg-green-500' :
-                            cls.attendanceRate >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                            cls.activeRate >= 80 ? 'bg-green-500' :
+                            cls.activeRate >= 60 ? 'bg-yellow-500' : 'bg-red-500'
                           }`}
-                          style={{ width: `${Math.min(100, cls.attendanceRate)}%` }}
+                          style={{ width: `${Math.min(100, cls.activeRate)}%` }}
                         />
                       </div>
-                      <span className="text-xs font-medium">{cls.attendanceRate.toFixed(0)}%</span>
+                      <span className={`text-xs font-bold ${
+                        cls.activeRate >= 80 ? 'text-green-600' :
+                        cls.activeRate >= 60 ? 'text-yellow-600' : 'text-red-600'
+                      }`}>{cls.activeRate.toFixed(0)}%</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-3 py-3 text-center">
                     <span className={`px-2 py-1 rounded text-xs font-medium ${
                       cls.status === 'Đang học' ? 'bg-green-100 text-green-700' :
                       cls.status === 'Kết thúc' ? 'bg-gray-100 text-gray-600' :

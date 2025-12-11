@@ -3,9 +3,10 @@
  * Quản lý chiến dịch Sale/Marketing
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Target, Plus, Calendar, Users, TrendingUp, Edit, Trash2, X, ExternalLink, Pause, Play } from 'lucide-react';
 import { useCampaigns } from '../src/hooks/useCampaigns';
+import { useLeads } from '../src/hooks/useLeads';
 import { Campaign, CampaignStatus } from '../src/services/campaignService';
 
 const STATUS_COLORS: Record<CampaignStatus, string> = {
@@ -17,9 +18,38 @@ const STATUS_COLORS: Record<CampaignStatus, string> = {
 export const CampaignManager: React.FC = () => {
   const [showEnded, setShowEnded] = useState(false);
   const { campaigns, loading, error, createCampaign, updateCampaign, deleteCampaign } = useCampaigns(showEnded);
+  const { leads } = useLeads();
   
   const [showModal, setShowModal] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
+
+  // Calculate campaign stats from leads
+  const campaignLeadStats = useMemo(() => {
+    const stats: Record<string, { targetCount: number; registeredCount: number }> = {};
+    
+    leads.forEach(lead => {
+      // Support multiple campaigns (campaignIds array)
+      const leadCampaignIds = lead.campaignIds?.length ? lead.campaignIds : 
+        (lead.campaignId ? [lead.campaignId] : []);
+      
+      leadCampaignIds.forEach(campaignId => {
+        if (!stats[campaignId]) {
+          stats[campaignId] = { targetCount: 0, registeredCount: 0 };
+        }
+        stats[campaignId].targetCount++;
+        if (lead.status === 'Đăng ký') {
+          stats[campaignId].registeredCount++;
+        }
+      });
+    });
+    
+    return stats;
+  }, [leads]);
+
+  // Get stats for a specific campaign
+  const getCampaignStats = (campaignId: string) => {
+    return campaignLeadStats[campaignId] || { targetCount: 0, registeredCount: 0 };
+  };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Xóa chiến dịch này?')) return;
@@ -49,10 +79,16 @@ export const CampaignManager: React.FC = () => {
     }
   };
 
-  // Stats
+  // Stats - calculated from leads
   const activeCampaigns = campaigns.filter(c => c.status === 'Đang mở');
-  const totalTarget = campaigns.reduce((sum, c) => sum + (c.targetCount || 0), 0);
-  const totalRegistered = campaigns.reduce((sum, c) => sum + (c.registeredCount || 0), 0);
+  const totalTarget = campaigns.reduce((sum, c) => {
+    const stats = getCampaignStats(c.id || '');
+    return sum + stats.targetCount;
+  }, 0);
+  const totalRegistered = campaigns.reduce((sum, c) => {
+    const stats = getCampaignStats(c.id || '');
+    return sum + stats.registeredCount;
+  }, 0);
   const avgConversion = totalTarget > 0 ? ((totalRegistered / totalTarget) * 100).toFixed(1) : '0';
 
   return (
@@ -157,7 +193,12 @@ export const CampaignManager: React.FC = () => {
                     Chưa có chiến dịch nào
                   </td>
                 </tr>
-              ) : campaigns.map((campaign) => (
+              ) : campaigns.map((campaign) => {
+                const leadStats = getCampaignStats(campaign.id || '');
+                const conversionRate = leadStats.targetCount > 0 
+                  ? (leadStats.registeredCount / leadStats.targetCount) * 100 
+                  : 0;
+                return (
                 <tr key={campaign.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">{campaign.name}</div>
@@ -181,17 +222,17 @@ export const CampaignManager: React.FC = () => {
                       {campaign.startDate} - {campaign.endDate}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-center font-medium">{campaign.targetCount}</td>
-                  <td className="px-4 py-3 text-center font-bold text-green-600">{campaign.registeredCount}</td>
+                  <td className="px-4 py-3 text-center font-medium">{leadStats.targetCount}</td>
+                  <td className="px-4 py-3 text-center font-bold text-green-600">{leadStats.registeredCount}</td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-orange-400 to-orange-600 rounded-full"
-                          style={{ width: `${Math.min(100, campaign.conversionRate || 0)}%` }}
+                          style={{ width: `${Math.min(100, conversionRate)}%` }}
                         />
                       </div>
-                      <span className="text-xs font-medium">{(campaign.conversionRate || 0).toFixed(1)}%</span>
+                      <span className="text-xs font-medium">{conversionRate.toFixed(1)}%</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -227,7 +268,7 @@ export const CampaignManager: React.FC = () => {
                     </div>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -375,27 +416,14 @@ const CampaignModal: React.FC<CampaignModalProps> = ({ campaign, onClose, onSubm
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Số KH mục tiêu</label>
-              <input
-                type="number"
-                min={0}
-                value={formData.targetCount}
-                onChange={(e) => setFormData({ ...formData, targetCount: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Đã đăng ký</label>
-              <input
-                type="number"
-                min={0}
-                value={formData.registeredCount}
-                onChange={(e) => setFormData({ ...formData, registeredCount: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
-              />
-            </div>
+          {/* Info about leads stats */}
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+            <p className="text-sm text-orange-700">
+              <strong>Lưu ý:</strong> Số KH mục tiêu và Đã đăng ký được tính tự động từ <strong>Kho dữ liệu khách hàng</strong>.
+            </p>
+            <p className="text-xs text-orange-600 mt-1">
+              Vào Kinh doanh → Kho dữ liệu KH → Gán chiến dịch cho từng khách hàng để thống kê.
+            </p>
           </div>
 
           <div>

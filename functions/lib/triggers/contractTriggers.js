@@ -130,6 +130,9 @@ exports.onContractUpdate = functions
         // Set student status to CONTRACT_DEBT
         updateData.status = 'Nợ hợp đồng';
         updateData.contractDebt = after.remainingAmount || 0;
+        if (after.nextPaymentDate) {
+            updateData.nextPaymentDate = after.nextPaymentDate;
+        }
         console.log(`[onContractUpdate] Updating student status to Nợ hợp đồng (${after.remainingAmount}đ)`);
     }
     else if (after.category === 'Hợp đồng mới' && (studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'Học thử') {
@@ -230,6 +233,9 @@ exports.onContractCreate = functions
     if (contract.status === 'Nợ hợp đồng') {
         updateData.status = 'Nợ hợp đồng';
         updateData.contractDebt = contract.remainingAmount || 0;
+        if (contract.nextPaymentDate) {
+            updateData.nextPaymentDate = contract.nextPaymentDate;
+        }
         console.log(`[onContractCreate] Setting student status to Nợ hợp đồng (${contract.remainingAmount}đ)`);
     }
     else if (contract.category === 'Hợp đồng mới' && (studentData === null || studentData === void 0 ? void 0 : studentData.status) === 'Học thử') {
