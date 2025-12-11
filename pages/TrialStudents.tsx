@@ -6,6 +6,8 @@ import { useClasses } from '../src/hooks/useClasses';
 import { useStaff } from '../src/hooks/useStaff';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { formatSchedule } from '../src/utils/scheduleUtils';
+import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { db } from '../src/config/firebase';
 
 // Extended student type for trial students
 interface TrialStudent extends Student {
@@ -187,10 +189,32 @@ export const TrialStudents: React.FC = () => {
       return;
     }
 
-    // In real app, this would update the student's call history in Firebase
-    alert('Đã lưu lịch sử cuộc gọi!');
-    setShowAddCallModal(false);
-    setNewCallForm({ date: new Date().toISOString().split('T')[0], content: '', result: 'Đã liên hệ' });
+    try {
+      const studentRef = doc(db, 'students', selectedStudent.id);
+      const newCall = {
+        date: newCallForm.date,
+        content: newCallForm.content,
+        result: newCallForm.result,
+        createdAt: new Date().toISOString(),
+      };
+      
+      await updateDoc(studentRef, {
+        callHistory: arrayUnion(newCall),
+      });
+      
+      // Update local state
+      setSelectedStudent(prev => prev ? {
+        ...prev,
+        callHistory: [...(prev.callHistory || []), newCall]
+      } : null);
+      
+      alert('Đã lưu lịch sử cuộc gọi!');
+      setShowAddCallModal(false);
+      setNewCallForm({ date: new Date().toISOString().split('T')[0], content: '', result: 'Đã liên hệ' });
+    } catch (error) {
+      console.error('Error adding call:', error);
+      alert('Lỗi khi lưu cuộc gọi. Vui lòng thử lại.');
+    }
   };
 
   // Open edit modal
