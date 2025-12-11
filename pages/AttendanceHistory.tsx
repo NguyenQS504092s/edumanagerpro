@@ -444,9 +444,9 @@ export const AttendanceHistory: React.FC = () => {
   const handleSaveEdits = async () => {
     if (!selectedRecord || editedAttendance.length === 0) return;
     
-    // Find changed records
-    const changes = editedAttendance.filter((edited, index) => {
-      const original = studentAttendance[index];
+    // Find changed records (compare by studentId, not index)
+    const changes = editedAttendance.filter((edited) => {
+      const original = studentAttendance.find(sa => sa.studentId === edited.studentId);
       return original && edited.status !== original.status;
     });
     
@@ -468,10 +468,20 @@ export const AttendanceHistory: React.FC = () => {
       // Update each changed student attendance record
       for (const change of changes) {
         const original = studentAttendance.find(sa => sa.studentId === change.studentId);
-        if (!original || !change.id) continue;
+        if (!original) {
+          console.error('Original not found for studentId:', change.studentId);
+          continue;
+        }
+        
+        // Use original's ID if change doesn't have one
+        const docId = change.id || original.id;
+        if (!docId) {
+          console.error('No document ID found for student:', change.studentName);
+          continue;
+        }
         
         // Update studentAttendance document
-        const docRef = doc(db, 'studentAttendance', change.id);
+        const docRef = doc(db, 'studentAttendance', docId);
         await updateDoc(docRef, {
           status: change.status,
           updatedAt: new Date().toISOString(),
@@ -481,7 +491,7 @@ export const AttendanceHistory: React.FC = () => {
         // Create audit log
         await addDoc(collection(db, 'attendanceAuditLog'), {
           attendanceId: selectedRecord.id,
-          studentAttendanceId: change.id,
+          studentAttendanceId: docId,
           studentId: change.studentId,
           studentName: change.studentName,
           classId: selectedRecord.classId,

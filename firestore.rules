@@ -54,6 +54,12 @@ service cloud.firestore {
       allow write: if isStaff();
     }
     
+    // Attendance Audit Log collection (lịch sử sửa đổi điểm danh)
+    match /attendanceAuditLog/{logId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
     // Tutoring collection
     match /tutoring/{tutoringId} {
       allow read: if isStaff();
