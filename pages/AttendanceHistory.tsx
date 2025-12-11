@@ -1,21 +1,50 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { ClipboardList, CheckCircle, XCircle, BarChart2, X, Eye, FileDown, Trash2, AlertTriangle } from 'lucide-react';
+import { ClipboardList, CheckCircle, XCircle, BarChart2, X, Eye, FileDown, Trash2, AlertTriangle, Edit3, Save, Clock, History } from 'lucide-react';
 import { useClasses } from '../src/hooks/useClasses';
 import { useAttendance } from '../src/hooks/useAttendance';
 import { usePermissions } from '../src/hooks/usePermissions';
 import { useAuth } from '../src/hooks/useAuth';
 import { useStudents } from '../src/hooks/useStudents';
 import { useStaff } from '../src/hooks/useStaff';
-import { AttendanceRecord, AttendanceStatus } from '../types';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { AttendanceRecord, AttendanceStatus, StudentAttendance } from '../types';
+import { collection, query, where, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 import * as XLSX from 'xlsx';
 
 const RECORDS_PER_PAGE = 10;
 
+// Edit permission time limits (in hours)
+const EDIT_TIME_LIMITS: Record<string, number> = {
+  'teacher': 24,        // Giáo viên: 24 giờ
+  'receptionist': 72,   // Lễ tân: 3 ngày
+  'admin': Infinity,    // Admin: không giới hạn
+  'manager': Infinity,  // Quản lý: không giới hạn
+};
+
+interface EditingStudent {
+  id: string;
+  studentId: string;
+  studentName: string;
+  originalStatus: AttendanceStatus;
+  newStatus: AttendanceStatus;
+  reason: string;
+}
+
 export const AttendanceHistory: React.FC = () => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
+  
+  // Edit states
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<EditingStudent | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editedAttendance, setEditedAttendance] = useState<StudentAttendance[]>([]);
+  const [savingEdit, setSavingEdit] = useState(false);
+  
+  // Audit log states
+  const [detailTab, setDetailTab] = useState<'students' | 'history'>('students');
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [filterClass, setFilterClass] = useState<string>('');
   const [filterTeacher, setFilterTeacher] = useState<string>('');
@@ -274,6 +303,225 @@ export const AttendanceHistory: React.FC = () => {
     setSelectedRecord(record);
     await loadStudentAttendance(record.id);
     setShowDetailModal(true);
+    setIsEditing(false);
+    setEditedAttendance([]);
+    setDetailTab('students');
+    setAuditLogs([]);
+  };
+
+  // Load audit logs for attendance record
+  const loadAuditLogs = async (attendanceId: string) => {
+    setLoadingLogs(true);
+    try {
+      const q = query(
+        collection(db, 'attendanceAuditLog'),
+        where('attendanceId', '==', attendanceId)
+      );
+      const snapshot = await getDocs(q);
+      const logs = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a: any, b: any) => (b.editedAt || '').localeCompare(a.editedAt || ''));
+      setAuditLogs(logs);
+    } catch (error) {
+      console.error('Error loading audit logs:', error);
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
+  // Handle tab change
+  const handleTabChange = (tab: 'students' | 'history') => {
+    setDetailTab(tab);
+    if (tab === 'history' && selectedRecord && auditLogs.length === 0) {
+      loadAuditLogs(selectedRecord.id);
+    }
+  };
+
+  // Get user role for edit permission
+  const getUserRole = (): string => {
+    const position = staffData?.position?.toLowerCase() || '';
+    const role = staffData?.role?.toLowerCase() || '';
+    
+    if (role === 'admin' || position.includes('admin') || position.includes('quản lý')) {
+      return 'admin';
+    }
+    if (position.includes('lễ tân') || position.includes('receptionist')) {
+      return 'receptionist';
+    }
+    if (position.includes('giáo viên') || position.includes('trợ giảng') || role === 'teacher') {
+      return 'teacher';
+    }
+    return 'teacher'; // Default to most restrictive
+  };
+
+  // Check if user can edit this attendance record
+  const canEditAttendance = (record: AttendanceRecord): { canEdit: boolean; reason?: string } => {
+    const userRole = getUserRole();
+    const timeLimit = EDIT_TIME_LIMITS[userRole] || 24;
+    
+    // Admin/Manager: no time limit
+    if (timeLimit === Infinity) {
+      return { canEdit: true };
+    }
+    
+    // Check if record belongs to user's class (for teachers)
+    if (userRole === 'teacher') {
+      const myClassIds = classes.map(c => c.id);
+      if (!myClassIds.includes(record.classId)) {
+        return { canEdit: false, reason: 'Bạn chỉ có thể sửa điểm danh của lớp mình' };
+      }
+    }
+    
+    // Check time limit
+    const recordDate = new Date(record.date);
+    const now = new Date();
+    const hoursDiff = (now.getTime() - recordDate.getTime()) / (1000 * 60 * 60);
+    
+    if (hoursDiff > timeLimit) {
+      const days = Math.ceil(timeLimit / 24);
+      return { 
+        canEdit: false, 
+        reason: `Đã quá ${days} ngày, không thể sửa điểm danh` 
+      };
+    }
+    
+    return { canEdit: true };
+  };
+
+  // Start editing
+  const handleStartEdit = () => {
+    if (!selectedRecord) return;
+    
+    const permission = canEditAttendance(selectedRecord);
+    if (!permission.canEdit) {
+      alert(permission.reason);
+      return;
+    }
+    
+    setIsEditing(true);
+    setEditedAttendance([...studentAttendance]);
+  };
+
+  // Cancel editing
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditedAttendance([]);
+    setEditingStudent(null);
+  };
+
+  // Open edit modal for a student
+  const handleEditStudent = (sa: StudentAttendance) => {
+    setEditingStudent({
+      id: sa.id || '',
+      studentId: sa.studentId,
+      studentName: sa.studentName,
+      originalStatus: sa.status,
+      newStatus: sa.status,
+      reason: '',
+    });
+    setShowEditModal(true);
+  };
+
+  // Confirm edit for single student
+  const handleConfirmEdit = () => {
+    if (!editingStudent || !editingStudent.reason.trim()) {
+      alert('Vui lòng nhập lý do chỉnh sửa');
+      return;
+    }
+    
+    // Update in editedAttendance
+    setEditedAttendance(prev => prev.map(sa => 
+      sa.studentId === editingStudent.studentId 
+        ? { ...sa, status: editingStudent.newStatus, editReason: editingStudent.reason }
+        : sa
+    ));
+    
+    setShowEditModal(false);
+    setEditingStudent(null);
+  };
+
+  // Save all edits
+  const handleSaveEdits = async () => {
+    if (!selectedRecord || editedAttendance.length === 0) return;
+    
+    // Find changed records
+    const changes = editedAttendance.filter((edited, index) => {
+      const original = studentAttendance[index];
+      return original && edited.status !== original.status;
+    });
+    
+    if (changes.length === 0) {
+      alert('Không có thay đổi nào để lưu');
+      setIsEditing(false);
+      return;
+    }
+    
+    // Check all changes have reasons
+    const missingReasons = changes.filter(c => !(c as any).editReason);
+    if (missingReasons.length > 0) {
+      alert('Vui lòng nhập lý do cho tất cả các thay đổi');
+      return;
+    }
+    
+    setSavingEdit(true);
+    try {
+      // Update each changed student attendance record
+      for (const change of changes) {
+        const original = studentAttendance.find(sa => sa.studentId === change.studentId);
+        if (!original || !change.id) continue;
+        
+        // Update studentAttendance document
+        const docRef = doc(db, 'studentAttendance', change.id);
+        await updateDoc(docRef, {
+          status: change.status,
+          updatedAt: new Date().toISOString(),
+          updatedBy: staffData?.name || 'Unknown',
+        });
+        
+        // Create audit log
+        await addDoc(collection(db, 'attendanceAuditLog'), {
+          attendanceId: selectedRecord.id,
+          studentAttendanceId: change.id,
+          studentId: change.studentId,
+          studentName: change.studentName,
+          classId: selectedRecord.classId,
+          className: selectedRecord.className,
+          date: selectedRecord.date,
+          oldStatus: original.status,
+          newStatus: change.status,
+          reason: (change as any).editReason,
+          editedBy: staffData?.name || 'Unknown',
+          editedByUid: staffData?.id || '',
+          editedAt: new Date().toISOString(),
+        });
+      }
+      
+      // Update attendance record summary
+      const present = editedAttendance.filter(s => 
+        s.status === AttendanceStatus.ON_TIME || s.status === AttendanceStatus.LATE
+      ).length;
+      const absent = editedAttendance.filter(s => s.status === AttendanceStatus.ABSENT).length;
+      
+      const attendanceDocRef = doc(db, 'attendance', selectedRecord.id);
+      await updateDoc(attendanceDocRef, {
+        present,
+        absent,
+        updatedAt: new Date().toISOString(),
+      });
+      
+      // Reload data
+      await loadStudentAttendance(selectedRecord.id);
+      await refreshAttendance();
+      
+      setIsEditing(false);
+      setEditedAttendance([]);
+      alert(`Đã lưu ${changes.length} thay đổi thành công!`);
+    } catch (error) {
+      console.error('Error saving edits:', error);
+      alert('Lỗi khi lưu thay đổi. Vui lòng thử lại.');
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   // Delete orphaned records (records with classId that doesn't exist)
@@ -836,15 +1084,36 @@ export const AttendanceHistory: React.FC = () => {
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
             <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-green-50 to-teal-50">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Chi tiết điểm danh</h3>
+                <h3 className="text-lg font-bold text-gray-900">
+                  {isEditing ? 'Chỉnh sửa điểm danh' : 'Chi tiết điểm danh'}
+                </h3>
                 <p className="text-sm text-teal-600">{selectedRecord.className} - {selectedRecord.date}</p>
               </div>
-              <button onClick={() => { setShowDetailModal(false); setSelectedRecord(null); }} className="text-gray-400 hover:text-gray-600 p-1">
-                <X size={22} />
-              </button>
+              <div className="flex items-center gap-2">
+                {!isEditing && canEditAttendance(selectedRecord).canEdit && studentAttendance.length > 0 && (
+                  <button 
+                    onClick={handleStartEdit}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-200"
+                  >
+                    <Edit3 size={16} />
+                    Sửa
+                  </button>
+                )}
+                <button onClick={() => { setShowDetailModal(false); setSelectedRecord(null); handleCancelEdit(); }} className="text-gray-400 hover:text-gray-600 p-1">
+                  <X size={22} />
+                </button>
+              </div>
             </div>
 
             <div className="p-5">
+              {/* Edit permission info */}
+              {!isEditing && !canEditAttendance(selectedRecord).canEdit && (
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-600 flex items-center gap-2">
+                  <Clock size={16} />
+                  {canEditAttendance(selectedRecord).reason}
+                </div>
+              )}
+
               {/* Stats */}
               <div className="grid grid-cols-3 gap-4 mb-6">
                 <div className="bg-blue-50 p-4 rounded-lg text-center">
@@ -852,84 +1121,314 @@ export const AttendanceHistory: React.FC = () => {
                   <p className="text-xs text-blue-600">Sĩ số</p>
                 </div>
                 <div className="bg-green-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-green-700">{selectedRecord.present}</p>
+                  <p className="text-2xl font-bold text-green-700">
+                    {isEditing 
+                      ? editedAttendance.filter(s => s.status === AttendanceStatus.ON_TIME || s.status === AttendanceStatus.LATE).length
+                      : selectedRecord.present}
+                  </p>
                   <p className="text-xs text-green-600">Có mặt</p>
                 </div>
                 <div className="bg-red-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-red-700">{selectedRecord.absent}</p>
+                  <p className="text-2xl font-bold text-red-700">
+                    {isEditing
+                      ? editedAttendance.filter(s => s.status === AttendanceStatus.ABSENT).length
+                      : selectedRecord.absent}
+                  </p>
                   <p className="text-xs text-red-600">Vắng</p>
                 </div>
               </div>
 
-              {/* Student List */}
-              <h4 className="font-semibold text-gray-700 mb-3">Danh sách học viên</h4>
-              <div className="border rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      <th className="px-4 py-2 text-left">STT</th>
-                      <th className="px-4 py-2 text-left">Học viên</th>
-                      <th className="px-4 py-2 text-center">Trạng thái</th>
-                      <th className="px-4 py-2 text-left">Ghi chú</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {loading ? (
-                      <tr>
-                        <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
-                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mx-auto mb-2"></div>
-                          Đang tải...
-                        </td>
-                      </tr>
-                    ) : studentAttendance.length > 0 ? studentAttendance.map((sa, index) => {
-                      const statusColor = sa.status === AttendanceStatus.ON_TIME 
-                        ? 'bg-green-100 text-green-700' 
-                        : sa.status === AttendanceStatus.LATE
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : sa.status === AttendanceStatus.ABSENT 
-                            ? 'bg-red-100 text-red-700'
-                            : sa.status === AttendanceStatus.RESERVED
-                              ? 'bg-orange-100 text-orange-700'
-                              : 'bg-blue-100 text-blue-700';
-                      return (
-                        <tr key={sa.id || index}>
-                          <td className="px-4 py-3 text-gray-500">{index + 1}</td>
-                          <td className="px-4 py-3 font-medium">{sa.studentName}</td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
-                              {sa.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 italic">{sa.note || '-'}</td>
+              {/* Tabs */}
+              {!isEditing && (
+                <div className="flex gap-1 mb-4 border-b">
+                  <button
+                    onClick={() => handleTabChange('students')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      detailTab === 'students' 
+                        ? 'border-teal-500 text-teal-600' 
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Danh sách học viên
+                  </button>
+                  <button
+                    onClick={() => handleTabChange('history')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+                      detailTab === 'history' 
+                        ? 'border-amber-500 text-amber-600' 
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    <History size={16} />
+                    Lịch sử sửa đổi
+                  </button>
+                </div>
+              )}
+
+              {/* Student List Tab */}
+              {(detailTab === 'students' || isEditing) && (
+                <>
+                  {isEditing && (
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="font-semibold text-gray-700">Danh sách học viên</h4>
+                      <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+                        Click vào nút Sửa để thay đổi trạng thái
+                      </span>
+                    </div>
+                  )}
+                  <div className="border rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="px-4 py-2 text-left">STT</th>
+                          <th className="px-4 py-2 text-left">Học viên</th>
+                          <th className="px-4 py-2 text-center">Trạng thái</th>
+                          <th className="px-4 py-2 text-left">{isEditing ? 'Lý do sửa' : 'Ghi chú'}</th>
+                          {isEditing && <th className="px-4 py-2 text-center w-20">Sửa</th>}
                         </tr>
-                      );
-                    }) : (
-                      <tr>
-                        <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
-                          <p>Không có dữ liệu chi tiết</p>
-                          <p className="text-xs mt-1">(Dữ liệu có thể được tạo trước khi tích hợp hệ thống mới)</p>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
+                      <tbody className="divide-y">
+                        {loading ? (
+                          <tr>
+                            <td colSpan={isEditing ? 5 : 4} className="px-4 py-8 text-center text-gray-400">
+                              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mx-auto mb-2"></div>
+                              Đang tải...
+                            </td>
+                          </tr>
+                        ) : (isEditing ? editedAttendance : studentAttendance).length > 0 ? (isEditing ? editedAttendance : studentAttendance).map((sa, index) => {
+                          const originalSa = studentAttendance[index];
+                          const isChanged = isEditing && originalSa && sa.status !== originalSa.status;
+                          const statusColor = sa.status === AttendanceStatus.ON_TIME 
+                            ? 'bg-green-100 text-green-700' 
+                            : sa.status === AttendanceStatus.LATE
+                              ? 'bg-yellow-100 text-yellow-700'
+                              : sa.status === AttendanceStatus.ABSENT 
+                                ? 'bg-red-100 text-red-700'
+                                : sa.status === AttendanceStatus.RESERVED
+                                  ? 'bg-orange-100 text-orange-700'
+                                  : 'bg-blue-100 text-blue-700';
+                          return (
+                            <tr key={sa.id || index} className={isChanged ? 'bg-amber-50' : ''}>
+                              <td className="px-4 py-3 text-gray-500">{index + 1}</td>
+                              <td className="px-4 py-3 font-medium">{sa.studentName}</td>
+                              <td className="px-4 py-3 text-center">
+                                <span className={`px-2 py-1 rounded text-xs font-medium ${statusColor}`}>
+                                  {sa.status}
+                                </span>
+                                {isChanged && (
+                                  <span className="ml-1 text-xs text-amber-600">(đã sửa)</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-gray-500 italic">
+                                {isEditing ? ((sa as any).editReason || '-') : (sa.note || '-')}
+                              </td>
+                              {isEditing && (
+                                <td className="px-4 py-3 text-center">
+                                  <button
+                                    onClick={() => handleEditStudent(sa)}
+                                    className="p-1.5 text-amber-600 hover:bg-amber-100 rounded"
+                                    title="Sửa trạng thái"
+                                  >
+                                    <Edit3 size={16} />
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        }) : (
+                          <tr>
+                            <td colSpan={isEditing ? 5 : 4} className="px-4 py-8 text-center text-gray-400">
+                              <p>Không có dữ liệu chi tiết</p>
+                              <p className="text-xs mt-1">(Dữ liệu có thể được tạo trước khi tích hợp hệ thống mới)</p>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {/* History Tab */}
+              {detailTab === 'history' && !isEditing && (
+                <div className="border rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                  {loadingLogs ? (
+                    <div className="p-8 text-center text-gray-400">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-amber-600 mx-auto mb-2"></div>
+                      Đang tải lịch sử...
+                    </div>
+                  ) : auditLogs.length > 0 ? (
+                    <div className="divide-y">
+                      {auditLogs.map((log: any) => (
+                        <div key={log.id} className="p-3 hover:bg-gray-50">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <p className="font-medium text-gray-800">{log.studentName}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">
+                                  {log.oldStatus}
+                                </span>
+                                <span className="text-gray-400">→</span>
+                                <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">
+                                  {log.newStatus}
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-600 mt-1">
+                                <span className="font-medium">Lý do:</span> {log.reason}
+                              </p>
+                            </div>
+                            <div className="text-right text-xs text-gray-500">
+                              <p className="font-medium">{log.editedBy}</p>
+                              <p>{log.editedAt ? new Date(log.editedAt).toLocaleString('vi-VN') : '-'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-gray-400">
+                      <History size={32} className="mx-auto mb-2 opacity-50" />
+                      <p>Chưa có lịch sử sửa đổi</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4 mt-4 border-t">
-                <button
-                  onClick={() => { setShowDetailModal(false); setSelectedRecord(null); }}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                >
-                  Đóng
-                </button>
-                <button
-                  onClick={exportDetailToExcel}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2"
-                >
-                  <FileDown size={16} />
-                  Xuất báo cáo
-                </button>
+                {isEditing ? (
+                  <>
+                    <button
+                      onClick={handleCancelEdit}
+                      className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                      disabled={savingEdit}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      onClick={handleSaveEdits}
+                      disabled={savingEdit}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {savingEdit ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Đang lưu...
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          Lưu thay đổi
+                        </>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => { setShowDetailModal(false); setSelectedRecord(null); }}
+                      className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                    >
+                      Đóng
+                    </button>
+                    <button
+                      onClick={exportDetailToExcel}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2"
+                    >
+                      <FileDown size={16} />
+                      Xuất báo cáo
+                    </button>
+                  </>
+                )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Single Student Modal */}
+      {showEditModal && editingStudent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-gray-900">Sửa điểm danh</h3>
+              <button onClick={() => { setShowEditModal(false); setEditingStudent(null); }} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              {/* Student info */}
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="font-medium text-gray-800">{editingStudent.studentName}</p>
+                <p className="text-sm text-gray-500">
+                  Trạng thái hiện tại: <span className="font-medium">{editingStudent.originalStatus}</span>
+                </p>
+              </div>
+
+              {/* New status */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Trạng thái mới</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { value: AttendanceStatus.ON_TIME, label: 'Đúng giờ', color: 'green' },
+                    { value: AttendanceStatus.LATE, label: 'Đi trễ', color: 'yellow' },
+                    { value: AttendanceStatus.ABSENT, label: 'Vắng', color: 'red' },
+                    { value: AttendanceStatus.RESERVED, label: 'Bảo lưu', color: 'orange' },
+                  ].map(option => (
+                    <button
+                      key={option.value}
+                      onClick={() => setEditingStudent(prev => prev ? { ...prev, newStatus: option.value } : null)}
+                      className={`p-2 rounded-lg border-2 text-sm font-medium transition-colors ${
+                        editingStudent.newStatus === option.value
+                          ? `border-${option.color}-500 bg-${option.color}-50 text-${option.color}-700`
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reason (required) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Lý do chỉnh sửa <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={editingStudent.reason}
+                  onChange={(e) => setEditingStudent(prev => prev ? { ...prev, reason: e.target.value } : null)}
+                  placeholder="Nhập lý do chỉnh sửa (bắt buộc)..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                  rows={3}
+                />
+              </div>
+
+              {/* Preview change */}
+              {editingStudent.originalStatus !== editingStudent.newStatus && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+                  <p className="font-medium text-amber-800 mb-1">Thay đổi:</p>
+                  <p className="text-amber-700">
+                    {editingStudent.originalStatus} → {editingStudent.newStatus}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowEditModal(false); setEditingStudent(null); }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleConfirmEdit}
+                disabled={!editingStudent.reason.trim() || editingStudent.originalStatus === editingStudent.newStatus}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Xác nhận
+              </button>
             </div>
           </div>
         </div>

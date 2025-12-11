@@ -735,7 +735,10 @@ export const Attendance: React.FC = () => {
                     Buổi học
                   </button>
                   <button
-                    onClick={() => setUseSessionMode(false)}
+                    onClick={() => {
+                      setUseSessionMode(false);
+                      setSelectedSession(null); // Reset session khi chuyển sang chế độ chọn ngày
+                    }}
                     className={`px-3 py-1 text-xs font-medium rounded ${
                       !useSessionMode ? 'bg-white shadow text-indigo-600' : 'text-gray-600'
                     }`}
