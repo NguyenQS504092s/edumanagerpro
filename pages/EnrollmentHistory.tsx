@@ -1,8 +1,9 @@
 
 import React, { useState, useMemo } from 'react';
-import { Search, Filter, Calendar, FileDown, ArrowUpRight, ArrowDownRight, MoreHorizontal, ChevronDown } from 'lucide-react';
+import { Search, Filter, Calendar, FileDown, ArrowUpRight, ArrowDownRight, MoreHorizontal, ChevronDown, X, FileText, User, CreditCard, Clock } from 'lucide-react';
 import { EnrollmentRecord } from '../types';
 import { useEnrollments } from '../src/hooks/useEnrollments';
+import { useContracts } from '../src/hooks/useContracts';
 import * as XLSX from 'xlsx';
 
 export const EnrollmentHistory: React.FC = () => {
@@ -10,6 +11,8 @@ export const EnrollmentHistory: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [monthFilter, setMonthFilter] = useState<number | ''>(new Date().getMonth() + 1);
   const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
+  const [selectedRecord, setSelectedRecord] = useState<EnrollmentRecord | null>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
 
   // Fetch from Firebase
   const { enrollments, loading, error } = useEnrollments({
@@ -17,6 +20,21 @@ export const EnrollmentHistory: React.FC = () => {
     month: monthFilter ? monthFilter : undefined,
     year: yearFilter,
   });
+  const { contracts } = useContracts({});
+  
+  // Get contract details for selected record
+  const selectedContract = useMemo(() => {
+    if (!selectedRecord?.contractId && !selectedRecord?.contractCode) return null;
+    return contracts.find(c => 
+      c.id === selectedRecord.contractId || 
+      c.code === selectedRecord.contractCode
+    );
+  }, [selectedRecord, contracts]);
+
+  const handleViewDetail = (record: EnrollmentRecord) => {
+    setSelectedRecord(record);
+    setShowDetailModal(true);
+  };
 
   const filteredData = useMemo(() => {
     return enrollments.filter(item => {
@@ -205,7 +223,11 @@ export const EnrollmentHistory: React.FC = () => {
                                     {record.note || '-'}
                                 </td>
                                 <td className="px-2 py-3 text-right">
-                                    <button className="text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button 
+                                      onClick={() => handleViewDetail(record)}
+                                      className="text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Xem chi tiết"
+                                    >
                                         <MoreHorizontal size={16} />
                                     </button>
                                 </td>
@@ -233,6 +255,153 @@ export const EnrollmentHistory: React.FC = () => {
             </div>
         </div>
       </div>
+
+      {/* Detail Modal */}
+      {showDetailModal && selectedRecord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-hidden">
+            <div className="p-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-indigo-50 to-blue-50">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Chi tiết ghi danh</h3>
+                <p className="text-sm text-indigo-600">{selectedRecord.studentName}</p>
+              </div>
+              <button 
+                onClick={() => { setShowDetailModal(false); setSelectedRecord(null); }}
+                className="text-gray-400 hover:text-gray-600 p-1"
+              >
+                <X size={22} />
+              </button>
+            </div>
+            
+            <div className="p-5 space-y-4 overflow-y-auto max-h-[60vh]">
+              {/* Enrollment Info */}
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <h4 className="font-semibold text-gray-700 flex items-center gap-2">
+                  <FileText size={16} className="text-indigo-500" />
+                  Thông tin ghi danh
+                </h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Loại ghi danh</p>
+                    <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${getTypeBadge(selectedRecord.type)}`}>
+                      {selectedRecord.type}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Số buổi</p>
+                    <p className="font-bold text-gray-900">{selectedRecord.sessions} buổi</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Số tiền</p>
+                    <p className="font-bold text-indigo-600">{selectedRecord.finalAmount?.toLocaleString() || 0} đ</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Ngày tạo</p>
+                    <p className="font-medium text-gray-900">{selectedRecord.createdDate}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Người tạo</p>
+                    <p className="font-medium text-gray-900 truncate" title={selectedRecord.createdBy}>{selectedRecord.createdBy}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Trạng thái</p>
+                    <p className="font-medium text-green-600">{selectedRecord.status || 'Đã xác nhận'}</p>
+                  </div>
+                </div>
+                {selectedRecord.note && (
+                  <div>
+                    <p className="text-gray-500 text-sm">Ghi chú</p>
+                    <p className="text-gray-700 text-sm bg-white p-2 rounded border break-words">{selectedRecord.note}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Contract Info */}
+              {selectedRecord.contractCode && (
+                <div className="bg-blue-50 rounded-lg p-4 space-y-3">
+                  <h4 className="font-semibold text-gray-700 flex items-center gap-2">
+                    <CreditCard size={16} className="text-blue-500" />
+                    Thông tin hợp đồng
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="min-w-0">
+                      <p className="text-gray-500">Mã hợp đồng</p>
+                      <p className="font-mono font-bold text-blue-600 truncate" title={selectedRecord.contractCode}>{selectedRecord.contractCode}</p>
+                    </div>
+                    {selectedContract ? (
+                      <>
+                        {selectedContract.sessions && (
+                          <div className="min-w-0">
+                            <p className="text-gray-500">Tổng buổi HĐ</p>
+                            <p className="font-bold text-gray-900">{selectedContract.sessions} buổi</p>
+                          </div>
+                        )}
+                        {(selectedContract.finalAmount || selectedContract.amount) && (
+                          <div className="min-w-0">
+                            <p className="text-gray-500">Giá trị HĐ</p>
+                            <p className="font-bold text-gray-900">{(selectedContract.finalAmount || selectedContract.amount)?.toLocaleString()} đ</p>
+                          </div>
+                        )}
+                        {selectedContract.startDate && (
+                          <div className="min-w-0">
+                            <p className="text-gray-500">Ngày ký</p>
+                            <p className="font-medium text-gray-900">{selectedContract.startDate}</p>
+                          </div>
+                        )}
+                        {selectedContract.className && (
+                          <div className="min-w-0">
+                            <p className="text-gray-500">Lớp học</p>
+                            <p className="font-medium text-gray-900 truncate" title={selectedContract.className}>{selectedContract.className}</p>
+                          </div>
+                        )}
+                        {selectedContract.status && (
+                          <div className="min-w-0">
+                            <p className="text-gray-500">Trạng thái HĐ</p>
+                            <p className={`font-medium ${selectedContract.status === 'Đang học' ? 'text-green-600' : 'text-gray-600'}`}>
+                              {selectedContract.status}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="col-span-2 text-gray-500 text-xs italic">
+                        Không tìm thấy thông tin chi tiết hợp đồng
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Student Info */}
+              <div className="bg-green-50 rounded-lg p-4 space-y-3">
+                <h4 className="font-semibold text-gray-700 flex items-center gap-2">
+                  <User size={16} className="text-green-500" />
+                  Thông tin học viên
+                </h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Họ và tên</p>
+                    <p className="font-bold text-gray-900 truncate" title={selectedRecord.studentName}>{selectedRecord.studentName}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-gray-500">Mã học viên</p>
+                    <p className="font-mono text-gray-600 truncate" title={selectedRecord.studentId}>{selectedRecord.studentId}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => { setShowDetailModal(false); setSelectedRecord(null); }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

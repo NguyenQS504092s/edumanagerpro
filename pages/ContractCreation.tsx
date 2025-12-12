@@ -18,6 +18,7 @@ import { useStudents } from '../src/hooks/useStudents';
 import { useContracts } from '../src/hooks/useContracts';
 import { useCurriculums } from '../src/hooks/useCurriculums';
 import { useProducts } from '../src/hooks/useProducts';
+import { useClasses } from '../src/hooks/useClasses';
 import { 
   formatCurrency, 
   numberToWords, 
@@ -240,6 +241,7 @@ export const ContractCreation: React.FC = () => {
   const { createContract } = useContracts();
   const { curriculums } = useCurriculums({ status: 'Active' });
   const { products } = useProducts({ status: 'Kích hoạt' });
+  const { classes } = useClasses();
   
   // Get studentId from navigation state (from TrialStudents page)
   const preSelectedStudentId = (location.state as any)?.studentId;
@@ -248,6 +250,9 @@ export const ContractCreation: React.FC = () => {
   const [contractType, setContractType] = useState<ContractType>(ContractType.STUDENT);
   const [contractCategory, setContractCategory] = useState<ContractCategory>(ContractCategory.NEW);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [studentSearchTerm, setStudentSearchTerm] = useState('');
+  const [showStudentDropdown, setShowStudentDropdown] = useState(false);
+  const studentSearchRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<ContractItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.FULL);
   const [notes, setNotes] = useState('');
@@ -258,6 +263,43 @@ export const ContractCreation: React.FC = () => {
   const [partialPaidAmount, setPartialPaidAmount] = useState<number>(0);
   const [partialPaymentDate, setPartialPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [nextPaymentDate, setNextPaymentDate] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+
+  // Date format helpers (ISO <-> dd/mm/yyyy)
+  const isoToVN = (isoDate: string) => {
+    if (!isoDate) return '';
+    const [y, m, d] = isoDate.split('-');
+    return `${d}/${m}/${y}`;
+  };
+  const vnToISO = (vnDate: string) => {
+    if (!vnDate) return '';
+    const parts = vnDate.split('/');
+    if (parts.length !== 3) return '';
+    const [d, m, y] = parts;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  };
+  const handleDateInput = (value: string, setter: (v: string) => void) => {
+    // Allow typing in dd/mm/yyyy format
+    const cleaned = value.replace(/[^0-9/]/g, '');
+    if (cleaned.length <= 10) {
+      // Auto-add slashes
+      let formatted = cleaned;
+      if (cleaned.length === 2 && !cleaned.includes('/')) {
+        formatted = cleaned + '/';
+      } else if (cleaned.length === 5 && cleaned.split('/').length === 2) {
+        formatted = cleaned + '/';
+      }
+      // If complete date, convert to ISO
+      if (formatted.length === 10 && formatted.split('/').length === 3) {
+        const iso = vnToISO(formatted);
+        if (iso && !isNaN(Date.parse(iso))) {
+          setter(iso);
+          return;
+        }
+      }
+    }
+  };
 
   // Convert curriculums to course format for contract
   const availableCourses: Course[] = curriculums.map(c => {
@@ -295,6 +337,29 @@ export const ContractCreation: React.FC = () => {
       }
     }
   }, [preSelectedStudentId, students]);
+
+  // Click outside handler for student search
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (studentSearchRef.current && !studentSearchRef.current.contains(e.target as Node)) {
+        setShowStudentDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter students for search
+  const filteredStudents = useMemo(() => {
+    if (!studentSearchTerm.trim()) return [];
+    const term = studentSearchTerm.toLowerCase();
+    return students.filter(s => 
+      s.fullName?.toLowerCase().includes(term) ||
+      s.code?.toLowerCase().includes(term) ||
+      s.parentName?.toLowerCase().includes(term) ||
+      s.phone?.includes(term)
+    ).slice(0, 50);
+  }, [students, studentSearchTerm]);
 
   // Calculate totals
   const calculations = useMemo(() => {
@@ -404,6 +469,15 @@ export const ContractCreation: React.FC = () => {
         remainingAmount = calculations.totalAmount - partialPaidAmount;
       }
 
+      // Calculate total sessions and price per session
+      const totalSessions = items
+        .filter(item => item.type === 'course')
+        .reduce((sum, item) => sum + (item.sessions || 0) * (item.quantity || 1), 0);
+      const pricePerSession = totalSessions > 0 ? Math.round(calculations.totalAmount / totalSessions) : 0;
+
+      // Get selected class info
+      const selectedClass = classes.find(c => c.id === selectedClassId);
+
       const contractData: Partial<Contract> = {
         type: contractType,
         category: contractCategory,
@@ -421,6 +495,11 @@ export const ContractCreation: React.FC = () => {
         paidAmount,
         remainingAmount,
         contractDate: new Date().toISOString(),
+        startDate: startDate || new Date().toISOString().split('T')[0],
+        classId: selectedClassId || undefined,
+        className: selectedClass?.name || undefined,
+        totalSessions,
+        pricePerSession,
         paymentDate: status === ContractStatus.PAID ? new Date().toISOString() : 
                      status === ContractStatus.PARTIAL ? partialPaymentDate : undefined,
         nextPaymentDate: status === ContractStatus.PARTIAL && nextPaymentDate ? nextPaymentDate : undefined,
@@ -573,21 +652,72 @@ export const ContractCreation: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Chọn học viên <span className="text-red-500">*</span>
               </label>
-              <select
-                value={selectedStudent?.id || ''}
-                onChange={(e) => {
-                  const student = students.find(s => s.id === e.target.value);
-                  setSelectedStudent(student || null);
-                }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              >
-                <option value="">-- Chọn học viên --</option>
-                {students.map(student => (
-                  <option key={student.id} value={student.id}>
-                    {student.fullName} ({student.code}) - {student.parentName}
-                  </option>
-                ))}
-              </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Dropdown chọn từ danh sách */}
+                <div>
+                  <select
+                    value={selectedStudent?.id || ''}
+                    onChange={(e) => {
+                      const student = students.find(s => s.id === e.target.value);
+                      setSelectedStudent(student || null);
+                      setStudentSearchTerm('');
+                    }}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    <option value="">-- Chọn từ danh sách ({students.length} HV) --</option>
+                    {students.map(student => (
+                      <option key={student.id} value={student.id}>
+                        {student.fullName} ({student.code}) - {student.parentName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {/* Ô tìm kiếm */}
+                <div className="relative" ref={studentSearchRef}>
+                  <input
+                    type="text"
+                    value={studentSearchTerm}
+                    onChange={(e) => {
+                      setStudentSearchTerm(e.target.value);
+                      setShowStudentDropdown(true);
+                    }}
+                    onFocus={() => setShowStudentDropdown(true)}
+                    placeholder="Hoặc gõ tên để tìm nhanh..."
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  {showStudentDropdown && studentSearchTerm.trim() && (
+                    <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
+                      {filteredStudents.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-gray-500">Không tìm thấy học viên</div>
+                      ) : (
+                        <>
+                          {filteredStudents.map(student => (
+                            <div
+                              key={student.id}
+                              onClick={() => {
+                                setSelectedStudent(student);
+                                setStudentSearchTerm('');
+                                setShowStudentDropdown(false);
+                              }}
+                              className="px-4 py-2 hover:bg-indigo-50 cursor-pointer border-b border-gray-100 last:border-0"
+                            >
+                              <div className="font-medium text-gray-800">{student.fullName} ({student.code})</div>
+                              <div className="text-xs text-gray-500">
+                                PH: {student.parentName} | SĐT: {student.phone}
+                              </div>
+                            </div>
+                          ))}
+                          {filteredStudents.length >= 50 && (
+                            <div className="px-4 py-2 text-xs text-center text-gray-400 bg-gray-50">
+                              Hiển thị 50 kết quả đầu tiên
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             {selectedStudent && (
@@ -608,12 +738,52 @@ export const ContractCreation: React.FC = () => {
                     <p className="font-semibold">{selectedStudent.phone}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Lớp học</p>
+                    <p className="text-gray-500">Lớp học hiện tại</p>
                     <p className="font-semibold">{selectedStudent.class || '---'}</p>
                   </div>
                 </div>
               </div>
             )}
+
+            {/* Ngày bắt đầu & Lớp học */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Ngày bắt đầu hợp đồng <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={isoToVN(startDate)}
+                    readOnly
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                  />
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Thêm vào lớp
+                </label>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">-- Chọn lớp (không bắt buộc) --</option>
+                  {classes.filter(c => c.status === 'Đang hoạt động').map(cls => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name} ({cls.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -860,12 +1030,20 @@ export const ContractCreation: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Ngày thanh toán
               </label>
-              <input
-                type="date"
-                value={partialPaymentDate}
-                onChange={(e) => setPartialPaymentDate(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={isoToVN(partialPaymentDate)}
+                  readOnly
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                />
+                <input
+                  type="date"
+                  value={partialPaymentDate}
+                  onChange={(e) => setPartialPaymentDate(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
             </div>
 
             {/* Số tiền đã thanh toán */}
@@ -897,13 +1075,22 @@ export const ContractCreation: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Ngày hẹn thanh toán tiếp theo <span className="text-red-500">*</span>
               </label>
-              <input
-                type="date"
-                value={nextPaymentDate}
-                onChange={(e) => setNextPaymentDate(e.target.value)}
-                min={partialPaymentDate}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={isoToVN(nextPaymentDate)}
+                  readOnly
+                  placeholder="dd/mm/yyyy"
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                />
+                <input
+                  type="date"
+                  value={nextPaymentDate}
+                  onChange={(e) => setNextPaymentDate(e.target.value)}
+                  min={partialPaymentDate}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
               <p className="text-xs text-gray-500 mt-1">
                 Thông tin này sẽ được đồng bộ với Quản lý công nợ
               </p>

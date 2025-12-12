@@ -509,8 +509,17 @@ export interface Contract {
   
   // Dates
   contractDate: string;
+  startDate?: string; // Ngày bắt đầu hợp đồng
   paymentDate?: string;
   nextPaymentDate?: string; // Ngày hẹn thanh toán tiếp theo (cho nợ hợp đồng)
+  
+  // Class Info
+  classId?: string;
+  className?: string;
+  
+  // Session Info (for financial reports)
+  totalSessions?: number;
+  pricePerSession?: number;
   
   // Status
   status: ContractStatus;

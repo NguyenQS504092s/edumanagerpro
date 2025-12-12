@@ -21,6 +21,7 @@ import { RoomManager } from './pages/RoomManager';
 import { EnrollmentHistory } from './pages/EnrollmentHistory';
 import { ParentManager } from './pages/ParentManager';
 import { SalaryConfig } from './pages/SalaryConfig';
+import { StaffRewardPenalty } from './pages/StaffRewardPenalty';
 import { WorkConfirmation } from './pages/WorkConfirmation';
 import { SalaryReportTeacher } from './pages/SalaryReportTeacher';
 import { SalaryReportStaff } from './pages/SalaryReportStaff';
@@ -135,6 +136,7 @@ const App: React.FC = () => {
                 {/* HR Routes */}
                 <Route path="/hr/staff" element={<StaffManager />} />
                 <Route path="/hr/salary" element={<SalaryConfig />} />
+                <Route path="/hr/rewards" element={<StaffRewardPenalty />} />
                 <Route path="/hr/work-confirmation" element={<WorkConfirmation />} />
                 <Route path="/hr/salary-teacher" element={<SalaryReportTeacher />} />
                 <Route path="/hr/salary-staff" element={<SalaryReportStaff />} />

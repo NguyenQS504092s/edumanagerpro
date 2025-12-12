@@ -1,13 +1,27 @@
 /**
  * Curriculum Manager Page
- * Quản lý giáo trình/chương trình học
+ * Quản lý Gói học / Khóa học
  */
 
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Plus, Edit, Trash2, X, Clock, Users, DollarSign } from 'lucide-react';
+import { BookOpen, Plus, Edit, Trash2, X, Clock, Users, DollarSign, Settings } from 'lucide-react';
 import * as curriculumService from '../src/services/curriculumService';
 import { Curriculum, CurriculumLevel, CurriculumStatus } from '../src/services/curriculumService';
 import { formatCurrency } from '../src/utils/currencyUtils';
+import { db } from '../src/config/firebase';
+import { collection, getDocs, addDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { ImportExportButtons } from '../components/ImportExportButtons';
+import { CURRICULUM_FIELDS, CURRICULUM_MAPPING, prepareCurriculumExport } from '../src/utils/excelUtils';
+
+// Default programs
+const DEFAULT_PROGRAMS = [
+  'Tiếng Anh Trẻ Em',
+  'Tiếng Anh Giao Tiếp', 
+  'Tiếng Anh Học Thuật',
+  'IELTS',
+  'TOEIC',
+  'Khác'
+];
 
 const LEVEL_COLORS: Record<CurriculumLevel, string> = {
   'Beginner': 'bg-green-100 text-green-700',
@@ -29,10 +43,56 @@ export const CurriculumManager: React.FC = () => {
   const [showModal, setShowModal] = useState(false);
   const [editingCurriculum, setEditingCurriculum] = useState<Curriculum | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Program types config
+  const [programTypes, setProgramTypes] = useState<string[]>(DEFAULT_PROGRAMS);
+  const [showProgramConfig, setShowProgramConfig] = useState(false);
+  const [newProgram, setNewProgram] = useState('');
 
   useEffect(() => {
     fetchCurriculums();
+    fetchProgramTypes();
   }, []);
+
+  // Fetch program types from Firestore
+  const fetchProgramTypes = async () => {
+    try {
+      const docRef = doc(db, 'settings', 'programTypes');
+      const snapshot = await getDocs(collection(db, 'settings'));
+      const settingsDoc = snapshot.docs.find(d => d.id === 'programTypes');
+      if (settingsDoc?.data()?.types?.length > 0) {
+        setProgramTypes(settingsDoc.data().types);
+      }
+    } catch (err) {
+      console.error('Error fetching program types:', err);
+    }
+  };
+
+  // Save program types to Firestore
+  const saveProgramTypes = async (types: string[]) => {
+    try {
+      await setDoc(doc(db, 'settings', 'programTypes'), { types });
+      setProgramTypes(types);
+    } catch (err) {
+      console.error('Error saving program types:', err);
+      alert('Lỗi lưu cấu hình');
+    }
+  };
+
+  const addProgramType = () => {
+    if (!newProgram.trim()) return;
+    if (programTypes.includes(newProgram.trim())) {
+      alert('Chương trình đã tồn tại');
+      return;
+    }
+    saveProgramTypes([...programTypes, newProgram.trim()]);
+    setNewProgram('');
+  };
+
+  const removeProgramType = (program: string) => {
+    if (!confirm(`Xóa "${program}"?`)) return;
+    saveProgramTypes(programTypes.filter(p => p !== program));
+  };
 
   const fetchCurriculums = async () => {
     try {
@@ -48,13 +108,45 @@ export const CurriculumManager: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Xóa giáo trình này?')) return;
+    if (!confirm('Xóa khóa học này?')) return;
     try {
       await curriculumService.deleteCurriculum(id);
       await fetchCurriculums();
     } catch (err) {
       alert('Không thể xóa');
     }
+  };
+
+  // Import curriculums from Excel
+  const handleImportCurriculum = async (data: Record<string, any>[]): Promise<{ success: number; errors: string[] }> => {
+    const errors: string[] = [];
+    let success = 0;
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      try {
+        if (!row.name) {
+          errors.push(`Dòng ${i + 1}: Thiếu tên khóa học`);
+          continue;
+        }
+        const code = row.name.split(' ').map((w: string) => w[0]).join('').toUpperCase() + Date.now().toString().slice(-4);
+        await curriculumService.createCurriculum({
+          name: row.name,
+          code: row.code || code,
+          program: row.program || 'Tiếng Anh Trẻ Em',
+          level: row.level || 'Beginner',
+          totalSessions: parseInt(row.totalSessions) || 48,
+          tuitionFee: parseInt(String(row.tuitionFee).replace(/\D/g, '')) || 0,
+          description: row.description || '',
+          status: row.status || 'Active',
+        });
+        success++;
+      } catch (err: any) {
+        errors.push(`Dòng ${i + 1} (${row.name}): ${err.message || 'Lỗi'}`);
+      }
+    }
+    await fetchCurriculums();
+    return { success, errors };
   };
 
   // Filter
@@ -75,8 +167,8 @@ export const CurriculumManager: React.FC = () => {
               <BookOpen className="text-indigo-600" size={24} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-800">Quản lý giáo trình</h2>
-              <p className="text-sm text-gray-500">Thiết lập chương trình học</p>
+              <h2 className="text-lg font-bold text-gray-800">Quản lý Gói học</h2>
+              <p className="text-sm text-gray-500">Thiết lập các khóa học</p>
             </div>
           </div>
           <div className="flex gap-3">
@@ -84,10 +176,27 @@ export const CurriculumManager: React.FC = () => {
               {activeCurriculums.length} đang hoạt động
             </span>
             <button
+              onClick={() => setShowProgramConfig(true)}
+              className="flex items-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium"
+              title="Cấu hình chương trình học"
+            >
+              <Settings size={16} /> Chương trình
+            </button>
+            <ImportExportButtons
+              data={curriculums}
+              prepareExport={prepareCurriculumExport}
+              exportFileName="DanhSachGoiHoc"
+              fields={CURRICULUM_FIELDS}
+              mapping={CURRICULUM_MAPPING}
+              onImport={handleImportCurriculum}
+              templateFileName="MauNhapGoiHoc"
+              entityName="gói học"
+            />
+            <button
               onClick={() => { setEditingCurriculum(null); setShowModal(true); }}
               className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium"
             >
-              <Plus size={16} /> Thêm giáo trình
+              <Plus size={16} /> Thêm khóa học
             </button>
           </div>
         </div>
@@ -96,7 +205,7 @@ export const CurriculumManager: React.FC = () => {
         <div className="mt-4">
           <input
             type="text"
-            placeholder="Tìm theo tên hoặc mã giáo trình..."
+            placeholder="Tìm theo tên khóa học..."
             className="w-full md:w-96 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -196,6 +305,7 @@ export const CurriculumManager: React.FC = () => {
       {showModal && (
         <CurriculumModal
           curriculum={editingCurriculum}
+          programTypes={programTypes}
           onClose={() => { setShowModal(false); setEditingCurriculum(null); }}
           onSubmit={async (data) => {
             if (editingCurriculum?.id) {
@@ -209,6 +319,62 @@ export const CurriculumManager: React.FC = () => {
           }}
         />
       )}
+
+      {/* Program Config Modal */}
+      {showProgramConfig && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-800">Cấu hình Chương trình học</h3>
+              <button onClick={() => setShowProgramConfig(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  value={newProgram}
+                  onChange={(e) => setNewProgram(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && addProgramType()}
+                  placeholder="Nhập tên chương trình mới..."
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  onClick={addProgramType}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {programTypes.map((program, index) => (
+                  <div key={index} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg">
+                    <span className="text-sm text-gray-700">{program}</span>
+                    <button
+                      onClick={() => removeProgramType(program)}
+                      className="text-gray-400 hover:text-red-500"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-4">
+                Danh sách này sẽ hiển thị trong dropdown "Chương trình" khi thêm/sửa khóa học.
+              </p>
+            </div>
+            <div className="border-t border-gray-200 px-6 py-4 flex justify-end">
+              <button
+                onClick={() => setShowProgramConfig(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -216,11 +382,12 @@ export const CurriculumManager: React.FC = () => {
 // Curriculum Modal
 interface CurriculumModalProps {
   curriculum?: Curriculum | null;
+  programTypes: string[];
   onClose: () => void;
   onSubmit: (data: Partial<Curriculum>) => Promise<void>;
 }
 
-const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, onSubmit }) => {
+const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, programTypes, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     name: curriculum?.name || '',
     code: curriculum?.code || '',
@@ -235,15 +402,21 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
   });
   const [loading, setLoading] = useState(false);
 
+  // Format number with commas
+  const formatNumber = (num: number) => num.toLocaleString('vi-VN');
+  const parseNumber = (str: string) => parseInt(str.replace(/\./g, '').replace(/,/g, '')) || 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.code) {
-      alert('Vui lòng điền đầy đủ thông tin bắt buộc');
+    if (!formData.name) {
+      alert('Vui lòng nhập tên khóa học');
       return;
     }
     setLoading(true);
     try {
-      await onSubmit(formData);
+      // Auto-generate code from name if not provided
+      const code = formData.code || formData.name.replace(/\s+/g, '_').toUpperCase().slice(0, 20);
+      await onSubmit({ ...formData, code });
     } finally {
       setLoading(false);
     }
@@ -254,7 +427,7 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
       <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 bg-white">
           <h3 className="text-xl font-bold text-gray-800">
-            {curriculum ? 'Sửa giáo trình' : 'Thêm giáo trình'}
+            {curriculum ? 'Sửa khóa học' : 'Thêm khóa học'}
           </h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X size={24} />
@@ -265,7 +438,7 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tên giáo trình <span className="text-red-500">*</span>
+                Tên khóa học <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -273,22 +446,21 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                placeholder="VD: Tiếng Anh Mầm Non"
+                placeholder="VD: Tiếng Anh Mầm Non - Starter"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Mã <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.code}
-                onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Chương trình</label>
+              <select
+                value={formData.level}
+                onChange={(e) => setFormData({ ...formData, level: e.target.value as CurriculumLevel })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                placeholder="VD: KINDY"
-              />
+              >
+                {programTypes.map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -303,20 +475,6 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cấp độ</label>
-              <select
-                value={formData.level}
-                onChange={(e) => setFormData({ ...formData, level: e.target.value as CurriculumLevel })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="Beginner">Beginner</option>
-                <option value="Elementary">Elementary</option>
-                <option value="Intermediate">Intermediate</option>
-                <option value="Advanced">Advanced</option>
-              </select>
-            </div>
-
-            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Trạng thái</label>
               <select
                 value={formData.status}
@@ -327,17 +485,6 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
                 <option value="Inactive">Tạm dừng</option>
                 <option value="Draft">Nháp</option>
               </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Thời lượng (tháng)</label>
-              <input
-                type="number"
-                min={1}
-                value={formData.duration}
-                onChange={(e) => setFormData({ ...formData, duration: parseInt(e.target.value) || 1 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-              />
             </div>
 
             <div>
@@ -366,12 +513,11 @@ const CurriculumModal: React.FC<CurriculumModalProps> = ({ curriculum, onClose, 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Học phí (VND)</label>
               <input
-                type="number"
-                min={0}
-                step={100000}
-                value={formData.tuitionFee}
-                onChange={(e) => setFormData({ ...formData, tuitionFee: parseInt(e.target.value) || 0 })}
+                type="text"
+                value={formatNumber(formData.tuitionFee)}
+                onChange={(e) => setFormData({ ...formData, tuitionFee: parseNumber(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                placeholder="VD: 3.600.000"
               />
             </div>
 

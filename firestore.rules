@@ -206,6 +206,17 @@ service cloud.firestore {
       allow write: if isStaff();
     }
     
+    // Staff Reward & Penalty collections (thưởng/phạt nhân sự)
+    match /staffRewardPenalty/{recordId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    match /rewardPenaltyConfig/{configId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
     // Default: deny all other collections
     match /{document=**} {
       allow read, write: if false;

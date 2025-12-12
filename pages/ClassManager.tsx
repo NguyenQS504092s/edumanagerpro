@@ -7,6 +7,8 @@ import { useAuth } from '../src/hooks/useAuth';
 import { collection, getDocs, doc, updateDoc, arrayUnion, arrayRemove, query, where, addDoc, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
 import { getScheduleTime, getScheduleDays, formatSchedule } from '../src/utils/scheduleUtils';
+import { ImportExportButtons } from '../components/ImportExportButtons';
+import { CLASS_FIELDS, CLASS_MAPPING, prepareClassExport } from '../src/utils/excelUtils';
 
 // Helper to safely format date
 const formatDateSafe = (dateValue: any): string => {
@@ -460,6 +462,40 @@ export const ClassManager: React.FC = () => {
     }
   };
 
+  // Import classes from Excel
+  const handleImportClass = async (data: Record<string, any>[]): Promise<{ success: number; errors: string[] }> => {
+    const errors: string[] = [];
+    let success = 0;
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      try {
+        if (!row.name) {
+          errors.push(`Dòng ${i + 1}: Thiếu tên lớp`);
+          continue;
+        }
+        await createClass({
+          name: row.name,
+          code: row.code || `LOP${Date.now()}${i}`,
+          teacher: row.teacher || '',
+          assistant: row.assistant || '',
+          room: row.room || '',
+          curriculum: row.curriculum || '',
+          ageGroup: row.ageGroup || '',
+          schedule: row.schedule || '',
+          startDate: row.startDate || '',
+          status: row.status || ClassStatus.ACTIVE,
+          maxStudents: parseInt(row.maxStudents) || 20,
+          studentIds: [],
+        } as any);
+        success++;
+      } catch (err: any) {
+        errors.push(`Dòng ${i + 1} (${row.name}): ${err.message || 'Lỗi'}`);
+      }
+    }
+    return { success, errors };
+  };
+
   const statsColumns = ['STT', 'Lớp học', 'Tổng', 'Học thử', 'Đang học', 'Nợ phí', 'Bảo lưu', 'Tên giáo viên / Lịch học', 'Trạng thái'];
   const curriculumColumns = ['STT', 'Lớp học', 'Độ tuổi', 'Tên giáo viên / Lịch học', 'Giáo trình đang học', 'Lịch test', 'Trạng thái'];
   const columns = viewMode === 'stats' ? statsColumns : curriculumColumns;
@@ -518,15 +554,27 @@ export const ClassManager: React.FC = () => {
           </div>
         </div>
 
-        {canCreateClass && (
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 bg-green-500 text-white px-5 py-2.5 rounded-md hover:bg-green-600 transition-colors text-sm font-semibold"
-          >
-            <Plus size={18} />
-            Tạo mới
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          <ImportExportButtons
+            data={classes}
+            prepareExport={prepareClassExport}
+            exportFileName="DanhSachLopHoc"
+            fields={CLASS_FIELDS}
+            mapping={CLASS_MAPPING}
+            onImport={handleImportClass}
+            templateFileName="MauNhapLopHoc"
+            entityName="lớp học"
+          />
+          {canCreateClass && (
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 bg-green-500 text-white px-5 py-2.5 rounded-md hover:bg-green-600 transition-colors text-sm font-semibold"
+            >
+              <Plus size={18} />
+              Tạo mới
+            </button>
+          )}
+        </div>
       </div>
 
       {/* View Mode Toggle */}
@@ -1857,8 +1905,17 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
   const [studentsInClass, setStudentsInClass] = useState<any[]>([]);
   const [allStudents, setAllStudents] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  
+  // Enrollment confirmation modal state
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [selectedStudentToAdd, setSelectedStudentToAdd] = useState<any>(null);
+  const [enrollForm, setEnrollForm] = useState({
+    sessions: 12,
+    startDate: new Date().toISOString().split('T')[0],
+  });
 
   // Normalize student status
   const normalizeStatus = (status: string): string => {
@@ -1919,24 +1976,65 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
     fetchStudents();
   }, [classData]);
 
-  // Add student to class
-  const addStudentToClass = async (student: any) => {
+  // Open enrollment modal when adding student
+  const addStudentToClass = (student: any) => {
+    setSelectedStudentToAdd(student);
+    setEnrollForm({
+      sessions: 12,
+      startDate: new Date().toISOString().split('T')[0],
+    });
+    setShowEnrollModal(true);
+  };
+
+  // Confirm add student with enrollment
+  const confirmAddStudent = async () => {
+    if (!selectedStudentToAdd) return;
+    
     setAdding(true);
     try {
-      const studentRef = doc(db, 'students', student.id);
+      const studentRef = doc(db, 'students', selectedStudentToAdd.id);
       
-      // Update student with classId and add to classIds array
+      // Update student with classId, sessions, and add to classIds array
       await updateDoc(studentRef, {
         classId: classData.id,
         className: classData.name,
         class: classData.name,
         classIds: arrayUnion(classData.id),
+        registeredSessions: (selectedStudentToAdd.registeredSessions || 0) + enrollForm.sessions,
+        enrollmentDate: enrollForm.startDate,
+        status: 'Đang học',
+      });
+      
+      // Create enrollment record
+      await addDoc(collection(db, 'enrollments'), {
+        studentId: selectedStudentToAdd.id,
+        studentName: selectedStudentToAdd.fullName || selectedStudentToAdd.name,
+        studentCode: selectedStudentToAdd.code || '',
+        classId: classData.id,
+        className: classData.name,
+        sessions: enrollForm.sessions,
+        startDate: enrollForm.startDate,
+        type: 'Ghi danh thủ công',
+        status: 'Đã xác nhận',
+        createdAt: new Date().toISOString(),
+        note: `Thêm vào lớp ${classData.name} từ Quản lý học viên`,
       });
       
       // Update local state
-      setStudentsInClass(prev => [...prev, { ...student, classId: classData.id, className: classData.name }]);
-      setAllStudents(prev => prev.filter(s => s.id !== student.id));
+      const updatedStudent = {
+        ...selectedStudentToAdd,
+        classId: classData.id,
+        className: classData.name,
+        registeredSessions: (selectedStudentToAdd.registeredSessions || 0) + enrollForm.sessions,
+        status: 'Đang học',
+      };
+      setStudentsInClass(prev => [...prev, updatedStudent]);
+      setAllStudents(prev => prev.filter(s => s.id !== selectedStudentToAdd.id));
+      
+      setShowEnrollModal(false);
+      setSelectedStudentToAdd(null);
       onUpdate();
+      alert('Đã thêm học viên và tạo ghi danh thành công!');
     } catch (err) {
       console.error('Error adding student to class:', err);
       alert('Không thể thêm học viên vào lớp');
@@ -1969,6 +2067,18 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
       alert('Không thể xóa học viên khỏi lớp');
     }
   };
+
+  // Filter students in class by status
+  const filteredStudentsInClass = useMemo(() => {
+    if (statusFilter === 'ALL') return studentsInClass;
+    return studentsInClass.filter(s => normalizeStatus(s.status) === statusFilter);
+  }, [studentsInClass, statusFilter]);
+
+  // Get unique statuses for dropdown
+  const availableStatuses = useMemo(() => {
+    const statuses = new Set(studentsInClass.map(s => normalizeStatus(s.status)));
+    return Array.from(statuses).sort();
+  }, [studentsInClass]);
 
   // Filter available students by search
   const filteredAvailableStudents = useMemo(() => {
@@ -2003,23 +2113,37 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
           {/* Current Students List */}
           <div className="flex-1 p-4 border-r border-gray-200 overflow-y-auto">
-            <h4 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-              Học viên trong lớp ({studentsInClass.length})
-            </h4>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-semibold text-gray-800 flex items-center gap-2">
+                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                Học viên trong lớp ({filteredStudentsInClass.length}/{studentsInClass.length})
+              </h4>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              >
+                <option value="ALL">Tất cả trạng thái</option>
+                <option value="Đang học">Đang học</option>
+                <option value="Học thử">Học thử</option>
+                <option value="Nợ phí">Nợ phí</option>
+                <option value="Bảo lưu">Bảo lưu</option>
+                <option value="Nghỉ học">Nghỉ học</option>
+              </select>
+            </div>
             
             {loading ? (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-600"></div>
               </div>
-            ) : studentsInClass.length === 0 ? (
+            ) : filteredStudentsInClass.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
                 <Users size={32} className="mx-auto mb-2 opacity-30" />
-                <p>Chưa có học viên nào trong lớp</p>
+                <p>{statusFilter === 'ALL' ? 'Chưa có học viên nào trong lớp' : `Không có học viên "${statusFilter}"`}</p>
               </div>
             ) : (
               <div className="space-y-2">
-                {studentsInClass.map((student) => {
+                {filteredStudentsInClass.map((student) => {
                   const registered = student.registeredSessions || 0;
                   const attended = student.attendedSessions || 0;
                   const remaining = Math.max(0, registered - attended);
@@ -2128,6 +2252,88 @@ const StudentsInClassModal: React.FC<StudentsInClassModalProps> = ({ classData, 
           </button>
         </div>
       </div>
+
+      {/* Enrollment Confirmation Modal */}
+      {showEnrollModal && selectedStudentToAdd && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="p-5 border-b border-gray-200">
+              <h3 className="text-lg font-bold text-gray-900">Xác nhận ghi danh</h3>
+              <p className="text-sm text-gray-600 mt-1">Thêm học viên vào lớp {classData.name}</p>
+            </div>
+            
+            <div className="p-5 space-y-4">
+              {/* Student Info */}
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <p className="font-medium text-gray-800">{selectedStudentToAdd.fullName || selectedStudentToAdd.name}</p>
+                <p className="text-sm text-gray-500">Mã: {selectedStudentToAdd.code || 'N/A'}</p>
+              </div>
+
+              {/* Sessions */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Số buổi đăng ký <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={enrollForm.sessions}
+                  onChange={(e) => setEnrollForm(prev => ({ ...prev, sessions: parseInt(e.target.value) || 1 }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Start Date */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Ngày bắt đầu <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={enrollForm.startDate}
+                  onChange={(e) => setEnrollForm(prev => ({ ...prev, startDate: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Summary */}
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+                <p className="text-green-800">
+                  <span className="font-medium">Ghi danh thủ công:</span> {enrollForm.sessions} buổi, 
+                  bắt đầu từ {new Date(enrollForm.startDate).toLocaleDateString('vi-VN')}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowEnrollModal(false); setSelectedStudentToAdd(null); }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                disabled={adding}
+              >
+                Hủy
+              </button>
+              <button
+                onClick={confirmAddStudent}
+                disabled={adding || enrollForm.sessions < 1}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {adding ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Đang xử lý...
+                  </>
+                ) : (
+                  <>
+                    <UserPlus size={18} />
+                    Xác nhận thêm
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Search, Edit, Trash2, User, Eye, EyeOff, AlertTriangle, X, Phone } from 'lucide-react';
 import { Staff, StaffRole } from '../types';
 import { useStaff } from '../src/hooks/useStaff';
+import { ImportExportButtons } from '../components/ImportExportButtons';
+import { STAFF_FIELDS, STAFF_MAPPING, prepareStaffExport } from '../src/utils/excelUtils';
 
 // Departments and positions based on Excel
 const DEPARTMENTS = ['Điều hành', 'Đào Tạo', 'Văn phòng'];
@@ -176,6 +178,39 @@ export const StaffManager: React.FC = () => {
     }
   };
 
+  // Import staff from Excel
+  const handleImportStaff = async (data: Record<string, any>[]): Promise<{ success: number; errors: string[] }> => {
+    const errors: string[] = [];
+    let success = 0;
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      try {
+        if (!row.name) {
+          errors.push(`Dòng ${i + 1}: Thiếu họ tên`);
+          continue;
+        }
+        await createStaff({
+          name: row.name,
+          code: row.code || `NV${Date.now()}${i}`,
+          position: row.position || 'Nhân viên',
+          department: row.department || 'Văn phòng',
+          phone: row.phone || '',
+          email: row.email || '',
+          dob: row.dob || '',
+          address: row.address || '',
+          startDate: row.startDate || new Date().toISOString().split('T')[0],
+          status: row.status || 'Active',
+          roles: [],
+        } as any);
+        success++;
+      } catch (err: any) {
+        errors.push(`Dòng ${i + 1} (${row.name}): ${err.message || 'Lỗi'}`);
+      }
+    }
+    return { success, errors };
+  };
+
   // Format date
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
@@ -210,13 +245,25 @@ export const StaffManager: React.FC = () => {
           <h2 className="text-lg font-bold text-gray-800">Danh sách nhân viên</h2>
           <p className="text-sm text-gray-500">Quản lý thông tin nhân viên, giáo viên, trợ giảng</p>
         </div>
-        <button 
-          onClick={handleCreate}
-          className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-        >
-          <Plus size={18} />
-          Tạo mới nhân viên
-        </button>
+        <div className="flex items-center gap-3">
+          <ImportExportButtons
+            data={staff}
+            prepareExport={prepareStaffExport}
+            exportFileName="DanhSachNhanVien"
+            fields={STAFF_FIELDS}
+            mapping={STAFF_MAPPING}
+            onImport={handleImportStaff}
+            templateFileName="MauNhapNhanVien"
+            entityName="nhân viên"
+          />
+          <button 
+            onClick={handleCreate}
+            className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+          >
+            <Plus size={18} />
+            Tạo mới
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

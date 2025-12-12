@@ -15,6 +15,7 @@ import { getScheduleTime, getScheduleDays, formatSchedule } from '../src/utils/s
 export const Schedule: React.FC = () => {
   const [selectedBranch, setSelectedBranch] = useState('Cơ sở 1');
   const [filterTeacher, setFilterTeacher] = useState<string>('ALL');
+  const [filterAssistant, setFilterAssistant] = useState<string>('ALL');
   const [filterRoom, setFilterRoom] = useState<string>('ALL');
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [classStudents, setClassStudents] = useState<Student[]>([]);
@@ -116,10 +117,18 @@ export const Schedule: React.FC = () => {
     }
   }, [expandedCardId, allStudents, allClasses]);
 
-  // Get unique teachers from staff (only teachers/assistants)
+  // Get unique teachers from staff (only teachers)
   const uniqueTeachers = useMemo(() => {
     return staff
-      .filter(s => s.role === 'Giáo viên' || s.role === 'Trợ giảng')
+      .filter(s => s.position?.toLowerCase().includes('giáo viên') || s.role === 'Giáo viên')
+      .map(s => s.name)
+      .sort();
+  }, [staff]);
+
+  // Get unique assistants from staff
+  const uniqueAssistants = useMemo(() => {
+    return staff
+      .filter(s => s.position?.toLowerCase().includes('trợ giảng') || s.role === 'Trợ giảng')
       .map(s => s.name)
       .sort();
   }, [staff]);
@@ -132,7 +141,7 @@ export const Schedule: React.FC = () => {
       .sort();
   }, [rooms]);
 
-  // Filter classes for teachers (onlyOwnClasses) and by teacher/room filters
+  // Filter classes for teachers (onlyOwnClasses) and by teacher/assistant/room filters
   const classes = useMemo(() => {
     let filtered = allClasses;
     
@@ -157,13 +166,18 @@ export const Schedule: React.FC = () => {
       );
     }
     
+    // Filter by assistant
+    if (filterAssistant !== 'ALL') {
+      filtered = filtered.filter(cls => cls.assistant === filterAssistant);
+    }
+    
     // Filter by room
     if (filterRoom !== 'ALL') {
       filtered = filtered.filter(cls => cls.room === filterRoom);
     }
     
     return filtered;
-  }, [allClasses, onlyOwnClasses, staffData, staffId, filterTeacher, filterRoom]);
+  }, [allClasses, onlyOwnClasses, staffData, staffId, filterTeacher, filterAssistant, filterRoom]);
 
   const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'CN'];
   const branches = [
@@ -371,6 +385,21 @@ export const Schedule: React.FC = () => {
               <option value="ALL">Tất cả GV</option>
               {uniqueTeachers.map(t => (
                 <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Assistant Filter */}
+          <div className="bg-white/20 backdrop-blur-sm rounded-lg px-3 py-1.5 flex items-center gap-2">
+            <User className="text-white/80" size={16} />
+            <select
+              value={filterAssistant}
+              onChange={(e) => setFilterAssistant(e.target.value)}
+              className="bg-white text-gray-800 border-0 rounded-md px-2 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer min-w-[120px]"
+            >
+              <option value="ALL">Tất cả TG</option>
+              {uniqueAssistants.map(a => (
+                <option key={a} value={a}>{a}</option>
               ))}
             </select>
           </div>

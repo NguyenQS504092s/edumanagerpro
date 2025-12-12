@@ -63,7 +63,8 @@ export const TrialStudents: React.FC = () => {
     trialStatus: 'Chờ Test' as 'Chờ Test' | 'Đang học thử' | 'Đã đăng ký' | 'Không đăng ký',
     consultant: '',
     source: '',
-    note: ''
+    note: '',
+    trialHistory: [] as { session: number; date: string }[]
   });
 
   const { students, loading, createStudent, updateStudent } = useStudents({ status: StudentStatus.TRIAL });
@@ -224,9 +225,34 @@ export const TrialStudents: React.FC = () => {
       trialStatus: student.trialStatus || 'Chờ Test',
       consultant: student.consultant || '',
       source: student.source || '',
-      note: (student as any).note || ''
+      note: (student as any).note || '',
+      trialHistory: student.trialHistory || []
     });
     setShowEditModal(true);
+  };
+
+  // Add trial session
+  const addTrialSession = () => {
+    const nextSession = editForm.trialHistory.length + 1;
+    setEditForm({
+      ...editForm,
+      trialHistory: [...editForm.trialHistory, { session: nextSession, date: new Date().toISOString().split('T')[0] }]
+    });
+  };
+
+  // Update trial session date
+  const updateTrialSessionDate = (index: number, date: string) => {
+    const updated = [...editForm.trialHistory];
+    updated[index] = { ...updated[index], date };
+    setEditForm({ ...editForm, trialHistory: updated });
+  };
+
+  // Remove trial session
+  const removeTrialSession = (index: number) => {
+    const updated = editForm.trialHistory.filter((_, i) => i !== index);
+    // Re-number sessions
+    const renumbered = updated.map((h, i) => ({ ...h, session: i + 1 }));
+    setEditForm({ ...editForm, trialHistory: renumbered });
   };
 
   // Update student
@@ -239,6 +265,7 @@ export const TrialStudents: React.FC = () => {
         consultant: editForm.consultant,
         source: editForm.source,
         note: editForm.note,
+        trialHistory: editForm.trialHistory,
         // If status changes to "Đã đăng ký", update main status
         ...(editForm.trialStatus === 'Đã đăng ký' && { status: StudentStatus.ACTIVE }),
         ...(editForm.trialStatus === 'Không đăng ký' && { status: StudentStatus.INACTIVE })
@@ -817,6 +844,45 @@ export const TrialStudents: React.FC = () => {
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Trial History */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">Lịch sử học thử</label>
+                  <button
+                    type="button"
+                    onClick={addTrialSession}
+                    className="text-xs px-2 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Thêm buổi
+                  </button>
+                </div>
+                {editForm.trialHistory.length === 0 ? (
+                  <p className="text-sm text-gray-400 italic">Chưa có lịch sử học thử</p>
+                ) : (
+                  <div className="space-y-2">
+                    {editForm.trialHistory.map((h, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-gray-50 p-2 rounded-lg">
+                        <span className="text-sm font-medium text-gray-600 w-16">Buổi {h.session}</span>
+                        <input
+                          type="date"
+                          value={h.date}
+                          onChange={(e) => updateTrialSessionDate(i, e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeTrialSession(i)}
+                          className="p-1 text-red-500 hover:bg-red-50 rounded"
+                          title="Xóa buổi này"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Note */}

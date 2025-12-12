@@ -5,8 +5,8 @@
  * + Tab Rà soát điểm danh cho lễ tân
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { Calendar, Save, CheckCircle, AlertCircle, Clock, BookOpen, Users, Plus, ClipboardCheck, XCircle, AlertTriangle, Search } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Calendar, Save, CheckCircle, AlertCircle, Clock, BookOpen, Users, Plus, ClipboardCheck, XCircle, AlertTriangle, Search, ChevronDown } from 'lucide-react';
 import { AttendanceStatus, AttendanceRecord } from '../types';
 import { useClasses } from '../src/hooks/useClasses';
 import { useStudents } from '../src/hooks/useStudents';
@@ -116,6 +116,10 @@ export const Attendance: React.FC = () => {
 
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedSession, setSelectedSession] = useState<ClassSession | null>(null);
+  const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 320 });
+  const sessionDropdownRef = useRef<HTMLDivElement>(null);
+  const sessionButtonRef = useRef<HTMLButtonElement>(null);
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendanceData, setAttendanceData] = useState<StudentAttendanceState[]>([]);
   const [existingRecord, setExistingRecord] = useState<AttendanceRecord | null>(null);
@@ -154,9 +158,25 @@ export const Attendance: React.FC = () => {
   }, [reviewDate, holidays]);
 
   // Sessions hook
-  const { upcomingSessions, loading: sessionsLoading, markSessionComplete, addMakeup } = useSessions({ 
+  const { sessions: allSessions, upcomingSessions, loading: sessionsLoading, markSessionComplete, addMakeup } = useSessions({ 
     classId: selectedClassId 
   });
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (sessionDropdownRef.current && !sessionDropdownRef.current.contains(event.target as Node)) {
+        setSessionDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Close dropdown when class changes
+  useEffect(() => {
+    setSessionDropdownOpen(false);
+  }, [selectedClassId]);
 
   // Get students for selected class
   const selectedClass = classes.find(c => c.id === selectedClassId);
@@ -748,22 +768,77 @@ export const Attendance: React.FC = () => {
                 </div>
 
                 {useSessionMode ? (
-                  <select
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[200px] focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={selectedSession?.id || ''}
-                    onChange={(e) => {
-                      const session = upcomingSessions.find(s => s.id === e.target.value);
-                      if (session) handleSelectSession(session);
-                    }}
-                    disabled={!selectedClassId || sessionsLoading}
-                  >
-                    <option value="">-- Chọn buổi học --</option>
-                    {upcomingSessions.map(s => (
-                      <option key={s.id} value={s.id}>
-                        Buổi {s.sessionNumber} - {new Date(s.date).toLocaleDateString('vi-VN')} ({s.dayOfWeek})
-                      </option>
-                    ))}
-                  </select>
+                  <div ref={sessionDropdownRef} className="relative">
+                    <button
+                      ref={sessionButtonRef}
+                      type="button"
+                      onClick={() => {
+                        if (selectedClassId && !sessionsLoading) {
+                          if (!sessionDropdownOpen && sessionButtonRef.current) {
+                            const rect = sessionButtonRef.current.getBoundingClientRect();
+                            setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+                          }
+                          setSessionDropdownOpen(!sessionDropdownOpen);
+                        }
+                      }}
+                      disabled={!selectedClassId || sessionsLoading}
+                      className="w-[320px] px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center justify-between disabled:bg-gray-100"
+                    >
+                      <span className={selectedSession ? 'text-gray-900' : 'text-gray-500'}>
+                        {selectedSession 
+                          ? `Buổi ${selectedSession.sessionNumber} - ${new Date(selectedSession.date).toLocaleDateString('vi-VN')} (${selectedSession.dayOfWeek})`
+                          : '-- Chọn buổi học --'
+                        }
+                      </span>
+                      <ChevronDown size={16} className="text-gray-400" />
+                    </button>
+                    
+                    {sessionDropdownOpen && (
+                      <div 
+                        style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 99999 }}
+                        className="bg-white border border-gray-300 rounded-lg shadow-2xl max-h-[70vh] overflow-y-auto"
+                      >
+                        {[...allSessions].sort((a, b) => a.sessionNumber - b.sessionNumber).map(s => {
+                          const today = new Date().toISOString().split('T')[0];
+                          const isPast = s.date < today;
+                          const isToday = s.date === today;
+                          const isCompleted = s.status === 'Đã học' || s.attendanceId;
+                          
+                          let bgClass = 'bg-white hover:bg-gray-50';
+                          let iconColor = '#9ca3af';
+                          let icon = '○';
+                          
+                          if (isCompleted) {
+                            bgClass = 'bg-green-50 hover:bg-green-100';
+                            iconColor = '#16a34a';
+                            icon = '✓';
+                          } else if (isPast) {
+                            bgClass = 'bg-red-50 hover:bg-red-100';
+                            iconColor = '#dc2626';
+                            icon = '✗';
+                          } else if (isToday) {
+                            bgClass = 'bg-yellow-50 hover:bg-yellow-100';
+                            iconColor = '#ca8a04';
+                            icon = '●';
+                          }
+                          
+                          return (
+                            <div
+                              key={s.id}
+                              onClick={() => {
+                                handleSelectSession(s);
+                                setSessionDropdownOpen(false);
+                              }}
+                              className={`px-3 py-2 cursor-pointer text-sm flex items-center gap-2 ${bgClass} ${selectedSession?.id === s.id ? 'ring-2 ring-inset ring-indigo-400' : ''}`}
+                            >
+                              <span style={{ color: iconColor, fontWeight: 'bold', fontSize: '14px' }}>{icon}</span>
+                              <span>Buổi {s.sessionNumber} - {new Date(s.date).toLocaleDateString('vi-VN')} ({s.dayOfWeek})</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <input
                     type="date"

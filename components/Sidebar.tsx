@@ -119,6 +119,7 @@ const menuItems: MenuItem[] = [
     subItems: [
       { id: 'staff', label: 'DS Nhân viên', path: '/hr/staff', icon: ChevronRight },
       { id: 'salary', label: 'Cấu hình lương', path: '/hr/salary', icon: ChevronRight },
+      { id: 'rewards', label: 'Thưởng / Phạt', path: '/hr/rewards', icon: ChevronRight },
       { id: 'work-confirm', label: 'Xác nhận công', path: '/hr/work-confirmation', icon: ChevronRight },
       { id: 'report-teacher', label: 'Báo cáo lương GV/TG', path: '/hr/salary-teacher', icon: ChevronRight },
       { id: 'report-staff', label: 'Báo cáo lương NV', path: '/hr/salary-staff', icon: ChevronRight },
@@ -152,7 +153,7 @@ const menuItems: MenuItem[] = [
     icon: Settings,
     subItems: [
         { id: 'settings-staff', label: 'Quản lý nhân viên', path: '/settings/staff', icon: ChevronRight },
-        { id: 'settings-curriculum', label: 'Quản lý giáo trình', path: '/settings/curriculum', icon: ChevronRight },
+        { id: 'settings-curriculum', label: 'Quản lý Gói học', path: '/settings/curriculum', icon: ChevronRight },
         { id: 'settings-products', label: 'Quản lý vật phẩm', path: '/settings/products', icon: ChevronRight },
         { id: 'settings-inventory', label: 'Quản lý kho', path: '/settings/inventory', icon: ChevronRight },
         { id: 'settings-rooms', label: 'Quản lý phòng học', path: '/settings/rooms', icon: ChevronRight },

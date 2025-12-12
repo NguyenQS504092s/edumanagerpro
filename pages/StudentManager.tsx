@@ -13,6 +13,8 @@ import { ClassModel } from '../types';
 import { createEnrollment } from '../src/services/enrollmentService';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../src/config/firebase';
+import { ImportExportButtons } from '../components/ImportExportButtons';
+import { STUDENT_FIELDS, STUDENT_MAPPING, prepareStudentExport } from '../src/utils/excelUtils';
 
 // Normalize English status to Vietnamese - defined outside component to avoid hoisting issues
 const normalizeStatus = (status: string): StudentStatus | string => {
@@ -61,6 +63,10 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
   const [showReserveModal, setShowReserveModal] = useState(false);
   const [showRemoveClassModal, setShowRemoveClassModal] = useState(false);
   const [actionDropdownId, setActionDropdownId] = useState<string | null>(null);
+  
+  // Post-creation modal state
+  const [showPostCreateModal, setShowPostCreateModal] = useState(false);
+  const [newlyCreatedStudent, setNewlyCreatedStudent] = useState<Student | null>(null);
 
   // Expanded sections state
   const [expandedEnrollment, setExpandedEnrollment] = useState(false);
@@ -223,11 +229,32 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 
   const handleCreateStudent = async (data: Partial<Student>) => {
     try {
-      await createStudent(data);
+      const newStudent = await createStudent(data);
       setShowCreateModal(false);
+      // Show post-creation modal with options
+      if (newStudent) {
+        setNewlyCreatedStudent({ ...data, id: newStudent } as Student);
+        setShowPostCreateModal(true);
+      }
     } catch (err) {
       console.error('Error creating student:', err);
       alert('Không thể tạo học viên. Vui lòng thử lại.');
+    }
+  };
+  
+  const handlePostCreateEnroll = () => {
+    if (newlyCreatedStudent) {
+      setActionStudent(newlyCreatedStudent);
+      setShowPostCreateModal(false);
+      setShowEnrollmentModal(true);
+    }
+  };
+  
+  const handlePostCreateContract = () => {
+    if (newlyCreatedStudent) {
+      setShowPostCreateModal(false);
+      // Navigate to contract page with student info
+      navigate(`/contracts/new?studentId=${newlyCreatedStudent.id}&studentName=${encodeURIComponent(newlyCreatedStudent.fullName || '')}`);
     }
   };
 
@@ -254,6 +281,46 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
       console.error('Error deleting student:', err);
       alert('Không thể xóa học viên. Vui lòng thử lại.');
     }
+  };
+
+  // Import students from Excel
+  const handleImportStudents = async (data: Record<string, any>[]): Promise<{ success: number; errors: string[] }> => {
+    const errors: string[] = [];
+    let success = 0;
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      try {
+        if (!row.fullName) {
+          errors.push(`Dòng ${i + 1}: Thiếu họ tên`);
+          continue;
+        }
+
+        // Normalize status
+        const status = row.status ? normalizeStatus(row.status) : StudentStatus.ACTIVE;
+
+        await createStudent({
+          fullName: row.fullName,
+          code: row.code || `HV${Date.now()}${i}`,
+          dob: row.dob || '',
+          gender: row.gender || '',
+          phone: row.phone || '',
+          email: row.email || '',
+          parentName: row.parentName || '',
+          parentPhone2: row.parentPhone2 || '',
+          address: row.address || '',
+          class: row.class || '',
+          status: status as StudentStatus,
+          note: row.note || '',
+          remainingSessions: 0,
+        } as any);
+        success++;
+      } catch (err: any) {
+        errors.push(`Dòng ${i + 1} (${row.fullName}): ${err.message || 'Lỗi tạo học viên'}`);
+      }
+    }
+
+    return { success, errors };
   };
 
   return (
@@ -306,6 +373,17 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+
+          <ImportExportButtons
+            data={students}
+            prepareExport={prepareStudentExport}
+            exportFileName="DanhSachHocVien"
+            fields={STUDENT_FIELDS}
+            mapping={STUDENT_MAPPING}
+            onImport={handleImportStudents}
+            templateFileName="MauNhapHocVien"
+            entityName="học viên"
+          />
 
           {canCreateStudent && (
             <button 
@@ -670,6 +748,72 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
           onClose={() => setShowCreateModal(false)}
           onSubmit={handleCreateStudent}
         />
+      )}
+
+      {/* Post-Creation Options Modal */}
+      {showPostCreateModal && newlyCreatedStudent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-5 border-b border-gray-200 bg-gradient-to-r from-green-50 to-emerald-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+                  <User className="text-white" size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Tạo học viên thành công!</h3>
+                  <p className="text-sm text-green-600">{newlyCreatedStudent.fullName}</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-5">
+              <p className="text-gray-600 mb-4">Bạn muốn tiếp tục với học viên này như thế nào?</p>
+              
+              <div className="space-y-3">
+                {/* Option 1: Ghi danh thủ công */}
+                <button
+                  onClick={handlePostCreateEnroll}
+                  className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center group-hover:bg-indigo-200">
+                      <UserPlus className="text-indigo-600" size={20} />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">Ghi danh thủ công</p>
+                      <p className="text-sm text-gray-500">Thêm buổi học, chọn lớp, ngày bắt đầu</p>
+                    </div>
+                  </div>
+                </button>
+                
+                {/* Option 2: Tạo hợp đồng */}
+                <button
+                  onClick={handlePostCreateContract}
+                  className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-green-400 hover:bg-green-50 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center group-hover:bg-green-200">
+                      <DollarSign className="text-green-600" size={20} />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">Tạo hợp đồng mới</p>
+                      <p className="text-sm text-gray-500">Tạo hợp đồng với đầy đủ thông tin thanh toán</p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => { setShowPostCreateModal(false); setNewlyCreatedStudent(null); }}
+                className="w-full px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium"
+              >
+                Để sau
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Edit Student Modal */}
