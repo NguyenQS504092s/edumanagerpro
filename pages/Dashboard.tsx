@@ -148,11 +148,37 @@ export const Dashboard: React.FC = () => {
   
   // State cho chi nhánh/cơ sở
   const [selectedBranch, setSelectedBranch] = useState('all');
+  const [centerList, setCenterList] = useState<{ id: string; name: string }[]>([]);
+  
+  // Fetch centers from Firestore
+  useEffect(() => {
+    const fetchCenters = async () => {
+      try {
+        const centersSnap = await getDocs(collection(db, 'centers'));
+        const centers = centersSnap.docs
+          .filter(d => d.data().status === 'Active')
+          .map(d => ({
+            id: d.id,
+            name: d.data().name || '',
+          }));
+        setCenterList(centers);
+      } catch (err) {
+        console.error('Error fetching centers:', err);
+      }
+    };
+    fetchCenters();
+  }, []);
+
+  // Build branches array with colors
+  const branchColors = ['bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500'];
   const branches = [
     { id: 'all', name: 'Tất cả cơ sở', color: 'bg-gray-500', textColor: 'text-gray-700' },
-    { id: 'CS1', name: 'Cơ sở 1', color: 'bg-emerald-500', textColor: 'text-emerald-700' },
-    { id: 'CS2', name: 'Cơ sở 2', color: 'bg-blue-500', textColor: 'text-blue-700' },
-    { id: 'CS3', name: 'Cơ sở 3', color: 'bg-amber-500', textColor: 'text-amber-700' },
+    ...centerList.map((c, idx) => ({
+      id: c.name,
+      name: c.name,
+      color: branchColors[idx % branchColors.length],
+      textColor: `text-${branchColors[idx % branchColors.length].replace('bg-', '').replace('-500', '')}-700`
+    }))
   ];
   const selectedBranchData = branches.find(b => b.id === selectedBranch) || branches[0];
   
@@ -466,11 +492,24 @@ export const Dashboard: React.FC = () => {
       const tiLeTaiTuc = totalStudents > 0 ? Math.round((activeStudents / totalStudents) * 100) : 0;
       const tiLeNoPhi = totalStudents > 0 ? Math.round((debtStudents / totalStudents) * 100) : 0;
       const tiLeNghiHoc = totalStudents > 0 ? Math.round((droppedStudents / totalStudents) * 100) : 0;
-      const diemHaiLong = 84; // TODO: Calculate from feedback collection
+      
+      // Tính điểm hài lòng từ feedback
+      let diemHaiLong = 0;
+      try {
+        const feedbackSnap = await getDocs(collection(db, 'feedbacks'));
+        if (feedbackSnap.size > 0) {
+          const totalRating = feedbackSnap.docs.reduce((sum, doc) => sum + (doc.data().rating || 0), 0);
+          diemHaiLong = Math.round((totalRating / feedbackSnap.size) * 20); // rating 1-5 -> 20-100%
+        }
+      } catch (err) {
+        console.log('No feedback data');
+      }
+      
       const tiSuatLoiNhuan = totalRevenue > 0 ? Math.round(((totalRevenue - tongLuong) / totalRevenue) * 100) : 0;
       
-      // Đánh giá: <10% Tốt, <20% Khá, <30% Trung Bình, <50% Yếu, >=50% Rất yếu
-      const getStatusInverse = (value: number) => {
+      // Đánh giá nghịch: <10% Tốt, <20% Khá, <30% Trung Bình, <50% Yếu, >=50% Rất yếu
+      const getStatusInverse = (value: number, hasData: boolean = true) => {
+        if (!hasData) return 'Chưa có dữ liệu';
         if (value < 10) return 'Tốt';
         if (value < 20) return 'Khá';
         if (value < 30) return 'Trung Bình';
@@ -479,7 +518,8 @@ export const Dashboard: React.FC = () => {
       };
       
       // Đánh giá thuận: >80% Tốt, >60% Khá, >40% TB, >20% Yếu
-      const getStatusNormal = (value: number) => {
+      const getStatusNormal = (value: number, hasData: boolean = true) => {
+        if (!hasData) return 'Chưa có dữ liệu';
         if (value >= 80) return 'Tốt';
         if (value >= 60) return 'Khá';
         if (value >= 40) return 'Trung Bình';
@@ -487,12 +527,16 @@ export const Dashboard: React.FC = () => {
         return 'Rất yếu';
       };
       
+      const hasStudentData = totalStudents > 0;
+      const hasFeedbackData = diemHaiLong > 0;
+      const hasRevenueData = totalRevenue > 0;
+      
       const businessHealth = [
-        { metric: 'Tỉ lệ tái tục', value: tiLeTaiTuc, status: getStatusNormal(tiLeTaiTuc) },
-        { metric: 'Tỉ lệ nợ phí', value: tiLeNoPhi, status: getStatusInverse(tiLeNoPhi) },
-        { metric: 'Tỉ lệ nghỉ học', value: tiLeNghiHoc, status: getStatusInverse(tiLeNghiHoc) },
-        { metric: 'Điểm số hài lòng', value: diemHaiLong, status: getStatusNormal(diemHaiLong) },
-        { metric: 'Tỉ suất lợi nhuận', value: tiSuatLoiNhuan, status: getStatusNormal(tiSuatLoiNhuan) },
+        { metric: 'Tỉ lệ tái tục', value: tiLeTaiTuc, status: getStatusNormal(tiLeTaiTuc, hasStudentData) },
+        { metric: 'Tỉ lệ nợ phí', value: tiLeNoPhi, status: getStatusInverse(tiLeNoPhi, hasStudentData) },
+        { metric: 'Tỉ lệ nghỉ học', value: tiLeNghiHoc, status: getStatusInverse(tiLeNghiHoc, hasStudentData) },
+        { metric: 'Điểm số hài lòng', value: diemHaiLong, status: getStatusNormal(diemHaiLong, hasFeedbackData) },
+        { metric: 'Tỉ suất lợi nhuận', value: tiSuatLoiNhuan, status: getStatusNormal(tiSuatLoiNhuan, hasRevenueData) },
       ];
       
       setStats({
@@ -990,13 +1034,15 @@ export const Dashboard: React.FC = () => {
                           item.status === 'Tốt' ? 'text-emerald-600' : 
                           item.status === 'Khá' ? 'text-blue-600' :
                           item.status === 'Trung Bình' ? 'text-amber-500' : 
-                          item.status === 'Yếu' ? 'text-rose-500' : 'text-rose-600'
+                          item.status === 'Yếu' ? 'text-rose-500' : 
+                          item.status === 'Chưa có dữ liệu' ? 'text-gray-500' : 'text-rose-600'
                         }`}>
                           <span className={`px-2 py-1 rounded-full text-xs ${
                             item.status === 'Tốt' ? 'bg-emerald-100' : 
                             item.status === 'Khá' ? 'bg-blue-100' :
                             item.status === 'Trung Bình' ? 'bg-amber-100' : 
-                            item.status === 'Yếu' ? 'bg-rose-100' : 'bg-rose-200'
+                            item.status === 'Yếu' ? 'bg-rose-100' : 
+                            item.status === 'Chưa có dữ liệu' ? 'bg-gray-100' : 'bg-rose-200'
                           }`}>{item.status}</span>
                         </td>
                       </tr>
@@ -1360,6 +1406,24 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Dev Tools - Admin Only */}
+      <div className="fixed bottom-4 right-4 z-40 flex gap-2">
+        <button
+          onClick={handleSeedData}
+          disabled={seeding}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+        >
+          {seeding ? '⏳ Đang xử lý...' : '🌱 Seed Data'}
+        </button>
+        <button
+          onClick={handleClearData}
+          disabled={seeding}
+          className="bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg hover:bg-red-700 disabled:opacity-50 text-sm font-medium"
+        >
+          {seeding ? '⏳ Đang xử lý...' : '🗑️ Xóa Data'}
+        </button>
       </div>
 
       {/* Modal danh sách học viên */}

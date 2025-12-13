@@ -17,7 +17,8 @@ import {
 import { db } from '../config/firebase';
 
 const CENTERS_COLLECTION = 'centers';
-const SETTINGS_DOC = 'settings';
+const SETTINGS_COLLECTION = 'settings';
+const CENTER_SETTINGS_DOC = 'centerSettings';
 
 export interface Center {
   id?: string;
@@ -100,7 +101,7 @@ export const deleteCenter = async (id: string): Promise<void> => {
 
 export const getSettings = async (): Promise<CenterSettings | null> => {
   try {
-    const docRef = doc(db, CENTERS_COLLECTION, SETTINGS_DOC);
+    const docRef = doc(db, SETTINGS_COLLECTION, CENTER_SETTINGS_DOC);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return docSnap.data() as CenterSettings;
@@ -114,7 +115,7 @@ export const getSettings = async (): Promise<CenterSettings | null> => {
 
 export const saveSettings = async (settings: CenterSettings): Promise<void> => {
   try {
-    const docRef = doc(db, CENTERS_COLLECTION, SETTINGS_DOC);
+    const docRef = doc(db, SETTINGS_COLLECTION, CENTER_SETTINGS_DOC);
     await setDoc(docRef, settings, { merge: true });
   } catch (error) {
     console.error('Error saving settings:', error);

@@ -634,23 +634,53 @@ export const seedAllData = async () => {
   }
 };
 
-// Clear all data
+// Clear all data (preserves admin staff)
 export const clearAllData = async () => {
   console.log('🗑️ Clearing all data...\n');
   
   const collections = [
-    'students', 'parents', 'classes', 'contracts', 'staff',
+    'students', 'parents', 'classes', 'contracts',
     'financialTransactions', 'leads', 'campaigns', 'products',
     'workSessions', 'attendance', 'tutoring', 'feedback', 'invoices',
-    'curriculums', 'salaryRules', 'branches'
+    'curriculums', 'salaryRules', 'branches',
+    // Additional collections
+    'classSessions', 'enrollments', 'studentAttendance', 
+    'homeworkRecords', 'testComments', 'monthlyComments',
+    'birthdayGifts', 'staffRewardPenalty', 'rewardPenaltyConfig',
+    'homeworkStatuses', 'centers', 'holidays', 'rooms',
+    'attendanceAuditLog', 'staffAttendance', 'actualSalaries',
+    'salaryRanges', 'staffSalaries', 'feedbacks'
   ];
   
   for (const col of collections) {
-    const snap = await getDocs(collection(db, col));
-    for (const d of snap.docs) {
-      await deleteDoc(doc(db, col, d.id));
+    try {
+      const snap = await getDocs(collection(db, col));
+      for (const d of snap.docs) {
+        await deleteDoc(doc(db, col, d.id));
+      }
+      console.log(`   Cleared ${col}: ${snap.size} records`);
+    } catch (err) {
+      console.log(`   Skipped ${col}: collection may not exist`);
     }
-    console.log(`   Cleared ${col}: ${snap.size} records`);
+  }
+  
+  // Clear staff but preserve admin users
+  try {
+    const staffSnap = await getDocs(collection(db, 'staff'));
+    let deleted = 0;
+    for (const d of staffSnap.docs) {
+      const data = d.data();
+      // Preserve admin users
+      if (data.position === 'Quản trị viên' || data.role === 'admin') {
+        console.log(`   Preserved admin: ${data.name}`);
+        continue;
+      }
+      await deleteDoc(doc(db, 'staff', d.id));
+      deleted++;
+    }
+    console.log(`   Cleared staff: ${deleted} records (admins preserved)`);
+  } catch (err) {
+    console.log(`   Skipped staff: error occurred`);
   }
   
   console.log('\n✅ All data cleared!');

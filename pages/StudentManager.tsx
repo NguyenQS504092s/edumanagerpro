@@ -1340,7 +1340,8 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
     status: student.status || StudentStatus.ACTIVE,
     class: student.class || '',
     registeredSessions: student.registeredSessions || 0,
-    attendedSessions: student.attendedSessions || 0
+    attendedSessions: student.attendedSessions || 0,
+    startDate: student.startDate ? new Date(student.startDate).toISOString().split('T')[0] : '',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1425,6 +1426,19 @@ const EditStudentModal: React.FC<EditStudentModalProps> = ({ student, onClose, o
                   <option key={status} value={status}>{status}</option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Ngày bắt đầu học
+              </label>
+              <input
+                type="date"
+                value={formData.startDate}
+                onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-1">Ngày kết thúc sẽ tự động tính theo số buổi</p>
             </div>
 
             <div className="col-span-2">

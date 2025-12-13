@@ -51,6 +51,7 @@ const subItemToModule: Record<string, ModuleKey> = {
   'report-training': 'reports_training',
   'report-finance': 'reports_finance',
   'report-monthly': 'reports_training',
+  'settings-center': 'settings',
   'settings-staff': 'settings',
   'settings-products': 'settings',
   'settings-inventory': 'settings',
@@ -152,6 +153,7 @@ const menuItems: MenuItem[] = [
     label: 'Cấu hình',
     icon: Settings,
     subItems: [
+        { id: 'settings-center', label: 'Quản lý cơ sở', path: '/settings/center', icon: ChevronRight },
         { id: 'settings-staff', label: 'Quản lý nhân viên', path: '/settings/staff', icon: ChevronRight },
         { id: 'settings-curriculum', label: 'Quản lý Gói học', path: '/settings/curriculum', icon: ChevronRight },
         { id: 'settings-products', label: 'Quản lý vật phẩm', path: '/settings/products', icon: ChevronRight },

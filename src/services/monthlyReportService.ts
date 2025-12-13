@@ -69,6 +69,7 @@ export const saveMonthlyComment = async (
 
 /**
  * Get monthly comment for a student in a class
+ * Supports both formats: { month, year } and { month: "YYYY-MM" }
  */
 export const getMonthlyComment = async (
   studentId: string,
@@ -77,19 +78,45 @@ export const getMonthlyComment = async (
   year: number
 ): Promise<MonthlyComment | null> => {
   try {
-    const q = query(
+    // Try format 1: month and year as separate fields
+    const q1 = query(
       collection(db, MONTHLY_COMMENTS_COLLECTION),
       where('studentId', '==', studentId),
       where('classId', '==', classId),
       where('month', '==', month),
       where('year', '==', year)
     );
-    const snapshot = await getDocs(q);
+    const snapshot1 = await getDocs(q1);
     
-    if (snapshot.empty) return null;
+    if (!snapshot1.empty) {
+      const docData = snapshot1.docs[0];
+      return { id: docData.id, ...docData.data() } as MonthlyComment;
+    }
     
-    const docData = snapshot.docs[0];
-    return { id: docData.id, ...docData.data() } as MonthlyComment;
+    // Try format 2: month as "YYYY-MM" string (from HomeworkManager)
+    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+    const q2 = query(
+      collection(db, MONTHLY_COMMENTS_COLLECTION),
+      where('studentId', '==', studentId),
+      where('classId', '==', classId),
+      where('month', '==', monthStr)
+    );
+    const snapshot2 = await getDocs(q2);
+    
+    if (!snapshot2.empty) {
+      const docData = snapshot2.docs[0];
+      const data = docData.data();
+      // Normalize to standard format
+      return { 
+        id: docData.id, 
+        ...data,
+        teacherComment: data.teacherComment || data.comment || '',
+        month,
+        year,
+      } as MonthlyComment;
+    }
+    
+    return null;
   } catch (error) {
     console.error('Error getting monthly comment:', error);
     return null;
@@ -132,6 +159,131 @@ export const deleteMonthlyComment = async (id: string): Promise<void> => {
   } catch (error) {
     console.error('Error deleting monthly comment:', error);
     throw new Error('Không thể xóa nhận xét');
+  }
+};
+
+// ==================== TEST COMMENTS ====================
+
+export interface TestCommentData {
+  id: string;
+  testName: string;
+  testDate: string;
+  comment: string;
+  score: number | null;
+}
+
+/**
+ * Get test comments for a student in a class
+ */
+export const getStudentTestComments = async (
+  studentId: string,
+  classId: string
+): Promise<TestCommentData[]> => {
+  try {
+    const q = query(
+      collection(db, 'testComments'),
+      where('studentId', '==', studentId),
+      where('classId', '==', classId)
+    );
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        testName: data.testName || '',
+        testDate: data.testDate || '',
+        comment: data.comment || '',
+        score: data.score ?? null,
+      };
+    }).sort((a, b) => (b.testDate || '').localeCompare(a.testDate || ''));
+  } catch (error) {
+    console.error('Error getting test comments:', error);
+    return [];
+  }
+};
+
+// ==================== HOMEWORK RECORDS ====================
+
+export interface HomeworkSummary {
+  totalHomeworks: number;
+  completedHomeworks: number;
+  completionRate: number;
+  homeworkDetails: Array<{
+    sessionNumber: number;
+    sessionDate: string;
+    homeworkName: string;
+    status: string;
+  }>;
+}
+
+/**
+ * Get homework summary for a student in a class for a specific month
+ */
+export const getStudentHomeworkSummary = async (
+  studentId: string,
+  classId: string,
+  month: number,
+  year: number
+): Promise<HomeworkSummary> => {
+  try {
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+    
+    const q = query(
+      collection(db, 'homeworkRecords'),
+      where('classId', '==', classId)
+    );
+    const snapshot = await getDocs(q);
+    
+    let totalHomeworks = 0;
+    let completedHomeworks = 0;
+    const homeworkDetails: HomeworkSummary['homeworkDetails'] = [];
+    
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const sessionDate = data.sessionDate || '';
+      
+      // Filter by date range
+      if (sessionDate < startDate || sessionDate > endDate) return;
+      
+      const studentRecord = (data.studentRecords || []).find(
+        (r: any) => r.studentId === studentId
+      );
+      
+      if (!studentRecord) return;
+      
+      const homeworks = data.homeworks || [];
+      homeworks.forEach((hw: any) => {
+        totalHomeworks++;
+        const hwStatus = studentRecord.homeworks?.[hw.id]?.status || 'not_completed';
+        if (hwStatus === 'completed') {
+          completedHomeworks++;
+        }
+        
+        homeworkDetails.push({
+          sessionNumber: data.sessionNumber || 0,
+          sessionDate,
+          homeworkName: hw.name || '',
+          status: hwStatus,
+        });
+      });
+    });
+    
+    return {
+      totalHomeworks,
+      completedHomeworks,
+      completionRate: totalHomeworks > 0 ? Math.round((completedHomeworks / totalHomeworks) * 100) : 0,
+      homeworkDetails: homeworkDetails.sort((a, b) => a.sessionNumber - b.sessionNumber),
+    };
+  } catch (error) {
+    console.error('Error getting homework summary:', error);
+    return {
+      totalHomeworks: 0,
+      completedHomeworks: 0,
+      completionRate: 0,
+      homeworkDetails: [],
+    };
   }
 };
 
@@ -281,6 +433,8 @@ export interface MonthlyReportData {
     stats: MonthlyReportStats;
     attendance: StudentAttendance[];
     comment: MonthlyComment | null;
+    testComments: TestCommentData[];
+    homeworkSummary: HomeworkSummary;
   }>;
   
   // All attendance records for history table
@@ -315,13 +469,17 @@ export const generateMonthlyReport = async (
       const classAttendance = allAttendance.filter(a => a.classId === cls.id);
       const stats = calculateMonthlyStats(classAttendance);
       const comment = await getMonthlyComment(student.id, cls.id, month, year);
+      const testComments = await getStudentTestComments(student.id, cls.id);
+      const homeworkSummary = await getStudentHomeworkSummary(student.id, cls.id, month, year);
       
       return {
         classId: cls.id,
         className: cls.name,
         stats,
         attendance: classAttendance,
-        comment
+        comment,
+        testComments,
+        homeworkSummary
       };
     })
   );
@@ -333,6 +491,8 @@ export const generateMonthlyReport = async (
       if (classAttendance.length > 0) {
         const stats = calculateMonthlyStats(classAttendance);
         const comment = await getMonthlyComment(student.id, classId, month, year);
+        const testComments = await getStudentTestComments(student.id, classId);
+        const homeworkSummary = await getStudentHomeworkSummary(student.id, classId, month, year);
         const className = classAttendance[0]?.className || 'Lớp không xác định';
         
         classReports.push({
@@ -340,7 +500,9 @@ export const generateMonthlyReport = async (
           className,
           stats,
           attendance: classAttendance,
-          comment
+          comment,
+          testComments,
+          homeworkSummary
         });
       }
     }

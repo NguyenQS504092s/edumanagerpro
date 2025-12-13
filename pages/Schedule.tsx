@@ -13,7 +13,8 @@ import { db } from '../src/config/firebase';
 import { getScheduleTime, getScheduleDays, formatSchedule } from '../src/utils/scheduleUtils';
 
 export const Schedule: React.FC = () => {
-  const [selectedBranch, setSelectedBranch] = useState('Cơ sở 1');
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [centerList, setCenterList] = useState<{ id: string; name: string }[]>([]);
   const [filterTeacher, setFilterTeacher] = useState<string>('ALL');
   const [filterAssistant, setFilterAssistant] = useState<string>('ALL');
   const [filterRoom, setFilterRoom] = useState<string>('ALL');
@@ -176,15 +177,45 @@ export const Schedule: React.FC = () => {
       filtered = filtered.filter(cls => cls.room === filterRoom);
     }
     
+    // Filter by branch/center
+    if (selectedBranch) {
+      filtered = filtered.filter(cls => cls.branch === selectedBranch);
+    }
+    
     return filtered;
-  }, [allClasses, onlyOwnClasses, staffData, staffId, filterTeacher, filterAssistant, filterRoom]);
+  }, [allClasses, onlyOwnClasses, staffData, staffId, filterTeacher, filterAssistant, filterRoom, selectedBranch]);
+
+  // Fetch centers from Firestore
+  useEffect(() => {
+    const fetchCenters = async () => {
+      try {
+        const centersSnap = await getDocs(collection(db, 'centers'));
+        const centers = centersSnap.docs
+          .filter(d => d.data().status === 'Active')
+          .map(d => ({
+            id: d.id,
+            name: d.data().name || '',
+          }));
+        setCenterList(centers);
+        // Set default selected branch to first center
+        if (centers.length > 0 && !selectedBranch) {
+          setSelectedBranch(centers[0].name);
+        }
+      } catch (err) {
+        console.error('Error fetching centers:', err);
+      }
+    };
+    fetchCenters();
+  }, []);
 
   const days = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'CN'];
-  const branches = [
-    { id: 'Cơ sở 1', name: 'Cơ sở 1', color: 'bg-emerald-500', textColor: 'text-emerald-700' },
-    { id: 'Cơ sở 2', name: 'Cơ sở 2', color: 'bg-blue-500', textColor: 'text-blue-700' },
-    { id: 'Cơ sở 3', name: 'Cơ sở 3', color: 'bg-amber-500', textColor: 'text-amber-700' },
-  ];
+  const branchColors = ['bg-emerald-500', 'bg-blue-500', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500'];
+  const branches = centerList.map((c, idx) => ({
+    id: c.name,
+    name: c.name,
+    color: branchColors[idx % branchColors.length],
+    textColor: `text-${branchColors[idx % branchColors.length].replace('bg-', '').replace('-500', '')}-700`
+  }));
   const selectedBranchData = branches.find(b => b.id === selectedBranch) || branches[0];
 
   // Format week display (Monday to Sunday)
@@ -344,7 +375,7 @@ export const Schedule: React.FC = () => {
         <div className="flex items-center gap-4">
           {/* Branch Selector - Redesigned with color */}
           <div className="bg-white/20 backdrop-blur-sm rounded-lg px-4 py-2 flex items-center gap-3">
-            <div className={`w-3 h-3 rounded-full ${selectedBranchData.color} ring-2 ring-white/50`}></div>
+            <div className={`w-3 h-3 rounded-full ${selectedBranchData?.color || 'bg-gray-500'} ring-2 ring-white/50`}></div>
             <MapPin className="text-white/80" size={18} />
             <span className="text-white/90 text-sm font-medium">Cơ sở:</span>
             <select
@@ -352,6 +383,7 @@ export const Schedule: React.FC = () => {
               onChange={(e) => setSelectedBranch(e.target.value)}
               className="bg-white text-gray-800 border-0 rounded-md px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer"
             >
+              {branches.length === 0 && <option value="">-- Chưa có cơ sở --</option>}
               {branches.map(b => (
                 <option key={b.id} value={b.id}>● {b.name}</option>
               ))}
@@ -434,12 +466,12 @@ export const Schedule: React.FC = () => {
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mt-4 print:mt-0 print:shadow-none print:border-0 print:rounded-none">
         {/* Branch Title with dynamic color */}
         <div className={`${
-          selectedBranch === 'Cơ sở 1' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' :
-          selectedBranch === 'Cơ sở 2' ? 'bg-gradient-to-r from-blue-500 to-blue-600' :
-          'bg-gradient-to-r from-amber-500 to-amber-600'
+          selectedBranchData?.color?.replace('-500', '-600') 
+            ? `bg-gradient-to-r from-${selectedBranchData.color.replace('bg-', '')} to-${selectedBranchData.color.replace('bg-', '').replace('-500', '-600')}`
+            : 'bg-gradient-to-r from-emerald-500 to-emerald-600'
         } text-white text-center py-3 text-xl font-bold flex items-center justify-center gap-3`}>
           <div className="w-4 h-4 rounded-full bg-white/30"></div>
-          {selectedBranch}
+          {selectedBranch || 'Chưa có cơ sở'}
         </div>
 
         <div className="overflow-x-auto print:overflow-visible">

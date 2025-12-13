@@ -561,6 +561,64 @@ export const MonthlyReport: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Homework Summary */}
+                {classReport.homeworkSummary && classReport.homeworkSummary.totalHomeworks > 0 && (
+                  <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h5 className="font-semibold text-blue-800 flex items-center gap-2 mb-3">
+                      <BookOpen size={16} />
+                      Thống kê bài tập về nhà:
+                    </h5>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <p className="text-2xl font-bold text-blue-600">{classReport.homeworkSummary.totalHomeworks}</p>
+                        <p className="text-xs text-gray-500">Tổng bài tập</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-green-600">{classReport.homeworkSummary.completedHomeworks}</p>
+                        <p className="text-xs text-gray-500">Đã hoàn thành</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-amber-600">{classReport.homeworkSummary.completionRate}%</p>
+                        <p className="text-xs text-gray-500">Tỷ lệ hoàn thành</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Test Comments */}
+                {classReport.testComments && classReport.testComments.length > 0 && (
+                  <div className="mt-4 bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <h5 className="font-semibold text-purple-800 flex items-center gap-2 mb-3">
+                      <Award size={16} />
+                      Kết quả bài kiểm tra:
+                    </h5>
+                    <div className="space-y-3">
+                      {classReport.testComments.map((test, idx) => (
+                        <div key={idx} className="bg-white rounded-lg p-3 border border-purple-100">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-medium text-purple-900">{test.testName}</p>
+                              {test.testDate && (
+                                <p className="text-xs text-gray-500">
+                                  Ngày: {new Date(test.testDate).toLocaleDateString('vi-VN')}
+                                </p>
+                              )}
+                            </div>
+                            {test.score !== null && (
+                              <span className="text-xl font-bold text-purple-600">{test.score}</span>
+                            )}
+                          </div>
+                          {test.comment && (
+                            <p className="mt-2 text-sm text-gray-700 border-t border-purple-100 pt-2">
+                              {test.comment}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

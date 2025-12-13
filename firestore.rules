@@ -122,7 +122,7 @@ service cloud.firestore {
     // Settings collection
     match /settings/{settingId} {
       allow read: if isStaff();
-      allow write: if isAdmin();
+      allow write: if isStaff();
     }
     
     // Curriculums collection
@@ -141,6 +141,12 @@ service cloud.firestore {
     match /branches/{branchId} {
       allow read: if isStaff();
       allow write: if isAdmin();
+    }
+    
+    // Centers collection (cơ sở)
+    match /centers/{centerId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
     }
     
     // Financial Transactions collection
@@ -188,6 +194,12 @@ service cloud.firestore {
       allow write: if isStaff();
     }
     
+    // Discounts collection (ưu đãi)
+    match /discounts/{discountId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
     // Homework Records collection
     match /homeworkRecords/{recordId} {
       allow read: if isStaff();
@@ -213,6 +225,22 @@ service cloud.firestore {
     }
     
     match /rewardPenaltyConfig/{configId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    // Homework & Comments collections (bài tập, nhận xét)
+    match /homeworkRecords/{recordId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+    
+    match /testComments/{commentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    match /homeworkStatuses/{statusId} {
       allow read: if isStaff();
       allow write: if isStaff();
     }

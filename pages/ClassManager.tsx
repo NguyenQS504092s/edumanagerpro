@@ -31,6 +31,7 @@ export const ClassManager: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [teacherFilter, setTeacherFilter] = useState('');
   const [classFilter, setClassFilter] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
   const [viewMode, setViewMode] = useState<'stats' | 'curriculum'>('stats');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -250,7 +251,7 @@ export const ClassManager: React.FC = () => {
     return classSessionStats[classId] || { completed: 0, total: 0 };
   };
 
-  // Filter by teacher and class name on client side
+  // Filter by teacher, class name, and branch on client side
   const filteredClasses = useMemo(() => {
     let result = classes;
     if (teacherFilter) {
@@ -259,8 +260,16 @@ export const ClassManager: React.FC = () => {
     if (classFilter) {
       result = result.filter(c => c.id === classFilter);
     }
+    if (branchFilter) {
+      result = result.filter(c => c.branch === branchFilter);
+    }
     return result;
-  }, [classes, teacherFilter, classFilter]);
+  }, [classes, teacherFilter, classFilter, branchFilter]);
+
+  // Get unique branches for dropdown
+  const branches = useMemo(() => {
+    return [...new Set(classes.map(c => c.branch).filter(Boolean))].sort();
+  }, [classes]);
 
   // Get unique teachers for dropdown
   const teachers = useMemo(() => {
@@ -541,6 +550,22 @@ export const ClassManager: React.FC = () => {
             </select>
           </div>
 
+          {/* Branch Filter */}
+          {branches.length > 0 && (
+            <div className="min-w-[160px]">
+              <select 
+                className="w-full pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+              >
+                <option value="">Tất cả cơ sở</option>
+                {branches.map(b => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Search */}
           <div className="relative flex-1 max-w-lg">
             <input 
@@ -732,6 +757,7 @@ export const ClassManager: React.FC = () => {
                           <p className="text-xs text-gray-500 mt-0.5">
                             {formatSchedule(cls.schedule) || cls.startDate} {cls.room ? `(${cls.room})` : ''}
                           </p>
+                          {cls.branch && <p className="text-xs text-purple-600 mt-0.5">📍 {cls.branch}</p>}
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -748,6 +774,7 @@ export const ClassManager: React.FC = () => {
                             <div>
                               <p className="text-sm text-gray-700">{getScheduleTime(cls.schedule) || '17:30 - 19:00'}</p>
                               <p className="text-xs text-gray-500">{getScheduleDays(cls.schedule) || cls.startDate} {cls.room ? `(${cls.room})` : ''}</p>
+                              {cls.branch && <p className="text-xs text-purple-600 mt-0.5">📍 {cls.branch}</p>}
                             </div>
                           </div>
                         </div>
@@ -1010,6 +1037,7 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
   // Dropdown options
   const [staffList, setStaffList] = useState<{ id: string; name: string; position: string }[]>([]);
   const [roomList, setRoomList] = useState<{ id: string; name: string }[]>([]);
+  const [centerList, setCenterList] = useState<{ id: string; name: string }[]>([]);
 
   // Curriculum autocomplete state
   const [curriculumList, setCurriculumList] = useState<string[]>([]);
@@ -1097,6 +1125,16 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
         name: d.data().name || d.data().roomName || d.id,
       }));
       setRoomList(rooms);
+
+      // Fetch centers
+      const centersSnap = await getDocs(collection(db, 'centers'));
+      const centers = centersSnap.docs
+        .filter(d => d.data().status === 'Active')
+        .map(d => ({
+          id: d.id,
+          name: d.data().name || '',
+        }));
+      setCenterList(centers);
     };
     fetchDropdownData();
   }, []);
@@ -1342,6 +1380,20 @@ const ClassFormModal: React.FC<ClassFormModalProps> = ({ classData, onClose, onS
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="VD: Tiếng Anh Giao Tiếp K12"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cơ sở</label>
+              <select
+                value={formData.branch}
+                onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="">-- Chọn cơ sở --</option>
+                {centerList.map(c => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -2568,6 +2620,15 @@ const ClassDetailModal: React.FC<ClassDetailModalProps> = ({
                 <p className="font-medium text-gray-800">{classData.room || 'Chưa xếp'}</p>
               </div>
             </div>
+            {classData.branch && (
+              <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <MapPin className="text-purple-600 mt-0.5" size={20} />
+                <div>
+                  <p className="text-xs text-gray-500">Cơ sở</p>
+                  <p className="font-medium text-gray-800">{classData.branch}</p>
+                </div>
+              </div>
+            )}
             <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
               <Calendar className="text-orange-600 mt-0.5" size={20} />
               <div>
